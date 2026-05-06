@@ -10,3 +10,4 @@
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/dense/dense_ops.h"
 #include "plamatrix/ops/gemm.h"
+#include "plamatrix/ops/decomposition.h"
