@@ -150,10 +150,33 @@ public:
         return result;
     }
 
+    /// Compute the transpose of this matrix.
+    /// On CPU, uses nested loops. On GPU, launches a 2D transpose kernel.
+    /// @return  New matrix with dimensions (cols x rows)
+    DenseMatrix transpose() const
+    {
+        DenseMatrix result(this->_cols, this->_rows);
+        if constexpr (Dev == Device::CPU)
+        {
+            for (Index j = 0; j < this->_cols; ++j)
+                for (Index i = 0; i < this->_rows; ++i)
+                    result(j, i) = (*this)(i, j);
+        }
+        else
+        {
+            transposeGpuKernel(result);
+        }
+        return result;
+    }
+
 private:
     /// GPU fill kernel wrapper (implemented in dense_matrix.cu).
     /// @param value  Non-zero fill value
     void fillGpuKernel(Scalar value);
+
+    /// GPU transpose kernel wrapper (implemented in dense_matrix.cu).
+    /// @param result  Output matrix (cols x rows dimensions, pre-allocated)
+    void transposeGpuKernel(DenseMatrix& result) const;
 };
 
 } // namespace plamatrix

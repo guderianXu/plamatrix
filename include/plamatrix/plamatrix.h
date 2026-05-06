@@ -9,3 +9,4 @@
 #include "plamatrix/core/device_matrix.h"
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/dense/dense_ops.h"
+#include "plamatrix/ops/gemm.h"

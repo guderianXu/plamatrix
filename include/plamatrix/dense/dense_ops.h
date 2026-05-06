@@ -59,4 +59,51 @@ DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A, 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A, const DenseMatrix<Scalar, Device::GPU>& B);
 
+/// Scalar multiplication: alpha * A (element-wise).
+/// @tparam Scalar  Element type (float or double)
+/// @param alpha  Scalar multiplier
+/// @param A      CPU matrix
+/// @return  New CPU matrix C where C[i] = alpha * A[i]
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> operator*(Scalar alpha, const DenseMatrix<Scalar, Device::CPU>& A)
+{
+    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    Index n = A.size();
+    #pragma omp parallel for
+    for (Index i = 0; i < n; ++i)
+    {
+        C.data()[i] = alpha * A.data()[i];
+    }
+    return C;
+}
+
+/// Scalar multiplication: A * alpha (element-wise). Delegates to alpha * A.
+/// @tparam Scalar  Element type (float or double)
+/// @param A      CPU matrix
+/// @param alpha  Scalar multiplier
+/// @return  New CPU matrix C where C[i] = A[i] * alpha
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> operator*(const DenseMatrix<Scalar, Device::CPU>& A, Scalar alpha)
+{
+    return alpha * A;
+}
+
+/// Scalar addition: alpha + A (element-wise).
+/// @tparam Scalar  Element type (float or double)
+/// @param alpha  Scalar addend
+/// @param A      CPU matrix
+/// @return  New CPU matrix C where C[i] = alpha + A[i]
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> operator+(Scalar alpha, const DenseMatrix<Scalar, Device::CPU>& A)
+{
+    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    Index n = A.size();
+    #pragma omp parallel for
+    for (Index i = 0; i < n; ++i)
+    {
+        C.data()[i] = alpha + A.data()[i];
+    }
+    return C;
+}
+
 } // namespace plamatrix
