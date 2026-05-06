@@ -192,3 +192,156 @@ TEST(SVD, decompose_3x3_Gpu)
         }
     }
 }
+
+// QR: decompose_3x2_Cpu — verify Q orthogonal, R upper triangular, A ≈ Q * R
+TEST(QR, decompose_3x2_Cpu)
+{
+    // 3x2 matrix: A = [1 4; 2 5; 3 6] (column-major)
+    DenseMatrix<double, Device::CPU> A(3, 2);
+    A.setValue(0, 0, 1.0);
+    A.setValue(1, 0, 2.0);
+    A.setValue(2, 0, 3.0);
+    A.setValue(0, 1, 4.0);
+    A.setValue(1, 1, 5.0);
+    A.setValue(2, 1, 6.0);
+
+    auto [Q, R] = qr(A);
+
+    // Q should be 3x3 (square, orthogonal)
+    EXPECT_EQ(Q.rows(), 3);
+    EXPECT_EQ(Q.cols(), 3);
+    // R should be 3x2 (upper triangular)
+    EXPECT_EQ(R.rows(), 3);
+    EXPECT_EQ(R.cols(), 2);
+
+    // Check Q is orthogonal: Q^T * Q ≈ I
+    EXPECT_TRUE(isOrthogonal(Q, 1e-9));
+
+    // Check R is upper triangular
+    for (Index j = 0; j < 2; ++j)
+    {
+        for (Index i = j + 1; i < 3; ++i)
+        {
+            EXPECT_NEAR(R(i, j), 0.0, 1e-9)
+                << "R not upper triangular at (" << i << ", " << j << ")";
+        }
+    }
+
+    // Check A ≈ Q * R (3x3 * 3x2 = 3x2)
+    const double tol = 1e-9;
+    for (Index j = 0; j < 2; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            double qr_sum = 0.0;
+            for (Index k = 0; k < 3; ++k)
+            {
+                qr_sum += Q(i, k) * R(k, j);
+            }
+            EXPECT_NEAR(A(i, j), qr_sum, tol)
+                << "QR mismatch at (" << i << ", " << j << ")";
+        }
+    }
+}
+
+// QR: decompose_3x2_Gpu — same matrix on GPU via cuSOLVER
+TEST(QR, decompose_3x2_Gpu)
+{
+    DenseMatrix<double, Device::CPU> A_cpu(3, 2);
+    A_cpu.setValue(0, 0, 1.0);
+    A_cpu.setValue(1, 0, 2.0);
+    A_cpu.setValue(2, 0, 3.0);
+    A_cpu.setValue(0, 1, 4.0);
+    A_cpu.setValue(1, 1, 5.0);
+    A_cpu.setValue(2, 1, 6.0);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto [Q_gpu, R_gpu] = qr(A_gpu);
+
+    auto Q = Q_gpu.toCpu();
+    auto R = R_gpu.toCpu();
+
+    // Q should be 3x3, R should be 3x2
+    EXPECT_EQ(Q.rows(), 3);
+    EXPECT_EQ(Q.cols(), 3);
+    EXPECT_EQ(R.rows(), 3);
+    EXPECT_EQ(R.cols(), 2);
+
+    // Check Q is orthogonal
+    EXPECT_TRUE(isOrthogonal(Q, 1e-6));
+
+    // Check R is upper triangular
+    for (Index j = 0; j < 2; ++j)
+    {
+        for (Index i = j + 1; i < 3; ++i)
+        {
+            EXPECT_NEAR(R(i, j), 0.0, 1e-6)
+                << "R not upper triangular at (" << i << ", " << j << ")";
+        }
+    }
+
+    // Check A ≈ Q * R
+    const double tol = 1e-6;
+    for (Index j = 0; j < 2; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            double qr_sum = 0.0;
+            for (Index k = 0; k < 3; ++k)
+            {
+                qr_sum += Q(i, k) * R(k, j);
+            }
+            EXPECT_NEAR(A_cpu(i, j), qr_sum, tol)
+                << "QR mismatch at (" << i << ", " << j << ")";
+        }
+    }
+}
+
+// Eigh: symmetric_2x2_Cpu — verify eigenvalues
+TEST(Eigh, symmetric_2x2_Cpu)
+{
+    // Symmetric 2x2 matrix: A = [2 1; 1 2], eigenvalues = 3, 1
+    DenseMatrix<double, Device::CPU> A(2, 2);
+    A.setValue(0, 0, 2.0);
+    A.setValue(1, 0, 1.0);
+    A.setValue(0, 1, 1.0);
+    A.setValue(1, 1, 2.0);
+
+    auto eigvals = eigh(A);
+
+    // Should return a column vector of eigenvalues
+    EXPECT_EQ(eigvals.rows(), 2);
+    EXPECT_EQ(eigvals.cols(), 1);
+
+    // Eigenvalues should be sorted descending
+    EXPECT_GE(eigvals(0, 0), eigvals(1, 0));
+
+    // Check values: λ₁ = 3, λ₂ = 1
+    EXPECT_NEAR(eigvals(0, 0), 3.0, 1e-9);
+    EXPECT_NEAR(eigvals(1, 0), 1.0, 1e-9);
+}
+
+// Eigh: symmetric_2x2_Gpu — same matrix on GPU via cuSOLVER
+TEST(Eigh, symmetric_2x2_Gpu)
+{
+    DenseMatrix<double, Device::CPU> A_cpu(2, 2);
+    A_cpu.setValue(0, 0, 2.0);
+    A_cpu.setValue(1, 0, 1.0);
+    A_cpu.setValue(0, 1, 1.0);
+    A_cpu.setValue(1, 1, 2.0);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto eigvals_gpu = eigh(A_gpu);
+    auto eigvals = eigvals_gpu.toCpu();
+
+    // Should return a column vector of eigenvalues
+    EXPECT_EQ(eigvals.rows(), 2);
+    EXPECT_EQ(eigvals.cols(), 1);
+
+    // Eigenvalues should be sorted descending
+    EXPECT_GE(eigvals(0, 0), eigvals(1, 0));
+
+    // Check values: λ₁ = 3, λ₂ = 1
+    EXPECT_NEAR(eigvals(0, 0), 3.0, 1e-6);
+    EXPECT_NEAR(eigvals(1, 0), 1.0, 1e-6);
+}

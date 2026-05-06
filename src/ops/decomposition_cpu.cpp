@@ -209,4 +209,256 @@ svd(const DenseMatrix<float, Device::CPU>&);
 template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
 svd(const DenseMatrix<double, Device::CPU>&);
 
+template <typename Scalar>
+std::tuple<DenseMatrix<Scalar, Device::CPU>, DenseMatrix<Scalar, Device::CPU>>
+qr(const DenseMatrix<Scalar, Device::CPU>& A)
+{
+    Index m = A.rows();
+    Index n = A.cols();
+
+    if (m == 0 || n == 0)
+    {
+        throw std::runtime_error("QR: input matrix has zero dimensions");
+    }
+
+    // R = copy of A, work in place
+    DenseMatrix<Scalar, Device::CPU> R(m, n);
+    for (Index j = 0; j < n; ++j)
+    {
+        for (Index i = 0; i < m; ++i)
+        {
+            R(i, j) = A(i, j);
+        }
+    }
+
+    Index p = (m < n) ? m : n;  // min(m, n)
+    Scalar epsilon = static_cast<Scalar>(1e-15);
+
+    // Store tau for each reflector
+    std::vector<Scalar> tau(p, Scalar(0));
+
+    // Householder reflections
+    for (Index k = 0; k < p; ++k)
+    {
+        Index len = m - k;
+
+        // Compute norm of column x = R[k:m, k]
+        Scalar norm_x = Scalar(0);
+        for (Index i = k; i < m; ++i)
+        {
+            norm_x += R(i, k) * R(i, k);
+        }
+        norm_x = std::sqrt(norm_x);
+
+        if (norm_x < epsilon)
+        {
+            tau[k] = Scalar(0);
+            continue;
+        }
+
+        Scalar x0 = R(k, k);
+        Scalar alpha = -sign(x0) * norm_x;
+        Scalar v0 = x0 - alpha;
+
+        // Store alpha on diagonal (this becomes R(k,k))
+        R(k, k) = alpha;
+
+        // Normalize v and store below diagonal (v[i] = x[i] / v0)
+        for (Index i = 1; i < static_cast<Index>(len); ++i)
+        {
+            R(k + i, k) = R(k + i, k) / v0;
+        }
+
+        // tau = (alpha - x0) / alpha
+        tau[k] = (alpha - x0) / alpha;
+
+        // Apply Householder to trailing submatrix
+        for (Index j = k + 1; j < n; ++j)
+        {
+            // dot = v^T * R[k:m, j]  (v[0] = 1)
+            Scalar dot = R(k, j);
+            for (Index i = 1; i < static_cast<Index>(len); ++i)
+            {
+                dot += R(k + i, k) * R(k + i, j);
+            }
+
+            // R[k:m, j] -= tau * dot * v
+            R(k, j) -= tau[k] * dot;
+            for (Index i = 1; i < static_cast<Index>(len); ++i)
+            {
+                R(k + i, j) -= tau[k] * dot * R(k + i, k);
+            }
+        }
+    }
+
+    // Build Q = I
+    DenseMatrix<Scalar, Device::CPU> Q(m, m);
+    for (Index i = 0; i < m; ++i)
+    {
+        Q(i, i) = Scalar(1);
+    }
+
+    // Apply H_0, H_1, ..., H_{p-1} to Q from the RIGHT
+    for (Index k = 0; k < p; ++k)
+    {
+        Scalar tau_k = tau[k];
+        if (tau_k == Scalar(0))
+        {
+            continue;
+        }
+
+        Index len = m - k;
+
+        for (Index r = 0; r < m; ++r)
+        {
+            // dot = v^T * Q[r, k:m]  (v[0] = 1)
+            Scalar dot = Q(r, k);
+            for (Index i = 1; i < static_cast<Index>(len); ++i)
+            {
+                dot += R(k + i, k) * Q(r, k + i);
+            }
+
+            // Q[r, k:m] -= tau * dot * v
+            Q(r, k) -= tau_k * dot;
+            for (Index i = 1; i < static_cast<Index>(len); ++i)
+            {
+                Q(r, k + i) -= tau_k * dot * R(k + i, k);
+            }
+        }
+    }
+
+    // Zero out the lower triangular part of R (where Householder vectors were stored)
+    for (Index j = 0; j < p; ++j)
+    {
+        for (Index i = j + 1; i < m; ++i)
+        {
+            R(i, j) = Scalar(0);
+        }
+    }
+
+    return {std::move(Q), std::move(R)};
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
+{
+    Index n = A.rows();
+
+    if (n == 0)
+    {
+        throw std::runtime_error("Eigh: input matrix has zero dimensions");
+    }
+
+    if (A.cols() != n)
+    {
+        throw std::runtime_error("Eigh: input matrix must be square");
+    }
+
+    // Copy A to working matrix
+    DenseMatrix<Scalar, Device::CPU> A_work(n, n);
+    for (Index j = 0; j < n; ++j)
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            A_work(i, j) = A(i, j);
+        }
+    }
+
+    Scalar epsilon = static_cast<Scalar>(1e-12);
+    constexpr int maxSweeps = 100;
+
+    for (int sweep = 0; sweep < maxSweeps; ++sweep)
+    {
+        Scalar max_off = Scalar(0);
+
+        for (Index p = 0; p < n - 1; ++p)
+        {
+            for (Index q = p + 1; q < n; ++q)
+            {
+                Scalar apq = A_work(p, q);
+                if (std::abs(apq) < epsilon)
+                {
+                    continue;
+                }
+
+                max_off = std::max(max_off, std::abs(apq));
+
+                Scalar app = A_work(p, p);
+                Scalar aqq = A_work(q, q);
+
+                // Compute Jacobi rotation
+                Scalar tau_val = (aqq - app) / (Scalar(2) * apq);
+                Scalar t = -sign(tau_val) / (std::abs(tau_val) + std::sqrt(Scalar(1) + tau_val * tau_val));
+                Scalar c = Scalar(1) / std::sqrt(Scalar(1) + t * t);
+                Scalar s = c * t;
+
+                // Update diagonal entries
+                A_work(p, p) = c * c * app + s * s * aqq - Scalar(2) * c * s * apq;
+                A_work(q, q) = s * s * app + c * c * aqq + Scalar(2) * c * s * apq;
+                A_work(p, q) = Scalar(0);
+                A_work(q, p) = Scalar(0);
+
+                // Update off-diagonal elements in rows/cols p and q
+                for (Index k = 0; k < n; ++k)
+                {
+                    if (k == p || k == q)
+                    {
+                        continue;
+                    }
+
+                    Scalar akp = A_work(k, p);
+                    Scalar akq = A_work(k, q);
+                    A_work(k, p) = c * akp - s * akq;
+                    A_work(p, k) = A_work(k, p);
+                    A_work(k, q) = s * akp + c * akq;
+                    A_work(q, k) = A_work(k, q);
+                }
+            }
+        }
+
+        if (max_off < epsilon)
+        {
+            break;
+        }
+    }
+
+    // Extract eigenvalues from diagonal
+    DenseMatrix<Scalar, Device::CPU> eigvals(n, 1);
+    for (Index i = 0; i < n; ++i)
+    {
+        eigvals(i, 0) = A_work(i, i);
+    }
+
+    // Sort eigenvalues in descending order
+    for (Index i = 0; i < n - 1; ++i)
+    {
+        Index max_idx = i;
+        for (Index j = i + 1; j < n; ++j)
+        {
+            if (eigvals(j, 0) > eigvals(max_idx, 0))
+            {
+                max_idx = j;
+            }
+        }
+        if (max_idx != i)
+        {
+            Scalar tmp = eigvals(i, 0);
+            eigvals(i, 0) = eigvals(max_idx, 0);
+            eigvals(max_idx, 0) = tmp;
+        }
+    }
+
+    return eigvals;
+}
+
+// Explicit template instantiations for qr
+template std::tuple<DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>>
+qr(const DenseMatrix<float, Device::CPU>&);
+template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
+qr(const DenseMatrix<double, Device::CPU>&);
+
+// Explicit template instantiations for eigh
+template DenseMatrix<float, Device::CPU> eigh(const DenseMatrix<float, Device::CPU>&);
+template DenseMatrix<double, Device::CPU> eigh(const DenseMatrix<double, Device::CPU>&);
+
 } // namespace plamatrix
