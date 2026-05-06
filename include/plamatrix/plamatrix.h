@@ -12,3 +12,5 @@
 #include "plamatrix/ops/gemm.h"
 #include "plamatrix/ops/decomposition.h"
 #include "plamatrix/ops/solver.h"
+#include "plamatrix/sparse/coo_matrix.h"
+#include "plamatrix/sparse/csr_matrix.h"
