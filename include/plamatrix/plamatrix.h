@@ -11,3 +11,4 @@
 #include "plamatrix/dense/dense_ops.h"
 #include "plamatrix/ops/gemm.h"
 #include "plamatrix/ops/decomposition.h"
+#include "plamatrix/ops/solver.h"
