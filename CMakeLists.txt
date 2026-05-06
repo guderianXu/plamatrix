@@ -42,6 +42,7 @@ target_link_libraries(plamatrix
         CUDA::cublas
         CUDA::cusolver
         CUDA::cudart
+        CUDA::cuda_driver
         OpenMP::OpenMP_CXX
 )
 
