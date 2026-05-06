@@ -8,3 +8,4 @@
 #include "plamatrix/core/allocator.h"
 #include "plamatrix/core/device_matrix.h"
 #include "plamatrix/dense/dense_matrix.h"
+#include "plamatrix/dense/dense_ops.h"
