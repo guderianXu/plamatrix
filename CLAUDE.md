@@ -17,7 +17,7 @@
 
 ## 格式规范
 - 4 空格缩进，不使用 tab
-- 花括号 Allman 风格（左花括号独占一行）
+- 
 - 行宽上限 120 字符
 - 头文件函数声明必须写文档注释（`///` 或 `/** */`），说明参数、返回值、异常条件
 
@@ -46,11 +46,11 @@
 
 # Git 同步
 - **每次 commit 后必须 push 到 GitHub**：`git push origin main`（含 tags: `git push origin <tag>`）
-- 仓库地址：`https://github.com/guderianXu/plascan`
+- 仓库地址：`https://github.com/guderianXu/plamatrix`
 - **Git 作者配置**：必须使用 GitHub 关联邮箱，否则提交不计入贡献统计
   - `git config user.email "guderian_xu@henu.edu.cn"`
   - `git config user.name "guderianXu"`
-  - 注意：`guderian@plascan.local` 是不关联 GitHub 的本地邮箱，不要使用
+  - 注意：`guderian@plamatrix.local` 是不关联 GitHub 的本地邮箱，不要使用
   - 如已用错误邮箱提交，需要用 `git filter-branch --env-filter` 重写历史
 
 # 编译验证
