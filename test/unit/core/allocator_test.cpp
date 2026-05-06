@@ -3,14 +3,14 @@
 
 using namespace plamatrix;
 
-TEST(Allocator, cpuAllocate_ReturnsNonNull)
+TEST(CpuAllocator, allocate_ReturnsNonNull)
 {
     float* ptr = CpuAllocator<float>::allocate(100);
     ASSERT_NE(ptr, nullptr);
     CpuAllocator<float>::deallocate(ptr);
 }
 
-TEST(Allocator, cpuAllocate_CanReadWrite)
+TEST(CpuAllocator, allocate_CanReadWrite)
 {
     float* ptr = CpuAllocator<float>::allocate(3);
     ptr[0] = 1.0f;
@@ -22,14 +22,14 @@ TEST(Allocator, cpuAllocate_CanReadWrite)
     CpuAllocator<float>::deallocate(ptr);
 }
 
-TEST(Allocator, gpuAllocate_ReturnsNonNull)
+TEST(GpuAllocator, allocate_ReturnsNonNull)
 {
     float* ptr = GpuAllocator<float>::allocate(100);
     ASSERT_NE(ptr, nullptr);
     GpuAllocator<float>::deallocate(ptr);
 }
 
-TEST(Allocator, gpuToCpu_RoundTrip)
+TEST(GpuAllocator, allocate_CudaMemcpyRoundTrip)
 {
     float host_data[3] = { 1.0f, 2.0f, 3.0f };
     float* gpu_ptr = GpuAllocator<float>::allocate(3);
