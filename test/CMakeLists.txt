@@ -6,6 +6,7 @@ add_executable(plamatrix_tests
     unit/ops/gemm_test.cpp
     unit/ops/decomposition_test.cpp
     unit/ops/solver_test.cpp
+    unit/ops/point_cloud_test.cpp
     unit/sparse/coo_matrix_test.cpp
     unit/sparse/csr_matrix_test.cpp
 )

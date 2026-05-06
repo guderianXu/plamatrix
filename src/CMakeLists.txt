@@ -1,1 +1,1 @@
-target_sources(plamatrix PRIVATE plamatrix.cu dense/dense_matrix.cu dense/dense_ops.cu ops/gemm_cpu.cpp ops/gemm.cu ops/decomposition_cpu.cpp ops/decomposition.cu ops/solver_cpu.cpp ops/solver.cu sparse/csr_matrix.cpp)
+target_sources(plamatrix PRIVATE plamatrix.cu dense/dense_matrix.cu dense/dense_ops.cu ops/gemm_cpu.cpp ops/gemm.cu ops/decomposition_cpu.cpp ops/decomposition.cu ops/solver_cpu.cpp ops/solver.cu ops/point_cloud_cpu.cpp ops/point_cloud.cu sparse/csr_matrix.cpp)
