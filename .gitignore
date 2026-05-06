@@ -1,0 +1,7 @@
+build/
+*.o
+*.obj
+*.cu.o
+.DS_Store
+benchmark_report*.md
+.worktrees/
