@@ -4,18 +4,20 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef PLAMATRIX_NO_CUDA
+#include "plamatrix/core/no_cuda_stubs.h"
+#else
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
+#endif
 
 namespace plamatrix
 {
 
+#ifdef PLAMATRIX_WITH_CUDA
+
 /// Check CUDA runtime API error. Throws std::runtime_error with file/line/expression details on failure.
-/// @param err  cudaError_t returned by a CUDA runtime API call
-/// @param file source file name (typically __FILE__)
-/// @param line line number (typically __LINE__)
-/// @param expr expression string (typically #call from the macro)
 inline void cudaCheck(cudaError_t err, const char* file, int line, const char* expr)
 {
     if (err != cudaSuccess)
@@ -71,10 +73,6 @@ inline const char* cusolverStatusString(cusolverStatus_t stat)
 } // namespace detail
 
 /// Check cuBLAS API error. Throws std::runtime_error with file/line/expression details on failure.
-/// @param stat cublasStatus_t returned by a cuBLAS API call
-/// @param file source file name (typically __FILE__)
-/// @param line line number (typically __LINE__)
-/// @param expr expression string (typically #call from the macro)
 inline void cublasCheck(cublasStatus_t stat, const char* file, int line, const char* expr)
 {
     if (stat != CUBLAS_STATUS_SUCCESS)
@@ -88,10 +86,6 @@ inline void cublasCheck(cublasStatus_t stat, const char* file, int line, const c
 }
 
 /// Check cuSOLVER API error. Throws std::runtime_error with file/line/expression details on failure.
-/// @param stat cusolverStatus_t returned by a cuSOLVER API call
-/// @param file source file name (typically __FILE__)
-/// @param line line number (typically __LINE__)
-/// @param expr expression string (typically #call from the macro)
 inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, const char* expr)
 {
     if (stat != CUSOLVER_STATUS_SUCCESS)
@@ -104,8 +98,10 @@ inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, con
     }
 }
 
-} // namespace plamatrix
-
 #define PLAMATRIX_CHECK_CUDA(call)    plamatrix::cudaCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
+
+#endif // PLAMATRIX_WITH_CUDA
+
+} // namespace plamatrix

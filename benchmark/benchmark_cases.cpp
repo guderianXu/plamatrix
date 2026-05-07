@@ -467,7 +467,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"gemm", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runGemmSerial(r, N);
             if (omp)    runGemmOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runGemmCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -476,7 +478,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"add", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runAddSerial(r, N);
             if (omp)    runAddOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runAddCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -485,7 +489,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"sub", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runSubSerial(r, N);
             if (omp)    runSubOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runSubCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -494,7 +500,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"transpose", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runTransposeSerial(r, N);
             if (omp)    runTransposeOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runTransposeCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -511,7 +519,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"svd", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runSvdSerial(r, N);
             if (omp)    runSvdOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runSvdCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -520,7 +530,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"qr", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runQrSerial(r, N);
             if (omp)    runQrOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runQrCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -529,7 +541,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"eigh", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runEighSerial(r, N);
             if (omp)    runEighOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runEighCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -538,7 +552,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"solve", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runSolveSerial(r, N);
             if (omp)    runSolveOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runSolveCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -547,7 +563,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"covariance", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runCovarianceSerial(r, N);
             if (omp)    runCovarianceOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runCovarianceCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
 
@@ -556,7 +574,9 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"pointTransform", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runPointTransformSerial(r, N);
             if (omp)    runPointTransformOmp(r, N);
+            #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   detail::runPointTransformCuda(r, N);
+#endif
             report.results.push_back(std::move(r));
         }
     }
