@@ -418,15 +418,15 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
 {
     for (Index N : sizes)
     {
-        std::cerr << "  Benchmarking size N=" << N << "..." << std::endl;
+        std::cerr << "--- N=" << N << " ---" << std::endl;
 
         // gemm
         {
             CaseResult r{"gemm", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runGemmSerial(r, N);
-            if (omp)    runGemmOmp(r, N);
+            if (serial) { std::cerr << "  gemm serial..." << std::endl; runGemmSerial(r, N); }
+            if (omp)    { std::cerr << "  gemm omp..." << std::endl;    runGemmOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runGemmCuda(r, N);
+            if (cuda)   { std::cerr << "  gemm cuda..." << std::endl;   detail::runGemmCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -434,10 +434,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // add
         {
             CaseResult r{"add", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runAddSerial(r, N);
-            if (omp)    runAddOmp(r, N);
+            if (serial) { std::cerr << "  add serial..." << std::endl; runAddSerial(r, N); }
+            if (omp)    { std::cerr << "  add omp..." << std::endl;    runAddOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runAddCuda(r, N);
+            if (cuda)   { std::cerr << "  add cuda..." << std::endl;   detail::runAddCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -445,10 +445,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // sub
         {
             CaseResult r{"sub", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runSubSerial(r, N);
-            if (omp)    runSubOmp(r, N);
+            if (serial) { std::cerr << "  sub serial..." << std::endl; runSubSerial(r, N); }
+            if (omp)    { std::cerr << "  sub omp..." << std::endl;    runSubOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runSubCuda(r, N);
+            if (cuda)   { std::cerr << "  sub cuda..." << std::endl;   detail::runSubCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -456,10 +456,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // transpose
         {
             CaseResult r{"transpose", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runTransposeSerial(r, N);
-            if (omp)    runTransposeOmp(r, N);
+            if (serial) { std::cerr << "  transpose serial..." << std::endl; runTransposeSerial(r, N); }
+            if (omp)    { std::cerr << "  transpose omp..." << std::endl;    runTransposeOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runTransposeCuda(r, N);
+            if (cuda)   { std::cerr << "  transpose cuda..." << std::endl;   detail::runTransposeCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -467,18 +467,18 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // scalarMul
         {
             CaseResult r{"scalarMul", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runScalarMulSerial(r, N);
-            if (omp)    runScalarMulOmp(r, N);
+            { std::cerr << "  ScalarMulSerial serial..." << std::endl; runScalarMulSerial(r, N); }
+            { std::cerr << "  ScalarMulOmp omp..." << std::endl;    runScalarMulOmp(r, N); }
             report.results.push_back(std::move(r));
         }
 
         // svd
         {
             CaseResult r{"svd", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runSvdSerial(r, N);
-            if (omp)    runSvdOmp(r, N);
+            { std::cerr << "  SvdSerial serial..." << std::endl; runSvdSerial(r, N); }
+            { std::cerr << "  SvdOmp omp..." << std::endl;    runSvdOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runSvdCuda(r, N);
+            { std::cerr << "  SvdCuda cuda..." << std::endl;   detail::runSvdCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -486,10 +486,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // qr
         {
             CaseResult r{"qr", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runQrSerial(r, N);
-            if (omp)    runQrOmp(r, N);
+            { std::cerr << "  QrSerial serial..." << std::endl; runQrSerial(r, N); }
+            { std::cerr << "  QrOmp omp..." << std::endl;    runQrOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runQrCuda(r, N);
+            { std::cerr << "  QrCuda cuda..." << std::endl;   detail::runQrCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -497,10 +497,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // eigh
         {
             CaseResult r{"eigh", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runEighSerial(r, N);
-            if (omp)    runEighOmp(r, N);
+            { std::cerr << "  EighSerial serial..." << std::endl; runEighSerial(r, N); }
+            { std::cerr << "  EighOmp omp..." << std::endl;    runEighOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runEighCuda(r, N);
+            { std::cerr << "  EighCuda cuda..." << std::endl;   detail::runEighCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -508,10 +508,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // solve
         {
             CaseResult r{"solve", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runSolveSerial(r, N);
-            if (omp)    runSolveOmp(r, N);
+            { std::cerr << "  SolveSerial serial..." << std::endl; runSolveSerial(r, N); }
+            { std::cerr << "  SolveOmp omp..." << std::endl;    runSolveOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runSolveCuda(r, N);
+            { std::cerr << "  SolveCuda cuda..." << std::endl;   detail::runSolveCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -519,10 +519,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // covariance
         {
             CaseResult r{"covariance", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runCovarianceSerial(r, N);
-            if (omp)    runCovarianceOmp(r, N);
+            { std::cerr << "  CovarianceSerial serial..." << std::endl; runCovarianceSerial(r, N); }
+            { std::cerr << "  CovarianceOmp omp..." << std::endl;    runCovarianceOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runCovarianceCuda(r, N);
+            { std::cerr << "  CovarianceCuda cuda..." << std::endl;   detail::runCovarianceCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -530,10 +530,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // pointTransform
         {
             CaseResult r{"pointTransform", N, -1.0, -1.0, -1.0, -1.0};
-            if (serial) runPointTransformSerial(r, N);
-            if (omp)    runPointTransformOmp(r, N);
+            { std::cerr << "  PointTransformSerial serial..." << std::endl; runPointTransformSerial(r, N); }
+            { std::cerr << "  PointTransformOmp omp..." << std::endl;    runPointTransformOmp(r, N); }
             #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   detail::runPointTransformCuda(r, N);
+            { std::cerr << "  PointTransformCuda cuda..." << std::endl;   detail::runPointTransformCuda(r, N); }
 #endif
             report.results.push_back(std::move(r));
         }
