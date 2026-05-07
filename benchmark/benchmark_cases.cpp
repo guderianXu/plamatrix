@@ -22,39 +22,75 @@ namespace plamatrix
 
 // ============================================================================
 // measure() — timing utility
+// Returns median time in milliseconds across `trials` timed runs.
 // ============================================================================
 
 double measure(BenchmarkFn fn, int warmup, int trials)
 {
     using Clock = std::chrono::high_resolution_clock;
 
-    // Warmup — no timing
-    for (int i = 0; i < warmup; ++i)
-    {
-        fn();
-    }
+    for (int i = 0; i < warmup; ++i) { fn(); }
 
-    // Timed trials
     std::vector<double> times;
     times.reserve(static_cast<std::size_t>(trials));
 
     for (int i = 0; i < trials; ++i)
     {
+        cudaDeviceSynchronize();
         auto t_start = Clock::now();
         fn();
+        cudaDeviceSynchronize();
         auto t_end = Clock::now();
         double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         times.push_back(ms);
     }
 
-    // Return median
     std::sort(times.begin(), times.end());
     std::size_t mid = times.size() / 2;
-    if (times.size() % 2 == 0)
-    {
-        return (times[mid - 1] + times[mid]) * 0.5;
-    }
+    if (times.size() % 2 == 0) { return (times[mid - 1] + times[mid]) * 0.5; }
     return times[mid];
+}
+
+// For fast element-wise operations: repeat internally to accumulate measurable wall-clock time,
+// then divide by repeat count to report per-operation time. This avoids noise dominating
+// measurements on medium/large matrices where a single op runs in <1 ms.
+template <typename Fn>
+static double measureRepeated(Fn&& fn, int warmup, int trials, int repeats)
+{
+    for (int i = 0; i < warmup; ++i)
+    {
+        for (int r = 0; r < repeats; ++r) { fn(); }
+    }
+
+    using Clock = std::chrono::high_resolution_clock;
+    std::vector<double> times;
+    times.reserve(static_cast<std::size_t>(trials));
+
+    for (int i = 0; i < trials; ++i)
+    {
+        cudaDeviceSynchronize();
+        auto t_start = Clock::now();
+        for (int r = 0; r < repeats; ++r) { fn(); }
+        cudaDeviceSynchronize();
+        auto t_end = Clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        times.push_back(ms / repeats);
+    }
+
+    std::sort(times.begin(), times.end());
+    std::size_t mid = times.size() / 2;
+    if (times.size() % 2 == 0) { return (times[mid - 1] + times[mid]) * 0.5; }
+    return times[mid];
+}
+
+// Heuristic: for fast ops, repeat enough times so total wall-clock is ~100 ms,
+// which gives reliable timing without taking forever on large matrices.
+static int repeatCount(Index N)
+{
+    if (N <= 1024)  return 500;
+    if (N <= 4096)  return 100;
+    if (N <= 16384) return 20;
+    return 5;
 }
 
 // ============================================================================
@@ -66,20 +102,15 @@ namespace
 
 using FloatMatrix = DenseMatrix<float, Device::CPU>;
 
-/// Fill a CPU matrix with uniform random values in [0, 1).
 void randomFill(FloatMatrix& mat)
 {
-    std::mt19937 rng(42); // Fixed seed for reproducibility
+    std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     Index n = mat.size();
     float* d = mat.data();
-    for (Index i = 0; i < n; ++i)
-    {
-        d[i] = dist(rng);
-    }
+    for (Index i = 0; i < n; ++i) { d[i] = dist(rng); }
 }
 
-/// Create a random CPU matrix of given dimensions.
 FloatMatrix makeRandom(Index rows, Index cols)
 {
     FloatMatrix mat(rows, cols);
@@ -87,7 +118,6 @@ FloatMatrix makeRandom(Index rows, Index cols)
     return mat;
 }
 
-/// Create a random symmetric CPU matrix of given size.
 FloatMatrix makeRandomSymmetric(Index n)
 {
     FloatMatrix mat(n, n);
@@ -105,29 +135,17 @@ FloatMatrix makeRandomSymmetric(Index n)
     return mat;
 }
 
-/// RAII helper to temporarily set OMP_NUM_THREADS.
 class OmpThreadGuard
 {
 public:
-    explicit OmpThreadGuard(int threads)
-        : _prev(omp_get_max_threads())
-    {
-        omp_set_num_threads(threads);
-    }
-
-    ~OmpThreadGuard()
-    {
-        omp_set_num_threads(_prev);
-    }
-
+    explicit OmpThreadGuard(int threads) : _prev(omp_get_max_threads()) { omp_set_num_threads(threads); }
+    ~OmpThreadGuard() { omp_set_num_threads(_prev); }
     OmpThreadGuard(const OmpThreadGuard&) = delete;
     OmpThreadGuard& operator=(const OmpThreadGuard&) = delete;
-
 private:
     int _prev;
 };
 
-/// Prevent compiler from optimizing away a value.
 template <typename T>
 void doNotOptimize(T const& value)
 {
@@ -143,6 +161,8 @@ void doNotOptimize(T const& value)
 namespace
 {
 
+// ---- gemm (compute-bound) ----
+
 void runGemmSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
@@ -152,7 +172,7 @@ void runGemmSerial(CaseResult& r, Index N)
     {
         auto C = gemm(A, B);
         doNotOptimize(C.data());
-    });
+    }, 2, 5);
 }
 
 void runGemmOmp(CaseResult& r, Index N)
@@ -163,254 +183,271 @@ void runGemmOmp(CaseResult& r, Index N)
     {
         auto C = gemm(A, B);
         doNotOptimize(C.data());
-    });
+    }, 2, 5);
 }
+
+// ---- add (memory-bound) ----
 
 void runAddSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto C = add(A, B);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runAddOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto C = add(A, B);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
+
+// ---- sub ----
 
 void runSubSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto C = sub(A, B);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runSubOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto C = sub(A, B);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
+
+// ---- transpose ----
 
 void runTransposeSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto C = A.transpose();
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runTransposeOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto C = A.transpose();
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
+
+// ---- scalarMul ----
 
 void runScalarMulSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     float alpha = 2.0f;
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto C = alpha * A;
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runScalarMulOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     float alpha = 2.0f;
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto C = alpha * A;
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
+
+// ---- svd (very compute-heavy) ----
 
 void runSvdSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
-    // SVD is expensive — fewer trials
     r.time_serial_ms = measure([&]()
     {
         auto [U, S, Vt] = svd(A);
         doNotOptimize(U.data());
-    }, 1, 3);
+    }, 0, 3);
 }
 
 void runSvdOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
-    // SVD is expensive — fewer trials
     r.time_omp_ms = measure([&]()
     {
         auto [U, S, Vt] = svd(A);
         doNotOptimize(U.data());
-    }, 1, 3);
+    }, 0, 3);
 }
+
+// ---- qr ----
 
 void runQrSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
-    // QR is expensive — fewer trials
     r.time_serial_ms = measure([&]()
     {
         auto [Q, R] = qr(A);
         doNotOptimize(Q.data());
-    }, 1, 3);
+    }, 0, 3);
 }
 
 void runQrOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
-    // QR is expensive — fewer trials
     r.time_omp_ms = measure([&]()
     {
         auto [Q, R] = qr(A);
         doNotOptimize(Q.data());
-    }, 1, 3);
+    }, 0, 3);
 }
+
+// ---- eigh ----
 
 void runEighSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandomSymmetric(N);
-    // Eigh is expensive — fewer trials
     r.time_serial_ms = measure([&]()
     {
         auto eig = eigh(A);
         doNotOptimize(eig.data());
-    }, 1, 3);
+    }, 0, 3);
 }
 
 void runEighOmp(CaseResult& r, Index N)
 {
     auto A = makeRandomSymmetric(N);
-    // Eigh is expensive — fewer trials
     r.time_omp_ms = measure([&]()
     {
         auto eig = eigh(A);
         doNotOptimize(eig.data());
-    }, 1, 3);
+    }, 0, 3);
 }
+
+// ---- solve ----
 
 void runSolveSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
-    // Add identity to avoid singular matrix
-    for (Index i = 0; i < N; ++i)
-    {
-        A(i, i) += static_cast<float>(N);
-    }
+    for (Index i = 0; i < N; ++i) { A(i, i) += static_cast<float>(N); }
     auto B = makeRandom(N, 1);
     r.time_serial_ms = measure([&]()
     {
         auto X = solve<float, Device::CPU>(A, B);
         doNotOptimize(X.data());
-    }, 1, 5);
+    }, 0, 5);
 }
 
 void runSolveOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
-    for (Index i = 0; i < N; ++i)
-    {
-        A(i, i) += static_cast<float>(N);
-    }
+    for (Index i = 0; i < N; ++i) { A(i, i) += static_cast<float>(N); }
     auto B = makeRandom(N, 1);
     r.time_omp_ms = measure([&]()
     {
         auto X = solve<float, Device::CPU>(A, B);
         doNotOptimize(X.data());
-    }, 1, 5);
+    }, 0, 5);
 }
+
+// ---- covariance ----
 
 void runCovarianceSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto points = makeRandom(N, 3);
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto C = covarianceMatrix<float, Device::CPU>(points);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runCovarianceOmp(CaseResult& r, Index N)
 {
     auto points = makeRandom(N, 3);
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto C = covarianceMatrix<float, Device::CPU>(points);
         doNotOptimize(C.data());
-    });
+    }, 1, 5, repeats);
 }
+
+// ---- pointTransform ----
 
 void runPointTransformSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto points = makeRandom(N, 3);
-
     Vec3<float> axis{0.0f, 0.0f, 1.0f};
     float angle = 0.5f;
     auto R = rotationMatrix<float, Device::CPU>(axis, angle);
     Vec3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
-    r.time_serial_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_serial_ms = measureRepeated([&]()
     {
         auto result = transformPoints<float, Device::CPU>(T, points);
         doNotOptimize(result.data());
-    });
+    }, 1, 5, repeats);
 }
 
 void runPointTransformOmp(CaseResult& r, Index N)
 {
     auto points = makeRandom(N, 3);
-
     Vec3<float> axis{0.0f, 0.0f, 1.0f};
     float angle = 0.5f;
     auto R = rotationMatrix<float, Device::CPU>(axis, angle);
     Vec3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
-    r.time_omp_ms = measure([&]()
+    int repeats = repeatCount(N);
+    r.time_omp_ms = measureRepeated([&]()
     {
         auto result = transformPoints<float, Device::CPU>(T, points);
         doNotOptimize(result.data());
-    });
+    }, 1, 5, repeats);
 }
 
 } // anonymous namespace
@@ -421,24 +458,6 @@ void runPointTransformOmp(CaseResult& r, Index N)
 
 void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cuda, BenchmarkReport& report)
 {
-    // Benchmark case names in display order
-    static const char* kCaseNames[] =
-    {
-        "gemm",
-        "add",
-        "sub",
-        "transpose",
-        "scalarMul",
-        "svd",
-        "qr",
-        "eigh",
-        "solve",
-        "covariance",
-        "pointTransform"
-    };
-
-    constexpr int kNumCases = static_cast<int>(sizeof(kCaseNames) / sizeof(kCaseNames[0]));
-
     for (Index N : sizes)
     {
         std::cerr << "  Benchmarking size N=" << N << "..." << std::endl;
@@ -484,7 +503,6 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             CaseResult r{"scalarMul", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) runScalarMulSerial(r, N);
             if (omp)    runScalarMulOmp(r, N);
-            // No GPU scalarMul
             report.results.push_back(std::move(r));
         }
 
