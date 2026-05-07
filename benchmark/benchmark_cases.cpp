@@ -51,48 +51,6 @@ double measure(BenchmarkFn fn, int warmup, int trials)
     return times[mid];
 }
 
-// For fast element-wise operations: repeat internally to accumulate measurable wall-clock time,
-// then divide by repeat count to report per-operation time. This avoids noise dominating
-// measurements on medium/large matrices where a single op runs in <1 ms.
-template <typename Fn>
-static double measureRepeated(Fn&& fn, int warmup, int trials, int repeats)
-{
-    for (int i = 0; i < warmup; ++i)
-    {
-        for (int r = 0; r < repeats; ++r) { fn(); }
-    }
-
-    using Clock = std::chrono::high_resolution_clock;
-    std::vector<double> times;
-    times.reserve(static_cast<std::size_t>(trials));
-
-    for (int i = 0; i < trials; ++i)
-    {
-        cudaDeviceSynchronize();
-        auto t_start = Clock::now();
-        for (int r = 0; r < repeats; ++r) { fn(); }
-        cudaDeviceSynchronize();
-        auto t_end = Clock::now();
-        double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
-        times.push_back(ms / repeats);
-    }
-
-    std::sort(times.begin(), times.end());
-    std::size_t mid = times.size() / 2;
-    if (times.size() % 2 == 0) { return (times[mid - 1] + times[mid]) * 0.5; }
-    return times[mid];
-}
-
-// Heuristic: for fast ops, repeat enough times so total wall-clock is ~100 ms,
-// which gives reliable timing without taking forever on large matrices.
-static int repeatCount(Index N)
-{
-    if (N <= 1024)  return 500;
-    if (N <= 4096)  return 100;
-    if (N <= 16384) return 20;
-    return 5;
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -193,24 +151,24 @@ void runAddSerial(CaseResult& r, Index N)
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto C = add(A, B);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runAddOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto C = add(A, B);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 // ---- sub ----
@@ -220,24 +178,24 @@ void runSubSerial(CaseResult& r, Index N)
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto C = sub(A, B);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runSubOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     auto B = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto C = sub(A, B);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 // ---- transpose ----
@@ -246,23 +204,23 @@ void runTransposeSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto C = A.transpose();
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runTransposeOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto C = A.transpose();
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 // ---- scalarMul ----
@@ -272,24 +230,24 @@ void runScalarMulSerial(CaseResult& r, Index N)
     OmpThreadGuard guard(1);
     auto A = makeRandom(N, N);
     float alpha = 2.0f;
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto C = alpha * A;
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runScalarMulOmp(CaseResult& r, Index N)
 {
     auto A = makeRandom(N, N);
     float alpha = 2.0f;
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto C = alpha * A;
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 // ---- svd (very compute-heavy) ----
@@ -394,23 +352,23 @@ void runCovarianceSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto points = makeRandom(N, 3);
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto C = covarianceMatrix<float, Device::CPU>(points);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runCovarianceOmp(CaseResult& r, Index N)
 {
     auto points = makeRandom(N, 3);
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto C = covarianceMatrix<float, Device::CPU>(points);
         doNotOptimize(C.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 // ---- pointTransform ----
@@ -425,12 +383,12 @@ void runPointTransformSerial(CaseResult& r, Index N)
     Vec3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
-    int repeats = repeatCount(N);
-    r.time_serial_ms = measureRepeated([&]()
+    
+    r.time_serial_ms = measure([&]()
     {
         auto result = transformPoints<float, Device::CPU>(T, points);
         doNotOptimize(result.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 void runPointTransformOmp(CaseResult& r, Index N)
@@ -442,12 +400,12 @@ void runPointTransformOmp(CaseResult& r, Index N)
     Vec3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
-    int repeats = repeatCount(N);
-    r.time_omp_ms = measureRepeated([&]()
+    
+    r.time_omp_ms = measure([&]()
     {
         auto result = transformPoints<float, Device::CPU>(T, points);
         doNotOptimize(result.data());
-    }, 1, 5, repeats);
+    }, 2, 5);
 }
 
 } // anonymous namespace

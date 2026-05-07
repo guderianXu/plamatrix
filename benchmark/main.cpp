@@ -23,9 +23,9 @@ void printUsage(const char* prog)
               << "  --help                  Print this help message\n"
               << "\n"
               << "Size presets:\n"
-              << "  small:  512, 1024, 2048, 4096\n"
-              << "  medium: 2048, 4096, 8192, 16384\n"
-              << "  large:  8192, 16384, 24576, 32768\n";
+              << "  small:  256, 512, 1024, 2048\n"
+              << "  medium: 1024, 2048, 4096, 8192\n"
+              << "  large:  4096, 8192, 12288, 16384\n";
 }
 
 /// Parse the --size argument into a vector of Index values.
@@ -33,18 +33,18 @@ std::vector<plamatrix::Index> parseSize(const std::string& size_str)
 {
     if (size_str == "small")
     {
-        return {512, 1024, 2048, 4096};
+        return {256, 512, 1024, 2048};
     }
     if (size_str == "medium")
     {
-        return {2048, 4096, 8192, 16384};
+        return {1024, 2048, 4096, 8192};
     }
     if (size_str == "large")
     {
-        return {8192, 16384, 24576, 32768};
+        return {4096, 8192, 12288, 16384};
     }
     std::cerr << "Unknown size preset: " << size_str << ". Using medium.\n";
-    return {2048, 4096, 8192, 16384};
+    return {1024, 2048, 4096, 8192};
 }
 
 } // anonymous namespace
