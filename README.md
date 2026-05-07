@@ -14,13 +14,7 @@
 
 ## 快速开始
 
-### 依赖
-
-- CMake ≥ 3.18
-- GCC ≥ 9 (需支持 C++17)
-- CUDA Toolkit ≥ 11.0
-- OpenMP
-- Google Test (仅测试时需要)
+**新电脑从零搭建？** 先看 [编译指南](docs/build.md)，包含 CUDA 驱动安装、CMake 升级、Google Test 安装、CPU-only 构建等完整步骤。
 
 ### 编译
 
@@ -31,6 +25,8 @@ mkdir build && cd build
 cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
 cmake --build . -j$(nproc)
 ```
+
+**无 NVIDIA GPU？** 加 `-DPLAMATRIX_WITH_CUDA=OFF` 即可 CPU-only 编译。
 
 ### CMake 选项
 
