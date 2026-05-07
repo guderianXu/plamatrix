@@ -467,40 +467,49 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // scalarMul
         {
             CaseResult r{"scalarMul", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  ScalarMulSerial serial..." << std::endl; runScalarMulSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  ScalarMulOmp omp..." << std::endl;    runScalarMulOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            if (serial) { std::cerr << "  scalarMul serial..." << std::endl; runScalarMulSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            if (omp)    { std::cerr << "  scalarMul omp..." << std::endl;    runScalarMulOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             report.results.push_back(std::move(r));
         }
 
-        // svd
+        // svd — CPU Jacobi is O(n^4), skip large sizes
         {
             CaseResult r{"svd", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  SvdSerial serial..." << std::endl; runSvdSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  SvdOmp omp..." << std::endl;    runSvdOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            const bool cpu_ok = (N <= 512);
+            if (serial && cpu_ok) { std::cerr << "  svd serial..." << std::endl; runSvdSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            else if (serial)      { std::cerr << "  svd serial  (skipped — too large for CPU Jacobi)" << std::endl; }
+            if (omp && cpu_ok)    { std::cerr << "  svd omp..." << std::endl;    runSvdOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            else if (omp)         { std::cerr << "  svd omp     (skipped — too large for CPU Jacobi)" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  SvdCuda cuda..." << std::endl;   detail::runSvdCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  svd cuda..." << std::endl;   detail::runSvdCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
 
-        // qr
+        // qr — CPU Householder is O(n^3), skip large sizes
         {
             CaseResult r{"qr", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  QrSerial serial..." << std::endl; runQrSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  QrOmp omp..." << std::endl;    runQrOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            const bool cpu_ok = (N <= 512);
+            if (serial && cpu_ok) { std::cerr << "  qr serial..." << std::endl; runQrSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            else if (serial)      { std::cerr << "  qr serial   (skipped — too large for CPU)" << std::endl; }
+            if (omp && cpu_ok)    { std::cerr << "  qr omp..." << std::endl;    runQrOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            else if (omp)         { std::cerr << "  qr omp      (skipped — too large for CPU)" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  QrCuda cuda..." << std::endl;   detail::runQrCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  qr cuda..." << std::endl;   detail::runQrCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
 
-        // eigh
+        // eigh — CPU Jacobi is O(n^4), skip large sizes
         {
             CaseResult r{"eigh", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  EighSerial serial..." << std::endl; runEighSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  EighOmp omp..." << std::endl;    runEighOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            const bool cpu_ok = (N <= 512);
+            if (serial && cpu_ok) { std::cerr << "  eigh serial..." << std::endl; runEighSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            else if (serial)      { std::cerr << "  eigh serial  (skipped — too large for CPU Jacobi)" << std::endl; }
+            if (omp && cpu_ok)    { std::cerr << "  eigh omp..." << std::endl;    runEighOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            else if (omp)         { std::cerr << "  eigh omp     (skipped — too large for CPU Jacobi)" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  EighCuda cuda..." << std::endl;   detail::runEighCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  eigh cuda..." << std::endl;   detail::runEighCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -508,10 +517,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // solve
         {
             CaseResult r{"solve", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  SolveSerial serial..." << std::endl; runSolveSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  SolveOmp omp..." << std::endl;    runSolveOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            if (serial) { std::cerr << "  solve serial..." << std::endl; runSolveSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            if (omp)    { std::cerr << "  solve omp..." << std::endl;    runSolveOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  SolveCuda cuda..." << std::endl;   detail::runSolveCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  solve cuda..." << std::endl;   detail::runSolveCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -519,10 +528,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // covariance
         {
             CaseResult r{"covariance", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  CovarianceSerial serial..." << std::endl; runCovarianceSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  CovarianceOmp omp..." << std::endl;    runCovarianceOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            if (serial) { std::cerr << "  covariance serial..." << std::endl; runCovarianceSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            if (omp)    { std::cerr << "  covariance omp..." << std::endl;    runCovarianceOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  CovarianceCuda cuda..." << std::endl;   detail::runCovarianceCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  covariance cuda..." << std::endl;   detail::runCovarianceCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
@@ -530,10 +539,10 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // pointTransform
         {
             CaseResult r{"pointTransform", N, -1.0, -1.0, -1.0, -1.0};
-            { std::cerr << "  PointTransformSerial serial..." << std::endl; runPointTransformSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            { std::cerr << "  PointTransformOmp omp..." << std::endl;    runPointTransformOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
+            if (serial) { std::cerr << "  pointTransform serial..." << std::endl; runPointTransformSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
+            if (omp)    { std::cerr << "  pointTransform omp..." << std::endl;    runPointTransformOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
-            { std::cerr << "  PointTransformCuda cuda..." << std::endl;   detail::runPointTransformCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+            if (cuda)   { std::cerr << "  pointTransform cuda..." << std::endl;   detail::runPointTransformCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
             report.results.push_back(std::move(r));
         }
