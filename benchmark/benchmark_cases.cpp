@@ -475,7 +475,7 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // svd — CPU Jacobi is O(n^4), skip large sizes
         {
             CaseResult r{"svd", N, -1.0, -1.0, -1.0, -1.0};
-            const bool cpu_ok = (N <= 512);
+            const bool cpu_ok = (N <= 256);
             if (serial && cpu_ok) { std::cerr << "  svd serial..." << std::endl; runSvdSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             else if (serial)      { std::cerr << "  svd serial  (skipped — too large for CPU Jacobi)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  svd omp..." << std::endl;    runSvdOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
@@ -489,7 +489,7 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // qr — CPU Householder is O(n^3), skip large sizes
         {
             CaseResult r{"qr", N, -1.0, -1.0, -1.0, -1.0};
-            const bool cpu_ok = (N <= 512);
+            const bool cpu_ok = (N <= 256);
             if (serial && cpu_ok) { std::cerr << "  qr serial..." << std::endl; runQrSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             else if (serial)      { std::cerr << "  qr serial   (skipped — too large for CPU)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  qr omp..." << std::endl;    runQrOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
@@ -503,7 +503,7 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
         // eigh — CPU Jacobi is O(n^4), skip large sizes
         {
             CaseResult r{"eigh", N, -1.0, -1.0, -1.0, -1.0};
-            const bool cpu_ok = (N <= 512);
+            const bool cpu_ok = (N <= 256);
             if (serial && cpu_ok) { std::cerr << "  eigh serial..." << std::endl; runEighSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             else if (serial)      { std::cerr << "  eigh serial  (skipped — too large for CPU Jacobi)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  eigh omp..." << std::endl;    runEighOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
