@@ -52,27 +52,44 @@ lspci | grep -i nvidia
 #### 方式一：通过 apt 安装（推荐）
 
 ```bash
-# 安装驱动
-sudo apt install -y nvidia-driver-550
+# 1. 安装 NVIDIA 驱动 580
+sudo apt update
+sudo apt install -y nvidia-driver-580
 sudo reboot
 
-# 安装 CUDA Toolkit 12
+# 2. 安装 CUDA Toolkit 12.8
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
-sudo apt install -y cuda-toolkit-12-0
+sudo apt install -y cuda-toolkit-12-8
 
-# 添加到 PATH（写入 ~/.bashrc）
-echo 'export PATH=/usr/local/cuda-12/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+# 3. 添加到 PATH（写入 ~/.bashrc）
+echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
 
 验证 CUDA：
 
 ```bash
-nvidia-smi           # 应显示 GPU 和驱动版本
-nvcc --version       # 应显示 CUDA 版本
+nvidia-smi           # 应显示 GPU 和 Driver Version: 580.xxx
+nvcc --version       # 应显示 CUDA 12.8
+```
+
+**如果本机有旧版 CUDA，先清理：**
+
+```bash
+# 查看已安装的 CUDA 包
+dpkg -l | grep cuda
+
+# 卸载旧版
+sudo apt purge -y cuda-toolkit-12-0 'cuda-*'
+sudo apt autoremove -y
+
+# 删除残留目录
+sudo rm -rf /usr/local/cuda /usr/local/cuda-12.0 /usr/local/cuda-12
+
+# 然后按上面步骤重新安装 12.8
 ```
 
 #### 方式二：通过 runfile 安装（离线或指定版本）
@@ -84,11 +101,13 @@ nvcc --version       # 应显示 CUDA 版本
 sudo systemctl isolate multi-user.target
 
 # 安装（跳过驱动如果已安装）
-sudo sh cuda_12.0.0_525.60.13_linux.run --toolkit --silent
+sudo sh cuda_12.8.0_580.xxx_linux.run --toolkit --silent
 
 # 重启
 sudo reboot
 ```
+
+> **版本对应关系**：驱动 580 最高支持 CUDA 13.0。我们使用 CUDA 12.8（成熟稳定版）。`nvidia-smi` 右上角显示的 "CUDA Version" 是驱动支持的最高 CUDA 版本，不是已安装的 toolkit 版本。
 
 ### 2.3 CPU-only 编译（无需 NVIDIA GPU）
 
