@@ -72,20 +72,8 @@ inline cudaError_t cudaGetLastError() { return cudaSuccess; }
 constexpr int cudaMemcpyHostToDevice = 0;
 constexpr int cudaMemcpyDeviceToHost = 0;
 
-// ---- Stub error-check macros — throw on error (cudaMalloc can fail) ----
-#define PLAMATRIX_CHECK_CUDA(call)                                                \
-    do                                                                            \
-    {                                                                             \
-        cudaError_t _err = (call);                                                \
-        if (_err != cudaSuccess)                                                  \
-        {                                                                         \
-            throw std::runtime_error("CUDA (stub) error at " __FILE__ ":" +       \
-                                     std::to_string(__LINE__));                   \
-        }                                                                         \
-    } while (0)
-
-#define PLAMATRIX_CHECK_CUBLAS(call)  static_cast<void>(call)
-#define PLAMATRIX_CHECK_CUSOLVER(call) static_cast<void>(call)
+// Note: error-check macros (PLAMATRIX_CHECK_*) are defined in error_check.h.
+// This file only provides type/function stubs.
 
 #else
 // CUDA is available: this file is a no-op, real CUDA headers are used elsewhere.

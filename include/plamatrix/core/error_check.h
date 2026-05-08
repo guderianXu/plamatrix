@@ -102,6 +102,12 @@ inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, con
 #define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
 
+#else  // !PLAMATRIX_WITH_CUDA — no-op fallbacks
+
+#define PLAMATRIX_CHECK_CUDA(call)    static_cast<void>(call)
+#define PLAMATRIX_CHECK_CUBLAS(call)  static_cast<void>(call)
+#define PLAMATRIX_CHECK_CUSOLVER(call) static_cast<void>(call)
+
 #endif // PLAMATRIX_WITH_CUDA
 
 } // namespace plamatrix
