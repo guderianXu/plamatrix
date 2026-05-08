@@ -4,4 +4,5 @@ build/
 *.cu.o
 .DS_Store
 benchmark_report*.md
+install/
 .worktrees/
