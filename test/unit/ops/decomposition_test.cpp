@@ -136,6 +136,7 @@ TEST(SVD, decompose_3x3_Cpu)
 }
 
 // SVD: decompose_3x3_Gpu — same matrix on GPU via cuSOLVER
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(SVD, decompose_3x3_Gpu)
 {
     DenseMatrix<double, Device::CPU> A_cpu(3, 3);
@@ -192,6 +193,7 @@ TEST(SVD, decompose_3x3_Gpu)
         }
     }
 }
+#endif
 
 // QR: decompose_3x2_Cpu — verify Q orthogonal, R upper triangular, A ≈ Q * R
 TEST(QR, decompose_3x2_Cpu)
@@ -245,6 +247,7 @@ TEST(QR, decompose_3x2_Cpu)
 }
 
 // QR: decompose_3x2_Gpu — same matrix on GPU via cuSOLVER
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(QR, decompose_3x2_Gpu)
 {
     DenseMatrix<double, Device::CPU> A_cpu(3, 2);
@@ -296,6 +299,7 @@ TEST(QR, decompose_3x2_Gpu)
         }
     }
 }
+#endif
 
 // Eigh: symmetric_2x2_Cpu — verify eigenvalues
 TEST(Eigh, symmetric_2x2_Cpu)
@@ -322,6 +326,7 @@ TEST(Eigh, symmetric_2x2_Cpu)
 }
 
 // Eigh: symmetric_2x2_Gpu — same matrix on GPU via cuSOLVER
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(Eigh, symmetric_2x2_Gpu)
 {
     DenseMatrix<double, Device::CPU> A_cpu(2, 2);
@@ -345,3 +350,4 @@ TEST(Eigh, symmetric_2x2_Gpu)
     EXPECT_NEAR(eigvals(0, 0), 3.0, 1e-6);
     EXPECT_NEAR(eigvals(1, 0), 1.0, 1e-6);
 }
+#endif

@@ -99,17 +99,17 @@ protected:
     }
 
     /// Release allocated memory. Safe to call multiple times (nullptr-safe).
-    void release()
+    void release() noexcept
     {
         if (_data != nullptr)
         {
             if constexpr (Dev == Device::CPU)
             {
-                CpuAllocator<Scalar>::deallocate(_data);
+                CpuAllocator<Scalar>::deallocateNoThrow(_data);
             }
             else
             {
-                GpuAllocator<Scalar>::deallocate(_data);
+                GpuAllocator<Scalar>::deallocateNoThrow(_data);
             }
             _data = nullptr;
         }

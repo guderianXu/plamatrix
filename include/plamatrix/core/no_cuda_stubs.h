@@ -48,6 +48,15 @@ inline cudaError_t cudaMalloc(void** ptr, std::size_t size)
     return (*ptr != nullptr) ? cudaSuccess : 1;
 }
 
+template <typename T>
+inline cudaError_t cudaMalloc(T** ptr, std::size_t size)
+{
+    void* raw = nullptr;
+    cudaError_t err = cudaMalloc(&raw, size);
+    *ptr = static_cast<T*>(raw);
+    return err;
+}
+
 inline cudaError_t cudaFree(void* ptr)
 {
     std::free(ptr);

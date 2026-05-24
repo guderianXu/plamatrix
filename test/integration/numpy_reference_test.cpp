@@ -90,6 +90,7 @@ TEST(NumPyReference, gemm_Small)
 // ============================================================================
 // 测试 2: SVD — 与 SciPy linalg.svd 对比 (奇异值 + 重构)
 // ============================================================================
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(NumPyReference, svd_CompareWithScipy)
 {
     auto A = loadMatrix(REF + "svd_small_A.bin");
@@ -126,6 +127,7 @@ TEST(NumPyReference, svd_CompareWithScipy)
             if (i != j) EXPECT_NEAR(I_u(i,j), 0.0, 1e-8) << "U ortho off-diag " << i << "," << j;
     }
 }
+#endif
 
 // ============================================================================
 // 测试 3: QR — 重构 + 上三角验证
@@ -157,6 +159,7 @@ TEST(NumPyReference, qr_Decomposition)
 // ============================================================================
 // 测试 4: Eigh — 与 SciPy eigvalsh 对比 (降序特征值)
 // ============================================================================
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(NumPyReference, eigh_CompareWithScipy)
 {
     auto A = loadMatrix(REF + "eigh_A.bin");
@@ -177,6 +180,7 @@ TEST(NumPyReference, eigh_CompareWithScipy)
     for (Index i = 1; i < 64; ++i)
         EXPECT_GE(eigvals(i-1,0), eigvals(i,0)) << "not descending at " << i;
 }
+#endif
 
 // ============================================================================
 // 测试 5: Solve — 与 NumPy linalg.solve 对比 (已知解验证)
@@ -254,6 +258,7 @@ TEST(NumPyReference, covariance_CompareWithNumPy)
 // ============================================================================
 // 测试 9: CPU GPU GEMM 一致性 (double 精度)
 // ============================================================================
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(NumPyReference, gemm_CpuVsGpu)
 {
     auto A = loadMatrix(REF + "gemm_A.bin");
@@ -268,3 +273,4 @@ TEST(NumPyReference, gemm_CpuVsGpu)
             EXPECT_NEAR(C_cpu(i,j), C_from_gpu(i,j), 1e-8)
                 << "CPU/GPU GEMM mismatch at (" << i << "," << j << ")";
 }
+#endif

@@ -1,4 +1,10 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+find_dependency(OpenMP)
+if(@PLAMATRIX_WITH_CUDA@)
+    find_dependency(CUDAToolkit)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/plamatrixTargets.cmake")
 check_required_components(plamatrix)

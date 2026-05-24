@@ -14,9 +14,43 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---- Options ----
 option(PLAMATRIX_USE_FLOAT  "Pre-compile float32 instantiations" ON)
 option(PLAMATRIX_USE_DOUBLE "Pre-compile float64 instantiations" ON)
-option(BUILD_TESTS          "Build unit tests" OFF)
-option(BUILD_BENCHMARKS     "Build benchmark suite" OFF)
-option(BUILD_DOCS           "Build documentation" OFF)
+
+set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_BUILD_TESTS)
+    set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_BUILD_TESTS "Build PlaMatrix unit tests" OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR
+        AND DEFINED BUILD_TESTS
+        AND NOT _PLAMATRIX_BUILD_TESTS_USER_DEFINED)
+    set(PLAMATRIX_BUILD_TESTS ${BUILD_TESTS} CACHE BOOL "Build PlaMatrix unit tests" FORCE)
+endif()
+
+set(_PLAMATRIX_BUILD_BENCHMARKS_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_BUILD_BENCHMARKS)
+    set(_PLAMATRIX_BUILD_BENCHMARKS_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_BUILD_BENCHMARKS "Build PlaMatrix benchmark suite" OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    option(BUILD_BENCHMARKS "Build benchmark suite" OFF)
+    if(DEFINED BUILD_BENCHMARKS AND NOT _PLAMATRIX_BUILD_BENCHMARKS_USER_DEFINED)
+        set(PLAMATRIX_BUILD_BENCHMARKS ${BUILD_BENCHMARKS}
+            CACHE BOOL "Build PlaMatrix benchmark suite" FORCE)
+    endif()
+endif()
+
+set(_PLAMATRIX_BUILD_DOCS_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_BUILD_DOCS)
+    set(_PLAMATRIX_BUILD_DOCS_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_BUILD_DOCS "Build PlaMatrix documentation" OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    option(BUILD_DOCS "Build documentation" OFF)
+    if(DEFINED BUILD_DOCS AND NOT _PLAMATRIX_BUILD_DOCS_USER_DEFINED)
+        set(PLAMATRIX_BUILD_DOCS ${BUILD_DOCS}
+            CACHE BOOL "Build PlaMatrix documentation" FORCE)
+    endif()
+endif()
 
 # ---- Detect CUDA ----
 find_package(CUDAToolkit QUIET)
@@ -37,8 +71,15 @@ if(PLAMATRIX_WITH_CUDA)
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    set(PLAMATRIX_CUDA_ARCH "native" CACHE STRING "CUDA architecture target")
-    set(CMAKE_CUDA_ARCHITECTURES ${PLAMATRIX_CUDA_ARCH})
+    if(NOT DEFINED PLAMATRIX_CUDA_ARCHITECTURES)
+        if(DEFINED CMAKE_CUDA_ARCHITECTURES AND CMAKE_CUDA_ARCHITECTURES)
+            set(PLAMATRIX_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+                CACHE STRING "CUDA architectures for PlaMatrix")
+        else()
+            set(PLAMATRIX_CUDA_ARCHITECTURES "75;86;89"
+                CACHE STRING "CUDA architectures for PlaMatrix")
+        endif()
+    endif()
 endif()
 
 # ---- OpenMP (always required) ----
@@ -47,6 +88,12 @@ find_package(OpenMP REQUIRED)
 # ---- Library target ----
 add_library(plamatrix)
 add_library(plamatrix::plamatrix ALIAS plamatrix)
+
+if(PLAMATRIX_WITH_CUDA)
+    set_target_properties(plamatrix PROPERTIES
+        CUDA_ARCHITECTURES "${PLAMATRIX_CUDA_ARCHITECTURES}"
+    )
+endif()
 
 target_include_directories(plamatrix
     PUBLIC
@@ -83,14 +130,14 @@ target_compile_definitions(plamatrix
 add_subdirectory(src)
 
 # ---- Tests ----
-if(BUILD_TESTS)
+if(PLAMATRIX_BUILD_TESTS)
     enable_testing()
     find_package(GTest REQUIRED)
     add_subdirectory(test)
 endif()
 
 # ---- Benchmarks ----
-if(BUILD_BENCHMARKS)
+if(PLAMATRIX_BUILD_BENCHMARKS)
     add_subdirectory(benchmark)
 endif()
 
@@ -114,7 +161,14 @@ configure_package_config_file(
     ${CMAKE_CURRENT_BINARY_DIR}/plamatrixConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/plamatrix
 )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/plamatrixConfig.cmake
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/plamatrixConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/plamatrixConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/plamatrixConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/plamatrix
 )
 
@@ -123,10 +177,11 @@ message(STATUS "")
 message(STATUS "PlaMatrix Configuration:")
 message(STATUS "  CUDA support:    ${PLAMATRIX_WITH_CUDA}")
 if(PLAMATRIX_WITH_CUDA)
-    message(STATUS "  CUDA arch:       ${PLAMATRIX_CUDA_ARCH}")
+    message(STATUS "  CUDA arch:       ${PLAMATRIX_CUDA_ARCHITECTURES}")
 endif()
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
-message(STATUS "  Build tests:     ${BUILD_TESTS}")
-message(STATUS "  Build benchmarks:${BUILD_BENCHMARKS}")
+message(STATUS "  Build tests:     ${PLAMATRIX_BUILD_TESTS}")
+message(STATUS "  Build benchmarks:${PLAMATRIX_BUILD_BENCHMARKS}")
+message(STATUS "  Build docs:      ${PLAMATRIX_BUILD_DOCS}")
 message(STATUS "")

@@ -165,6 +165,7 @@ TEST_F(PointCloudWorkflowTest, rigidTransform_Orthogonality)
 // ============================================================================
 // 测试 4: 点变换 — CPU vs GPU 一致性 (中等规模)
 // ============================================================================
+#ifdef PLAMATRIX_WITH_CUDA
 TEST_F(PointCloudWorkflowTest, transformPoints_CpuVsGpu)
 {
     Index N = 10000;
@@ -189,6 +190,7 @@ TEST_F(PointCloudWorkflowTest, transformPoints_CpuVsGpu)
         }
     }
 }
+#endif
 
 // ============================================================================
 // 测试 5: SVD 分解 — A = U*S*Vt 重构验证

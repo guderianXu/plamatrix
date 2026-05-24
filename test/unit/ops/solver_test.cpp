@@ -41,6 +41,7 @@ TEST(Solver, solve_2x2_Cpu)
 }
 
 // Solver: solve_2x2_Gpu — solve a simple 2x2 linear system on GPU
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(Solver, solve_2x2_Gpu)
 {
     DenseMatrix<double, Device::CPU> A_cpu(2, 2);
@@ -72,6 +73,7 @@ TEST(Solver, solve_2x2_Gpu)
     EXPECT_NEAR(ax0, B_cpu(0, 0), 1e-6);
     EXPECT_NEAR(ax1, B_cpu(1, 0), 1e-6);
 }
+#endif
 
 // Solver: solve_RhsMatrix_Cpu — solve with multiple right-hand sides (identity * X = B)
 TEST(Solver, solve_RhsMatrix_Cpu)

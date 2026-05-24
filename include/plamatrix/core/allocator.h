@@ -38,6 +38,11 @@ struct CpuAllocator
     {
         std::free(ptr);
     }
+
+    static void deallocateNoThrow(Scalar* ptr) noexcept
+    {
+        std::free(ptr);
+    }
 };
 
 /// GPU memory allocator. Uses CUDA device memory when available, falls back to
@@ -60,6 +65,14 @@ struct GpuAllocator
     static void deallocate(Scalar* ptr)
     {
         PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+    }
+
+    static void deallocateNoThrow(Scalar* ptr) noexcept
+    {
+        if (ptr)
+        {
+            static_cast<void>(cudaFree(ptr));
+        }
     }
 };
 

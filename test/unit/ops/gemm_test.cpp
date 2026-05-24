@@ -46,6 +46,7 @@ TEST(GEMM, multiply_2x3_by_3x2_CpuSerial)
 }
 
 // GEMM: multiply_2x3_by_3x2_Gpu — same calculation on GPU via cuBLAS
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(GEMM, multiply_2x3_by_3x2_Gpu)
 {
     DenseMatrix<float, Device::CPU> A_cpu(2, 3);
@@ -113,3 +114,4 @@ TEST(GEMM, multiply_Larger_CpuVsGpuConsistency)
         }
     }
 }
+#endif

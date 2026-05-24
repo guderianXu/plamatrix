@@ -91,6 +91,7 @@ protected:
 using ScalarTypes = ::testing::Types<float, double>;
 TYPED_TEST_SUITE(CpuGpuConsistencyTest, ScalarTypes);
 
+#ifdef PLAMATRIX_WITH_CUDA
 // ============================================================================
 // Test 1: GEMM — matrix multiplication consistency
 // ============================================================================
@@ -324,3 +325,4 @@ TYPED_TEST(CpuGpuConsistencyTest, pointTransform)
         }
     }
 }
+#endif

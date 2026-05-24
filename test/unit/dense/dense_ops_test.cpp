@@ -60,6 +60,7 @@ TEST(DenseOps, sub_CpuSerial)
     EXPECT_FLOAT_EQ(C(1, 1), 36.0f);
 }
 
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(DenseOps, add_Gpu)
 {
     DenseMatrix<float, Device::CPU> A_cpu(2, 2);
@@ -87,6 +88,7 @@ TEST(DenseOps, add_Gpu)
     EXPECT_FLOAT_EQ(C_cpu(0, 1), 10.0f);
     EXPECT_FLOAT_EQ(C_cpu(1, 1), 12.0f);
 }
+#endif
 
 // === Task 8: Transpose and Scalar Operations ===
 
@@ -167,6 +169,7 @@ TEST(DenseOps, scalarMultiplyAdd_Cpu)
     EXPECT_FLOAT_EQ(C(1, 1), 8.5f);   // 4*2 + 0.5
 }
 
+#ifdef PLAMATRIX_WITH_CUDA
 TEST(DenseOps, transpose_Gpu)
 {
     // 2x3 matrix on CPU, move to GPU, transpose, bring back
@@ -192,3 +195,4 @@ TEST(DenseOps, transpose_Gpu)
     EXPECT_FLOAT_EQ(T_cpu(2, 0), 5.0f);
     EXPECT_FLOAT_EQ(T_cpu(2, 1), 6.0f);
 }
+#endif
