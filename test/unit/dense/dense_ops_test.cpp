@@ -60,6 +60,46 @@ TEST(DenseOps, sub_CpuSerial)
     EXPECT_FLOAT_EQ(C(1, 1), 36.0f);
 }
 
+TEST(DenseOps, add_RejectsDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> A(2, 3);
+    DenseMatrix<float, Device::CPU> B(3, 2);
+
+    EXPECT_THROW(static_cast<void>(add(A, B)), std::runtime_error);
+}
+
+TEST(DenseOps, sub_RejectsDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> A(2, 3);
+    DenseMatrix<float, Device::CPU> B(3, 2);
+
+    EXPECT_THROW(static_cast<void>(sub(A, B)), std::runtime_error);
+}
+
+TEST(DenseOps, add_EmptyCpuMatrices)
+{
+    DenseMatrix<float, Device::CPU> A(0, 3);
+    DenseMatrix<float, Device::CPU> B(0, 3);
+
+    auto C = add(A, B);
+    EXPECT_EQ(C.rows(), 0);
+    EXPECT_EQ(C.cols(), 3);
+    EXPECT_EQ(C.size(), 0);
+    EXPECT_EQ(C.data(), nullptr);
+}
+
+TEST(DenseOps, sub_EmptyCpuMatrices)
+{
+    DenseMatrix<float, Device::CPU> A(0, 3);
+    DenseMatrix<float, Device::CPU> B(0, 3);
+
+    auto C = sub(A, B);
+    EXPECT_EQ(C.rows(), 0);
+    EXPECT_EQ(C.cols(), 3);
+    EXPECT_EQ(C.size(), 0);
+    EXPECT_EQ(C.data(), nullptr);
+}
+
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(DenseOps, add_Gpu)
 {
@@ -87,6 +127,52 @@ TEST(DenseOps, add_Gpu)
     EXPECT_FLOAT_EQ(C_cpu(1, 0), 8.0f);
     EXPECT_FLOAT_EQ(C_cpu(0, 1), 10.0f);
     EXPECT_FLOAT_EQ(C_cpu(1, 1), 12.0f);
+}
+
+TEST(DenseOps, add_RejectsGpuDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
+    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+
+    EXPECT_THROW(static_cast<void>(add(A_gpu, B_gpu)), std::runtime_error);
+}
+
+TEST(DenseOps, sub_RejectsGpuDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
+    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+
+    EXPECT_THROW(static_cast<void>(sub(A_gpu, B_gpu)), std::runtime_error);
+}
+
+TEST(DenseOps, add_EmptyGpuMatrices)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(0, 3);
+    DenseMatrix<float, Device::CPU> B_cpu(0, 3);
+
+    auto C_gpu = add(A_cpu.toGpu(), B_cpu.toGpu());
+    EXPECT_EQ(C_gpu.rows(), 0);
+    EXPECT_EQ(C_gpu.cols(), 3);
+    EXPECT_EQ(C_gpu.size(), 0);
+    EXPECT_EQ(C_gpu.data(), nullptr);
+}
+
+TEST(DenseOps, sub_EmptyGpuMatrices)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(0, 3);
+    DenseMatrix<float, Device::CPU> B_cpu(0, 3);
+
+    auto C_gpu = sub(A_cpu.toGpu(), B_cpu.toGpu());
+    EXPECT_EQ(C_gpu.rows(), 0);
+    EXPECT_EQ(C_gpu.cols(), 3);
+    EXPECT_EQ(C_gpu.size(), 0);
+    EXPECT_EQ(C_gpu.data(), nullptr);
 }
 #endif
 

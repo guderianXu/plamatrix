@@ -1,11 +1,33 @@
 #pragma once
 
+#include <sstream>
+#include <stdexcept>
+
 #include <omp.h>
 
 #include "plamatrix/dense/dense_matrix.h"
 
 namespace plamatrix
 {
+
+namespace detail
+{
+
+template <typename Scalar, Device Dev>
+void checkSameDimensions(const char* op,
+                         const DenseMatrix<Scalar, Dev>& A,
+                         const DenseMatrix<Scalar, Dev>& B)
+{
+    if (A.rows() != B.rows() || A.cols() != B.cols())
+    {
+        std::ostringstream oss;
+        oss << op << " dimension mismatch: A is " << A.rows() << "x" << A.cols()
+            << ", B is " << B.rows() << "x" << B.cols();
+        throw std::runtime_error(oss.str());
+    }
+}
+
+} // namespace detail
 
 /// Element-wise addition of two CPU matrices.
 /// @tparam Scalar  Element type (float or double)
@@ -15,6 +37,7 @@ namespace plamatrix
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A, const DenseMatrix<Scalar, Device::CPU>& B)
 {
+    detail::checkSameDimensions("add", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
     #pragma omp parallel for
@@ -33,6 +56,7 @@ DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A, 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A, const DenseMatrix<Scalar, Device::CPU>& B)
 {
+    detail::checkSameDimensions("sub", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
     #pragma omp parallel for

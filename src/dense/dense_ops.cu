@@ -26,8 +26,13 @@ __global__ void elementWiseSubKernel(const Scalar* A, const Scalar* B, Scalar* C
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A, const DenseMatrix<Scalar, Device::GPU>& B)
 {
+    detail::checkSameDimensions("add", A, B);
     DenseMatrix<Scalar, Device::GPU> C(A.rows(), A.cols());
     Index count = A.size();
+    if (count == 0)
+    {
+        return C;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((count + block_size - 1) / block_size);
     elementWiseAddKernel<Scalar><<<grid_size, block_size>>>(A.data(), B.data(), C.data(), count);
@@ -38,8 +43,13 @@ DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A, 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A, const DenseMatrix<Scalar, Device::GPU>& B)
 {
+    detail::checkSameDimensions("sub", A, B);
     DenseMatrix<Scalar, Device::GPU> C(A.rows(), A.cols());
     Index count = A.size();
+    if (count == 0)
+    {
+        return C;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((count + block_size - 1) / block_size);
     elementWiseSubKernel<Scalar><<<grid_size, block_size>>>(A.data(), B.data(), C.data(), count);

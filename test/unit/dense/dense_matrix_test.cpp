@@ -24,6 +24,57 @@ TEST(DenseMatrix, construction_Gpu)
     EXPECT_NE(mat.data(), nullptr);
 }
 
+TEST(DenseMatrix, construction_RejectsNegativeDimensions)
+{
+    EXPECT_THROW((DenseMatrix<float, Device::CPU>(-1, 3)), std::invalid_argument);
+    EXPECT_THROW((DenseMatrix<float, Device::GPU>(3, -1)), std::invalid_argument);
+}
+
+TEST(DenseMatrix, construction_ZeroSizedCpuMatrixIsEmpty)
+{
+    DenseMatrix<float, Device::CPU> mat(0, 3);
+    EXPECT_EQ(mat.rows(), 0);
+    EXPECT_EQ(mat.cols(), 3);
+    EXPECT_EQ(mat.size(), 0);
+    EXPECT_EQ(mat.data(), nullptr);
+
+    mat.fill(1.0f);
+    auto transposed = mat.transpose();
+    EXPECT_EQ(transposed.rows(), 3);
+    EXPECT_EQ(transposed.cols(), 0);
+    EXPECT_EQ(transposed.size(), 0);
+    EXPECT_EQ(transposed.data(), nullptr);
+}
+
+#ifdef PLAMATRIX_WITH_CUDA
+TEST(DenseMatrix, transfer_ZeroSizedGpuRoundTrip)
+{
+    DenseMatrix<float, Device::CPU> cpu(0, 3);
+    auto gpu = cpu.toGpu();
+    EXPECT_EQ(gpu.rows(), 0);
+    EXPECT_EQ(gpu.cols(), 3);
+    EXPECT_EQ(gpu.size(), 0);
+    EXPECT_EQ(gpu.data(), nullptr);
+
+    auto back = gpu.toCpu();
+    EXPECT_EQ(back.rows(), 0);
+    EXPECT_EQ(back.cols(), 3);
+    EXPECT_EQ(back.size(), 0);
+    EXPECT_EQ(back.data(), nullptr);
+}
+
+TEST(DenseMatrix, transpose_ZeroSizedGpu)
+{
+    DenseMatrix<float, Device::CPU> cpu(0, 3);
+    auto gpu = cpu.toGpu();
+    auto transposed = gpu.transpose();
+    EXPECT_EQ(transposed.rows(), 3);
+    EXPECT_EQ(transposed.cols(), 0);
+    EXPECT_EQ(transposed.size(), 0);
+    EXPECT_EQ(transposed.data(), nullptr);
+}
+#endif
+
 TEST(DenseMatrix, fill_Cpu)
 {
     DenseMatrix<float, Device::CPU> mat(3, 4);

@@ -17,6 +17,10 @@ template <>
 void DenseMatrix<float, Device::GPU>::fillGpuKernel(float value)
 {
     Index count = this->size();
+    if (count == 0)
+    {
+        return;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((count + block_size - 1) / block_size);
     fillKernel<float><<<grid_size, block_size>>>(this->_data, count, value);
@@ -27,6 +31,10 @@ template <>
 void DenseMatrix<double, Device::GPU>::fillGpuKernel(double value)
 {
     Index count = this->size();
+    if (count == 0)
+    {
+        return;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((count + block_size - 1) / block_size);
     fillKernel<double><<<grid_size, block_size>>>(this->_data, count, value);
@@ -47,6 +55,10 @@ __global__ void transposeKernel(const Scalar* src, Scalar* dst, Index src_rows, 
 template <>
 void DenseMatrix<float, Device::GPU>::transposeGpuKernel(DenseMatrix<float, Device::GPU>& result) const
 {
+    if (this->size() == 0)
+    {
+        return;
+    }
     dim3 block(16, 16);
     dim3 grid(
         (static_cast<unsigned int>(this->_rows) + block.x - 1) / block.x,
@@ -58,6 +70,10 @@ void DenseMatrix<float, Device::GPU>::transposeGpuKernel(DenseMatrix<float, Devi
 template <>
 void DenseMatrix<double, Device::GPU>::transposeGpuKernel(DenseMatrix<double, Device::GPU>& result) const
 {
+    if (this->size() == 0)
+    {
+        return;
+    }
     dim3 block(16, 16);
     dim3 grid(
         (static_cast<unsigned int>(this->_rows) + block.x - 1) / block.x,

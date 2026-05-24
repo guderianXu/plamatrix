@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+#include <stdexcept>
 #include <utility>
 
 #include "plamatrix/core/allocator.h"
@@ -22,7 +24,7 @@ public:
         , _cols(cols)
         , _data(nullptr)
     {
-        allocate(rows * cols);
+        allocate(checkedElementCount(rows, cols));
     }
 
     /// Destructor. Frees allocated memory.
@@ -86,15 +88,37 @@ public:
 protected:
     /// Allocate memory for `count` elements using the device-specific allocator.
     /// @param count  Number of elements to allocate
-    void allocate(Index count)
+    static std::size_t checkedElementCount(Index rows, Index cols)
     {
+        if (rows < 0 || cols < 0)
+        {
+            throw std::invalid_argument("DeviceMatrix dimensions must be non-negative");
+        }
+        if (rows == 0 || cols == 0)
+        {
+            return 0;
+        }
+        if (cols > std::numeric_limits<Index>::max() / rows)
+        {
+            throw std::overflow_error("DeviceMatrix element count overflows Index");
+        }
+        return static_cast<std::size_t>(rows * cols);
+    }
+
+    void allocate(std::size_t count)
+    {
+        if (count == 0)
+        {
+            _data = nullptr;
+            return;
+        }
         if constexpr (Dev == Device::CPU)
         {
-            _data = CpuAllocator<Scalar>::allocate(static_cast<std::size_t>(count));
+            _data = CpuAllocator<Scalar>::allocate(count);
         }
         else
         {
-            _data = GpuAllocator<Scalar>::allocate(static_cast<std::size_t>(count));
+            _data = GpuAllocator<Scalar>::allocate(count);
         }
     }
 

@@ -27,6 +27,10 @@ public:
     DenseMatrix(Index rows, Index cols)
         : DeviceMatrix<Scalar, Dev>(rows, cols)
     {
+        if (this->size() == 0)
+        {
+            return;
+        }
         if constexpr (Dev == Device::CPU)
         {
             std::memset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar));
@@ -108,6 +112,10 @@ public:
     /// @param value  Value to fill all elements with
     void fill(Scalar value)
     {
+        if (this->size() == 0)
+        {
+            return;
+        }
         if constexpr (Dev == Device::CPU)
         {
             std::fill_n(this->_data, this->size(), value);
@@ -132,6 +140,10 @@ public:
     {
         static_assert(Dev == Device::GPU, "toCpu() is only available on GPU matrices");
         DenseMatrix<Scalar, Device::CPU> result(this->_rows, this->_cols);
+        if (this->size() == 0)
+        {
+            return result;
+        }
         PLAMATRIX_CHECK_CUDA(
             cudaMemcpy(result.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
                        cudaMemcpyDeviceToHost));
@@ -144,6 +156,10 @@ public:
     {
         static_assert(Dev == Device::CPU, "toGpu() is only available on CPU matrices");
         DenseMatrix<Scalar, Device::GPU> result(this->_rows, this->_cols);
+        if (this->size() == 0)
+        {
+            return result;
+        }
         PLAMATRIX_CHECK_CUDA(
             cudaMemcpy(result.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
                        cudaMemcpyHostToDevice));
@@ -156,6 +172,10 @@ public:
     DenseMatrix transpose() const
     {
         DenseMatrix result(this->_cols, this->_rows);
+        if (this->size() == 0)
+        {
+            return result;
+        }
         if constexpr (Dev == Device::CPU)
         {
             for (Index j = 0; j < this->_cols; ++j)

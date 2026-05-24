@@ -24,6 +24,12 @@ TEST(DeviceMatrix, construction_Gpu)
     EXPECT_NE(mat.data(), nullptr);
 }
 
+TEST(DeviceMatrix, construction_RejectsNegativeDimensions)
+{
+    EXPECT_THROW((DeviceMatrix<float, Device::CPU>(-1, 3)), std::invalid_argument);
+    EXPECT_THROW((DeviceMatrix<float, Device::GPU>(3, -1)), std::invalid_argument);
+}
+
 TEST(DeviceMatrix, moveConstructor_TransfersOwnership)
 {
     DeviceMatrix<float, Device::CPU> mat(2, 3);
