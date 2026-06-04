@@ -65,6 +65,12 @@ endif()
 option(PLAMATRIX_WITH_CUDA "Build with CUDA GPU acceleration" ${PLAMATRIX_CUDA_DEFAULT})
 
 if(PLAMATRIX_WITH_CUDA)
+    set(_PLAMATRIX_CMAKE_CUDA_ARCHITECTURES_USER_DEFINED OFF)
+    if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+        set(_PLAMATRIX_CMAKE_CUDA_ARCHITECTURES_USER_DEFINED ON)
+        set(_PLAMATRIX_REQUESTED_CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    endif()
+
     if(NOT CUDAToolkit_FOUND)
         message(FATAL_ERROR "PLAMATRIX_WITH_CUDA=ON but CUDA Toolkit not found. "
                             "Install CUDA Toolkit or set -DPLAMATRIX_WITH_CUDA=OFF for CPU-only build.")
@@ -73,13 +79,45 @@ if(PLAMATRIX_WITH_CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     if(NOT DEFINED PLAMATRIX_CUDA_ARCHITECTURES)
-        if(DEFINED CMAKE_CUDA_ARCHITECTURES AND CMAKE_CUDA_ARCHITECTURES)
-            set(PLAMATRIX_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+        if(_PLAMATRIX_CMAKE_CUDA_ARCHITECTURES_USER_DEFINED)
+            set(PLAMATRIX_CUDA_ARCHITECTURES "${_PLAMATRIX_REQUESTED_CMAKE_CUDA_ARCHITECTURES}"
                 CACHE STRING "CUDA architectures for PlaMatrix")
         else()
             set(PLAMATRIX_CUDA_ARCHITECTURES "75;86;89"
                 CACHE STRING "CUDA architectures for PlaMatrix")
         endif()
+    endif()
+    set(CMAKE_CUDA_ARCHITECTURES "${PLAMATRIX_CUDA_ARCHITECTURES}"
+        CACHE STRING "CUDA architectures for PlaMatrix" FORCE)
+
+    set(PLAMATRIX_CUDA_RUNTIME_DIRS "")
+    if(CUDAToolkit_BIN_DIR)
+        get_filename_component(_PLAMATRIX_CUDA_TOOLKIT_ROOT "${CUDAToolkit_BIN_DIR}" DIRECTORY)
+        foreach(_dir
+                "${_PLAMATRIX_CUDA_TOOLKIT_ROOT}/lib"
+                "${_PLAMATRIX_CUDA_TOOLKIT_ROOT}/lib64")
+            if(IS_DIRECTORY "${_dir}")
+                list(APPEND PLAMATRIX_CUDA_RUNTIME_DIRS "${_dir}")
+            endif()
+        endforeach()
+    endif()
+    foreach(_target CUDA::cusolver CUDA::cublas CUDA::cudart)
+        if(TARGET ${_target})
+            foreach(_prop IMPORTED_LOCATION IMPORTED_LOCATION_RELEASE)
+                get_target_property(_loc ${_target} ${_prop})
+                if(_loc)
+                    get_filename_component(_dir "${_loc}" DIRECTORY)
+                    if(IS_DIRECTORY "${_dir}")
+                        list(APPEND PLAMATRIX_CUDA_RUNTIME_DIRS "${_dir}")
+                    endif()
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+    if(PLAMATRIX_CUDA_RUNTIME_DIRS)
+        list(REMOVE_DUPLICATES PLAMATRIX_CUDA_RUNTIME_DIRS)
+        list(APPEND CMAKE_BUILD_RPATH ${PLAMATRIX_CUDA_RUNTIME_DIRS})
+        list(REMOVE_DUPLICATES CMAKE_BUILD_RPATH)
     endif()
 endif()
 
@@ -102,7 +140,32 @@ if(PLAMATRIX_WITH_SYSTEM_LINALG)
             BLAS::BLAS
         )
     else()
-        message(STATUS "System BLAS/LAPACK not found; using PlaMatrix fallback linalg")
+        find_library(PLAMATRIX_MKL_RT_LIBRARY
+            NAMES mkl_rt
+            HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/anaconda3/lib" "$ENV{HOME}/miniconda3/lib"
+        )
+        if(PLAMATRIX_MKL_RT_LIBRARY)
+            set(PLAMATRIX_LINALG_PROVIDER "mkl_rt")
+            set(PLAMATRIX_LINALG_LIBRARIES "${PLAMATRIX_MKL_RT_LIBRARY}")
+        else()
+            find_library(PLAMATRIX_BLAS_LIBRARY
+                NAMES blas openblas libblas.so.3 libopenblas.so.0
+                PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/blas
+            )
+            find_library(PLAMATRIX_LAPACK_LIBRARY
+                NAMES lapack liblapack.so.3
+                PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/lapack
+            )
+            if(PLAMATRIX_BLAS_LIBRARY AND PLAMATRIX_LAPACK_LIBRARY)
+                set(PLAMATRIX_LINALG_PROVIDER "blas_lapack")
+                set(PLAMATRIX_LINALG_LIBRARIES
+                    "${PLAMATRIX_LAPACK_LIBRARY}"
+                    "${PLAMATRIX_BLAS_LIBRARY}"
+                )
+            else()
+                message(STATUS "System BLAS/LAPACK not found; using PlaMatrix fallback linalg")
+            endif()
+        endif()
     endif()
 endif()
 
