@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring>
+#include <stdexcept>
 #include <utility>
 
 #include "plamatrix/core/allocator.h"
@@ -26,6 +27,14 @@ public:
         : DeviceMatrix<Scalar, Dev>(0, 0)
         , _nnz(nnz)
     {
+        if (rows < 0 || cols < 0)
+        {
+            throw std::invalid_argument("CSRMatrix dimensions must be non-negative");
+        }
+        if (nnz < 0)
+        {
+            throw std::invalid_argument("CSRMatrix nnz must be non-negative");
+        }
         this->_rows = rows;
         this->_cols = cols;
 
@@ -129,17 +138,17 @@ public:
 
 private:
     /// Release allocated CSR arrays. Safe to call multiple times (nullptr-safe).
-    void releaseArrays()
+    void releaseArrays() noexcept
     {
         if (_values != nullptr)
         {
             if constexpr (Dev == Device::CPU)
             {
-                CpuAllocator<Scalar>::deallocate(_values);
+                CpuAllocator<Scalar>::deallocateNoThrow(_values);
             }
             else
             {
-                GpuAllocator<Scalar>::deallocate(_values);
+                GpuAllocator<Scalar>::deallocateNoThrow(_values);
             }
             _values = nullptr;
         }
@@ -147,11 +156,11 @@ private:
         {
             if constexpr (Dev == Device::CPU)
             {
-                CpuAllocator<Index>::deallocate(_col_indices);
+                CpuAllocator<Index>::deallocateNoThrow(_col_indices);
             }
             else
             {
-                GpuAllocator<Index>::deallocate(_col_indices);
+                GpuAllocator<Index>::deallocateNoThrow(_col_indices);
             }
             _col_indices = nullptr;
         }
@@ -159,11 +168,11 @@ private:
         {
             if constexpr (Dev == Device::CPU)
             {
-                CpuAllocator<Index>::deallocate(_row_offsets);
+                CpuAllocator<Index>::deallocateNoThrow(_row_offsets);
             }
             else
             {
-                GpuAllocator<Index>::deallocate(_row_offsets);
+                GpuAllocator<Index>::deallocateNoThrow(_row_offsets);
             }
             _row_offsets = nullptr;
         }

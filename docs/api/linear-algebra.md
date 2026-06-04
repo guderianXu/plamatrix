@@ -3,18 +3,15 @@
 ## 矩阵乘法 (gemm)
 
 ```cpp
-/// C = A * B  (column-major layout)
-/// A: m×k, B: k×n → C: m×n
-template <typename Scalar, Device Dev>
-DenseMatrix<Scalar, Dev> gemm(
-    const DenseMatrix<Scalar, Dev>& A,
-    const DenseMatrix<Scalar, Dev>& B,
-    cudaStream_t stream = nullptr  // GPU only
-);
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> gemm(A_cpu, B_cpu);
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> gemm(A_gpu, B_gpu, cudaStream_t stream = nullptr);
 ```
 
-- **CPU**：三重循环 + `#pragma omp parallel for collapse(2)` 并行
-- **GPU**：`cublasSgemm` / `cublasDgemm`，支持指定 CUDA stream
+- **CPU**：可用时使用 BLAS；否则使用项目内三重循环，较大工作量走 OpenMP
+- **GPU**：`cublasSgemm` / `cublasDgemm`，支持指定 CUDA stream；返回前会同步该 stream，结果可立即传回 CPU 或继续参与默认 stream 运算
 - **示例**：`auto C = gemm(A, B);`
 
 ## 逐元素运算
@@ -25,10 +22,16 @@ DenseMatrix<Scalar, Device::CPU> add(A, B);  // C[i] = A[i] + B[i]
 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> sub(A, B);  // C[i] = A[i] - B[i]
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> add(A_gpu, B_gpu, cudaStream_t stream = nullptr);
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> sub(A_gpu, B_gpu, cudaStream_t stream = nullptr);
 ```
 
-- CPU 侧使用 OpenMP 并行
-- GPU 侧使用自定义 CUDA kernel (256 threads/block)
+- CPU 侧小矩阵保持串行，超过内部阈值后使用 OpenMP 并行
+- GPU 侧使用自定义 CUDA kernel (256 threads/block)，支持可选 CUDA stream；返回前会同步该 stream
 - **标量运算**：`auto C = 2.0f * A + B;` (标量乘 + 矩阵加)
 
 ## SVD 分解
@@ -42,8 +45,9 @@ std::tuple<DenseMatrix<Scalar, Dev>,
            DenseMatrix<Scalar, Dev>> svd(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：单边 Jacobi 算法 (迭代 Givens 旋转)
+- **CPU**：可用时使用 LAPACK `gesvd`；否则使用项目内 Jacobi fallback
 - **GPU**：`cusolverDnSgesvd` (float) / `cusolverDnDgesvd` (double)
+- 返回形状为 `U(m,m)`, `S(min(m,n),1)`, `Vt(n,n)`。
 
 ## QR 分解
 
@@ -65,7 +69,7 @@ template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> eigh(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：Jacobi 特征值算法
+- **CPU**：可用时使用 LAPACK `syev`；否则使用项目内 Jacobi fallback
 - **GPU**：`cusolverDnSsyevd` (分治算法)
 
 ## 线性求解
@@ -86,9 +90,9 @@ DenseMatrix<Scalar, Dev> solve(
 
 | 运算 | GPU 临界尺寸 | 说明 |
 |------|-------------|------|
-| gemm | ~512 | 超过此尺寸 GPU 显著优于 CPU |
+| gemm | 依 BLAS/CUDA 和矩阵尺寸而定 | CPU BLAS 在小矩阵上可能优于 CUDA |
 | add/sub | ~4096 | 内存带宽受限，GPU 优势出现较晚 |
-| svd | ~64 | GPU 加速非常显著 (O(n³) vs Jacobi) |
+| svd | 依 LAPACK/CUDA 和矩阵尺寸而定 | CPU LAPACK 在小矩阵上可能优于 CUDA |
 | solve | ~256 | GPU LU 分解远超 CPU 高斯消元 |
 
 *注：临界尺寸因硬件而异，请使用 `plamatrix_benchmark` 工具实际测量。*

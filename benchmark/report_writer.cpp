@@ -10,8 +10,11 @@
 #include <sstream>
 #include <stdexcept>
 
-#include <cuda_runtime.h>
 #include <sys/utsname.h>
+
+#ifdef PLAMATRIX_WITH_CUDA
+#include <cuda_runtime.h>
+#endif
 
 namespace plamatrix
 {
@@ -68,6 +71,11 @@ void readCpuInfo(std::string& model, int& cores)
 /// Read GPU device properties via CUDA API.
 void readGpuInfo(std::string& gpu_model, std::string& gpu_driver, std::string& cuda_ver)
 {
+#ifndef PLAMATRIX_WITH_CUDA
+    gpu_model = "N/A";
+    gpu_driver = "N/A";
+    cuda_ver = "N/A";
+#else
     int driver_version = 0;
     auto cu_err = cudaDriverGetVersion(&driver_version);
     if (cu_err != cudaSuccess)
@@ -111,6 +119,7 @@ void readGpuInfo(std::string& gpu_model, std::string& gpu_driver, std::string& c
     std::ostringstream oss;
     oss << prop.name << " (" << std::fixed << std::setprecision(1) << vram_gb << " GB)";
     gpu_model = oss.str();
+#endif
 }
 
 /// Format a double in a compact way.
@@ -272,9 +281,10 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
     // ---- Summary ----
     file << "## Summary\n\n";
 
-    file << "- **Recommended GPU threshold:** N > 512 (CUDA becomes beneficial for larger matrices)\n";
-    file << "- **OMP saturation:** Typically around " << cpu_cores << " threads\n";
-    file << "- **Reproduce:** `./benchmark/plamatrix_benchmark --mode all --size medium`\n";
+    file << "- Times are medians from the benchmark harness timed trials.\n";
+    file << "- Speedups compare CPU serial time with the accelerated path for the same case and size.\n";
+    file << "- Use `--size smoke` for fast build/regression checks; use `--size medium` or `--size large` "
+         << "before making CPU/GPU threshold decisions.\n";
     file << "\n";
 }
 

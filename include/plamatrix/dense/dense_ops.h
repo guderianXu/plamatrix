@@ -5,6 +5,7 @@
 
 #include <omp.h>
 
+#include "plamatrix/core/parallel.h"
 #include "plamatrix/dense/dense_matrix.h"
 
 namespace plamatrix
@@ -40,10 +41,20 @@ DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A, 
     detail::checkSameDimensions("add", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
-    #pragma omp parallel for
-    for (Index i = 0; i < n; ++i)
+    if (detail::shouldUseOpenMp(n))
     {
-        C.data()[i] = A.data()[i] + B.data()[i];
+        #pragma omp parallel for
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = A.data()[i] + B.data()[i];
+        }
+    }
+    else
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = A.data()[i] + B.data()[i];
+        }
     }
     return C;
 }
@@ -59,10 +70,20 @@ DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A, 
     detail::checkSameDimensions("sub", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
-    #pragma omp parallel for
-    for (Index i = 0; i < n; ++i)
+    if (detail::shouldUseOpenMp(n))
     {
-        C.data()[i] = A.data()[i] - B.data()[i];
+        #pragma omp parallel for
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = A.data()[i] - B.data()[i];
+        }
+    }
+    else
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = A.data()[i] - B.data()[i];
+        }
     }
     return C;
 }
@@ -71,17 +92,33 @@ DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A, 
 /// @tparam Scalar  Element type (float or double)
 /// @param A  Left operand GPU matrix
 /// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
 /// @return  New GPU matrix C where C[i] = A[i] + B[i]
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A, const DenseMatrix<Scalar, Device::GPU>& B);
+DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
+                                      const DenseMatrix<Scalar, Device::GPU>& B,
+                                      cudaStream_t stream);
+
+/// GPU element-wise addition on the default CUDA stream.
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
+                                     const DenseMatrix<Scalar, Device::GPU>& B);
 
 /// GPU element-wise subtraction (declaration only — definition in dense_ops.cu).
 /// @tparam Scalar  Element type (float or double)
 /// @param A  Left operand GPU matrix
 /// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
 /// @return  New GPU matrix C where C[i] = A[i] - B[i]
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A, const DenseMatrix<Scalar, Device::GPU>& B);
+DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
+                                      const DenseMatrix<Scalar, Device::GPU>& B,
+                                      cudaStream_t stream);
+
+/// GPU element-wise subtraction on the default CUDA stream.
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
+                                     const DenseMatrix<Scalar, Device::GPU>& B);
 
 /// Scalar multiplication: alpha * A (element-wise).
 /// @tparam Scalar  Element type (float or double)
@@ -93,10 +130,20 @@ DenseMatrix<Scalar, Device::CPU> operator*(Scalar alpha, const DenseMatrix<Scala
 {
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
-    #pragma omp parallel for
-    for (Index i = 0; i < n; ++i)
+    if (detail::shouldUseOpenMp(n))
     {
-        C.data()[i] = alpha * A.data()[i];
+        #pragma omp parallel for
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = alpha * A.data()[i];
+        }
+    }
+    else
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = alpha * A.data()[i];
+        }
     }
     return C;
 }
@@ -122,10 +169,20 @@ DenseMatrix<Scalar, Device::CPU> operator+(Scalar alpha, const DenseMatrix<Scala
 {
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
     Index n = A.size();
-    #pragma omp parallel for
-    for (Index i = 0; i < n; ++i)
+    if (detail::shouldUseOpenMp(n))
     {
-        C.data()[i] = alpha + A.data()[i];
+        #pragma omp parallel for
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = alpha + A.data()[i];
+        }
+    }
+    else
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            C.data()[i] = alpha + A.data()[i];
+        }
     }
     return C;
 }

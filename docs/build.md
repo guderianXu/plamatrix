@@ -111,7 +111,7 @@ sudo reboot
 
 ### 2.3 CPU-only 编译（无需 NVIDIA GPU）
 
-如果没有 NVIDA GPU，PlaMatrix 支持纯 CPU 编译。此时所有 `Device::GPU` 代码通过 stubs 使用 CPU 内存，功能完整但无 GPU 加速。
+如果没有 NVIDIA GPU，PlaMatrix 支持纯 CPU 编译。此时 CUDA 存储/传输桩可让头文件和 CPU 测试正常编译，但 `.cu` 中的 GPU 算法不会构建；业务代码应使用 `Device::CPU` 路径。
 
 ```bash
 # 只需要基础工具（无需 CUDA）
@@ -165,7 +165,8 @@ cmake --build . -j$(nproc)
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | GPU 加速，无 NVIDIA GPU 设为 `OFF` |
-| `PLAMATRIX_CUDA_ARCH` | `native` | CUDA 架构目标。可设为具体值如 `80`(A100)、`86`(RTX3090)、`89`(RTX4090) |
+| `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 架构目标。可设为具体值如 `80`(A100)、`86`(RTX3090)、`89`(RTX4090) |
+| `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake `find_package(BLAS/LAPACK)` 检测并使用系统 BLAS/LAPACK 加速 CPU GEMM/SVD/eigh |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 `float` (32-bit) 实例化 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 `double` (64-bit) 实例化 |
 | `BUILD_TESTS` | `OFF` | 构建单元测试 (需要 Google Test) |
@@ -179,6 +180,10 @@ cmake .. && cmake --build . -j$(nproc)
 
 # CPU-only 版本
 cmake .. -DPLAMATRIX_WITH_CUDA=OFF && cmake --build . -j$(nproc)
+
+# 不使用系统 BLAS/LAPACK，验证项目内 fallback 数值路径
+cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DPLAMATRIX_WITH_SYSTEM_LINALG=OFF
+cmake --build . -j$(nproc)
 
 # 开发模式（测试 + benchmark）
 cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON && cmake --build . -j$(nproc)
@@ -200,13 +205,19 @@ cd build
 ./test/plamatrix_tests
 ```
 
-预期输出：53 个测试全部 `PASSED`。
+默认 CUDA 构建会运行 CUDA 与 CPU/GPU 一致性测试；CPU-only 构建会跳过 GPU 专属用例并运行 no-CUDA stub 回归。
 
 ### 运行基准测试
 
 ```bash
+# 快速 smoke：适合日常回归
+./benchmark/plamatrix_benchmark --mode cpu --size smoke
+
 # CPU 对比（串行 vs 多线程）
 ./benchmark/plamatrix_benchmark --mode cpu --size small
+
+# 只跑指定 case
+./benchmark/plamatrix_benchmark --mode all --size small --case gemm,covariance
 
 # 完整对比（CPU + GPU）
 ./benchmark/plamatrix_benchmark --mode all --size small --output report.md

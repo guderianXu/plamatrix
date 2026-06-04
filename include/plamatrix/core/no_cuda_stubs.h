@@ -3,16 +3,14 @@
 // ============================================================================
 // Stub definitions for building without CUDA (PLAMATRIX_NO_CUDA).
 //
-// All GPU operations are emulated with CPU equivalents:
+// CUDA storage/transfer primitives are emulated with CPU equivalents:
 //   - cudaMalloc  → malloc
 //   - cudaFree    → free
 //   - cudaMemcpy  → memcpy
 //   - cudaMemset  → memset
-//   - GPU kernels → no-ops (header-only declarations only)
 //
-// This allows the library to compile and run without CUDA, using CPU memory
-// for everything. Performance is obviously CPU-bound. To get real GPU
-// acceleration, rebuild with -DPLAMATRIX_WITH_CUDA=ON.
+// This allows matrix storage and transfer APIs to compile without CUDA. CUDA
+// algorithm definitions in .cu files are only built when PLAMATRIX_WITH_CUDA=ON.
 // ============================================================================
 
 #ifdef PLAMATRIX_NO_CUDA

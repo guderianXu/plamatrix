@@ -129,6 +129,34 @@ TEST(DenseOps, add_Gpu)
     EXPECT_FLOAT_EQ(C_cpu(1, 1), 12.0f);
 }
 
+TEST(DenseOps, addSub_GpuTwoArgumentOverloads)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
+    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    A_cpu.setValue(0, 0, 1.0f);
+    A_cpu.setValue(1, 0, 2.0f);
+    A_cpu.setValue(0, 1, 3.0f);
+    A_cpu.setValue(1, 1, 4.0f);
+    B_cpu.setValue(0, 0, 10.0f);
+    B_cpu.setValue(1, 0, 20.0f);
+    B_cpu.setValue(0, 1, 30.0f);
+    B_cpu.setValue(1, 1, 40.0f);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+    auto sum = add(A_gpu, B_gpu).toCpu();
+    auto diff = sub(A_gpu, B_gpu).toCpu();
+
+    EXPECT_FLOAT_EQ(sum(0, 0), 11.0f);
+    EXPECT_FLOAT_EQ(sum(1, 0), 22.0f);
+    EXPECT_FLOAT_EQ(sum(0, 1), 33.0f);
+    EXPECT_FLOAT_EQ(sum(1, 1), 44.0f);
+    EXPECT_FLOAT_EQ(diff(0, 0), -9.0f);
+    EXPECT_FLOAT_EQ(diff(1, 0), -18.0f);
+    EXPECT_FLOAT_EQ(diff(0, 1), -27.0f);
+    EXPECT_FLOAT_EQ(diff(1, 1), -36.0f);
+}
+
 TEST(DenseOps, add_RejectsGpuDimensionMismatch)
 {
     DenseMatrix<float, Device::CPU> A_cpu(2, 3);

@@ -1,5 +1,6 @@
 #include <sstream>
 #include <stdexcept>
+#include <limits>
 #include <type_traits>
 
 #include <cublas_v2.h>
@@ -15,12 +16,23 @@ namespace
 /// Lazily initialized cuBLAS handle — created on first call, reused thereafter.
 cublasHandle_t getCublasHandle()
 {
-    static cublasHandle_t handle = nullptr;
+    static thread_local cublasHandle_t handle = nullptr;
     if (handle == nullptr)
     {
         PLAMATRIX_CHECK_CUBLAS(cublasCreate(&handle));
     }
     return handle;
+}
+
+int checkedCublasInt(Index value, const char* name)
+{
+    if (value < 0 || value > static_cast<Index>(std::numeric_limits<int>::max()))
+    {
+        std::ostringstream oss;
+        oss << name << " is outside cuBLAS int range: " << value;
+        throw std::runtime_error(oss.str());
+    }
+    return static_cast<int>(value);
 }
 
 } // anonymous namespace
@@ -42,36 +54,37 @@ DenseMatrix<Scalar, Device::GPU> gemm(const DenseMatrix<Scalar, Device::GPU>& A,
         throw std::runtime_error(oss.str());
     }
 
+    int m_int = checkedCublasInt(m, "GEMM m");
+    int n_int = checkedCublasInt(n, "GEMM n");
+    int k_int = checkedCublasInt(k, "GEMM k");
+    int lda = m_int;
+    int ldb = k_int;
+    int ldc = m_int;
+
     DenseMatrix<Scalar, Device::GPU> C(m, n);
 
     cublasHandle_t handle = getCublasHandle();
-    if (stream != nullptr)
-    {
-        PLAMATRIX_CHECK_CUBLAS(cublasSetStream(handle, stream));
-    }
+    PLAMATRIX_CHECK_CUBLAS(cublasSetStream(handle, stream));
 
     Scalar alpha = static_cast<Scalar>(1.0);
     Scalar beta  = static_cast<Scalar>(0.0);
-
-    int lda = static_cast<int>(m);
-    int ldb = static_cast<int>(k);
-    int ldc = static_cast<int>(m);
 
     if constexpr (std::is_same_v<Scalar, float>)
     {
         PLAMATRIX_CHECK_CUBLAS(
             cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                        static_cast<int>(m), static_cast<int>(n), static_cast<int>(k),
+                        m_int, n_int, k_int,
                         &alpha, A.data(), lda, B.data(), ldb, &beta, C.data(), ldc));
     }
     else
     {
         PLAMATRIX_CHECK_CUBLAS(
             cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                        static_cast<int>(m), static_cast<int>(n), static_cast<int>(k),
+                        m_int, n_int, k_int,
                         &alpha, A.data(), lda, B.data(), ldb, &beta, C.data(), ldc));
     }
 
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return C;
 }
 

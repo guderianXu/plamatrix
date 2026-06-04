@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -30,6 +31,216 @@ __global__ void transformPointsKernel(const Scalar* T, const Scalar* points, Sca
     result[i + 0 * N] = T[0] * px + T[4] * py + T[8] * pz + T[12];
     result[i + 1 * N] = T[1] * px + T[5] * py + T[9] * pz + T[13];
     result[i + 2 * N] = T[2] * px + T[6] * py + T[10] * pz + T[14];
+}
+
+template <typename Scalar>
+using CovarianceAccum = std::conditional_t<std::is_same_v<Scalar, float>, double, Scalar>;
+
+template <typename Scalar, typename Accum>
+__global__ void covarianceMeanPartialKernel(const Scalar* points, Accum* partial, Index N)
+{
+    constexpr int stat_count = 3;
+    constexpr int block_size = 256;
+    __shared__ Accum shared[stat_count * block_size];
+
+    int tid = threadIdx.x;
+    Accum local[stat_count] = {};
+
+    for (Index i = static_cast<Index>(blockIdx.x) * blockDim.x + tid;
+         i < N;
+         i += static_cast<Index>(blockDim.x) * gridDim.x)
+    {
+        Accum x = static_cast<Accum>(points[i + 0 * N]);
+        Accum y = static_cast<Accum>(points[i + 1 * N]);
+        Accum z = static_cast<Accum>(points[i + 2 * N]);
+
+        local[0] += x;
+        local[1] += y;
+        local[2] += z;
+    }
+
+    for (int stat = 0; stat < stat_count; ++stat)
+    {
+        shared[stat * blockDim.x + tid] = local[stat];
+    }
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            for (int stat = 0; stat < stat_count; ++stat)
+            {
+                shared[stat * blockDim.x + tid] += shared[stat * blockDim.x + tid + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0)
+    {
+        for (int stat = 0; stat < stat_count; ++stat)
+        {
+            partial[blockIdx.x + stat * gridDim.x] = shared[stat * blockDim.x];
+        }
+    }
+}
+
+template <typename Accum>
+__global__ void covarianceMeanFinalizeKernel(const Accum* partial, Accum* mean, int partial_blocks, Index N)
+{
+    constexpr int stat_count = 3;
+    constexpr int block_size = 256;
+    __shared__ Accum shared[stat_count * block_size];
+
+    int tid = threadIdx.x;
+    Accum local[stat_count] = {};
+    for (int i = tid; i < partial_blocks; i += blockDim.x)
+    {
+        for (int stat = 0; stat < stat_count; ++stat)
+        {
+            local[stat] += partial[i + stat * partial_blocks];
+        }
+    }
+
+    for (int stat = 0; stat < stat_count; ++stat)
+    {
+        shared[stat * blockDim.x + tid] = local[stat];
+    }
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            for (int stat = 0; stat < stat_count; ++stat)
+            {
+                shared[stat * blockDim.x + tid] += shared[stat * blockDim.x + tid + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0)
+    {
+        Accum inv_n = static_cast<Accum>(1) / static_cast<Accum>(N);
+        mean[0] = shared[0] * inv_n;
+        mean[1] = shared[blockDim.x] * inv_n;
+        mean[2] = shared[2 * blockDim.x] * inv_n;
+    }
+}
+
+template <typename Scalar, typename Accum>
+__global__ void covarianceCenteredPartialKernel(const Scalar* points, const Accum* mean, Accum* partial, Index N)
+{
+    constexpr int stat_count = 6;
+    constexpr int block_size = 256;
+    __shared__ Accum shared[stat_count * block_size];
+
+    int tid = threadIdx.x;
+    Accum local[stat_count] = {};
+    Accum mean_x = mean[0];
+    Accum mean_y = mean[1];
+    Accum mean_z = mean[2];
+
+    for (Index i = static_cast<Index>(blockIdx.x) * blockDim.x + tid;
+         i < N;
+         i += static_cast<Index>(blockDim.x) * gridDim.x)
+    {
+        Accum x = static_cast<Accum>(points[i + 0 * N]) - mean_x;
+        Accum y = static_cast<Accum>(points[i + 1 * N]) - mean_y;
+        Accum z = static_cast<Accum>(points[i + 2 * N]) - mean_z;
+
+        local[0] += x * x;
+        local[1] += x * y;
+        local[2] += x * z;
+        local[3] += y * y;
+        local[4] += y * z;
+        local[5] += z * z;
+    }
+
+    for (int stat = 0; stat < stat_count; ++stat)
+    {
+        shared[stat * blockDim.x + tid] = local[stat];
+    }
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            for (int stat = 0; stat < stat_count; ++stat)
+            {
+                shared[stat * blockDim.x + tid] += shared[stat * blockDim.x + tid + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0)
+    {
+        for (int stat = 0; stat < stat_count; ++stat)
+        {
+            partial[blockIdx.x + stat * gridDim.x] = shared[stat * blockDim.x];
+        }
+    }
+}
+
+template <typename Scalar, typename Accum>
+__global__ void covarianceCenteredFinalizeKernel(const Accum* partial, Scalar* covariance, int partial_blocks, Index N)
+{
+    constexpr int stat_count = 6;
+    constexpr int block_size = 256;
+    __shared__ Accum shared[stat_count * block_size];
+
+    int tid = threadIdx.x;
+    Accum local[stat_count] = {};
+    for (int i = tid; i < partial_blocks; i += blockDim.x)
+    {
+        for (int stat = 0; stat < stat_count; ++stat)
+        {
+            local[stat] += partial[i + stat * partial_blocks];
+        }
+    }
+
+    for (int stat = 0; stat < stat_count; ++stat)
+    {
+        shared[stat * blockDim.x + tid] = local[stat];
+    }
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            for (int stat = 0; stat < stat_count; ++stat)
+            {
+                shared[stat * blockDim.x + tid] += shared[stat * blockDim.x + tid + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0)
+    {
+        Accum inv_n = static_cast<Accum>(1) / static_cast<Accum>(N);
+        Accum c_xx = shared[0] * inv_n;
+        Accum c_xy = shared[blockDim.x] * inv_n;
+        Accum c_xz = shared[2 * blockDim.x] * inv_n;
+        Accum c_yy = shared[3 * blockDim.x] * inv_n;
+        Accum c_yz = shared[4 * blockDim.x] * inv_n;
+        Accum c_zz = shared[5 * blockDim.x] * inv_n;
+
+        covariance[0] = static_cast<Scalar>(c_xx);
+        covariance[1] = static_cast<Scalar>(c_xy);
+        covariance[2] = static_cast<Scalar>(c_xz);
+        covariance[3] = static_cast<Scalar>(c_xy);
+        covariance[4] = static_cast<Scalar>(c_yy);
+        covariance[5] = static_cast<Scalar>(c_yz);
+        covariance[6] = static_cast<Scalar>(c_xz);
+        covariance[7] = static_cast<Scalar>(c_yz);
+        covariance[8] = static_cast<Scalar>(c_zz);
+    }
 }
 
 // ---- GPU implementations ----
@@ -75,6 +286,13 @@ template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> rigidTransformGpuImpl(const DenseMatrix<Scalar, Device::GPU>& R,
                                                          const Vec3<Scalar>& t)
 {
+    if (R.rows() != 3 || R.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "rigidTransform: R must be 3x3, got " << R.rows() << "x" << R.cols();
+        throw std::runtime_error(oss.str());
+    }
+
     // Copy R (3x3) from GPU to CPU
     Scalar R_cpu[9];
     PLAMATRIX_CHECK_CUDA(
@@ -150,7 +368,6 @@ DenseMatrix<Scalar, Device::GPU> transformPointsGpuImpl(const DenseMatrix<Scalar
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scalar, Device::GPU>& points)
 {
-    // Copy points to CPU, compute covariance on CPU, transfer result back to GPU
     Index N = points.rows();
     if (N < 2)
     {
@@ -163,49 +380,30 @@ DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scala
         throw std::runtime_error(oss.str());
     }
 
-    std::size_t points_size = static_cast<std::size_t>(N * 3) * sizeof(Scalar);
-    Scalar* points_cpu = new Scalar[N * 3];
-    PLAMATRIX_CHECK_CUDA(cudaMemcpy(points_cpu, points.data(), points_size, cudaMemcpyDeviceToHost));
-
-    // Compute centroid
-    Scalar cx = static_cast<Scalar>(0);
-    Scalar cy = static_cast<Scalar>(0);
-    Scalar cz = static_cast<Scalar>(0);
-    for (Index i = 0; i < N; ++i)
+    constexpr int block_size = 256;
+    Index block_count_index = (N + block_size - 1) / block_size;
+    if (block_count_index > static_cast<Index>(std::numeric_limits<int>::max()))
     {
-        cx += points_cpu[i + 0 * N];
-        cy += points_cpu[i + 1 * N];
-        cz += points_cpu[i + 2 * N];
-    }
-    Scalar invN = static_cast<Scalar>(1) / static_cast<Scalar>(N);
-    cx *= invN;
-    cy *= invN;
-    cz *= invN;
-
-    // Compute covariance
-    Scalar C_cpu[9] = {0};
-    for (Index k = 0; k < N; ++k)
-    {
-        Scalar dx = points_cpu[k + 0 * N] - cx;
-        Scalar dy = points_cpu[k + 1 * N] - cy;
-        Scalar dz = points_cpu[k + 2 * N] - cz;
-
-        C_cpu[0] += invN * dx * dx;
-        C_cpu[1] += invN * dx * dy;
-        C_cpu[2] += invN * dx * dz;
-        C_cpu[3] += invN * dy * dx;
-        C_cpu[4] += invN * dy * dy;
-        C_cpu[5] += invN * dy * dz;
-        C_cpu[6] += invN * dz * dx;
-        C_cpu[7] += invN * dz * dy;
-        C_cpu[8] += invN * dz * dz;
+        throw std::runtime_error("covarianceMatrix: point count exceeds CUDA grid range");
     }
 
-    delete[] points_cpu;
-
+    using Accum = CovarianceAccum<Scalar>;
+    int block_count = static_cast<int>(block_count_index);
+    DenseMatrix<Accum, Device::GPU> partial_mean(block_count, 3);
+    DenseMatrix<Accum, Device::GPU> mean(1, 3);
+    DenseMatrix<Accum, Device::GPU> partial_covariance(block_count, 6);
     DenseMatrix<Scalar, Device::GPU> C_gpu(3, 3);
-    PLAMATRIX_CHECK_CUDA(
-        cudaMemcpy(C_gpu.data(), C_cpu, static_cast<std::size_t>(9) * sizeof(Scalar), cudaMemcpyHostToDevice));
+
+    covarianceMeanPartialKernel<Scalar, Accum><<<block_count, block_size>>>(points.data(), partial_mean.data(), N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceMeanFinalizeKernel<Accum><<<1, block_size>>>(partial_mean.data(), mean.data(), block_count, N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceCenteredPartialKernel<Scalar, Accum><<<block_count, block_size>>>(
+        points.data(), mean.data(), partial_covariance.data(), N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceCenteredFinalizeKernel<Scalar, Accum><<<1, block_size>>>(
+        partial_covariance.data(), C_gpu.data(), block_count, N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
     return C_gpu;
 }
 

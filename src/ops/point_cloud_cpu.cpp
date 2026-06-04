@@ -1,6 +1,7 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 
 #include "plamatrix/ops/point_cloud.h"
 
@@ -52,6 +53,13 @@ template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> rigidTransformCpu(const DenseMatrix<Scalar, Device::CPU>& R,
                                                      const Vec3<Scalar>& t)
 {
+    if (R.rows() != 3 || R.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "rigidTransform: R must be 3x3, got " << R.rows() << "x" << R.cols();
+        throw std::runtime_error(oss.str());
+    }
+
     const Scalar* r = R.data();
 
     DenseMatrix<Scalar, Device::CPU> T(4, 4);
@@ -139,18 +147,19 @@ DenseMatrix<Scalar, Device::CPU> covarianceMatrixCpu(const DenseMatrix<Scalar, D
     }
 
     const Scalar* p = points.data();
+    using Accum = std::conditional_t<std::is_same_v<Scalar, float>, double, Scalar>;
 
     // Compute centroid
-    Scalar cx = static_cast<Scalar>(0);
-    Scalar cy = static_cast<Scalar>(0);
-    Scalar cz = static_cast<Scalar>(0);
+    Accum cx = static_cast<Accum>(0);
+    Accum cy = static_cast<Accum>(0);
+    Accum cz = static_cast<Accum>(0);
     for (Index i = 0; i < N; ++i)
     {
-        cx += p[i + 0 * N];
-        cy += p[i + 1 * N];
-        cz += p[i + 2 * N];
+        cx += static_cast<Accum>(p[i + 0 * N]);
+        cy += static_cast<Accum>(p[i + 1 * N]);
+        cz += static_cast<Accum>(p[i + 2 * N]);
     }
-    Scalar invN = static_cast<Scalar>(1) / static_cast<Scalar>(N);
+    Accum invN = static_cast<Accum>(1) / static_cast<Accum>(N);
     cx *= invN;
     cy *= invN;
     cz *= invN;
@@ -159,21 +168,27 @@ DenseMatrix<Scalar, Device::CPU> covarianceMatrixCpu(const DenseMatrix<Scalar, D
     DenseMatrix<Scalar, Device::CPU> C(3, 3);
     Scalar* c = C.data();
 
+    Accum accum[9] = {};
     for (Index k = 0; k < N; ++k)
     {
-        Scalar dx = p[k + 0 * N] - cx;
-        Scalar dy = p[k + 1 * N] - cy;
-        Scalar dz = p[k + 2 * N] - cz;
+        Accum dx = static_cast<Accum>(p[k + 0 * N]) - cx;
+        Accum dy = static_cast<Accum>(p[k + 1 * N]) - cy;
+        Accum dz = static_cast<Accum>(p[k + 2 * N]) - cz;
 
-        c[0] += invN * dx * dx; // C(0,0)
-        c[1] += invN * dx * dy; // C(1,0)
-        c[2] += invN * dx * dz; // C(2,0)
-        c[3] += invN * dy * dx; // C(0,1)
-        c[4] += invN * dy * dy; // C(1,1)
-        c[5] += invN * dy * dz; // C(2,1)
-        c[6] += invN * dz * dx; // C(0,2)
-        c[7] += invN * dz * dy; // C(1,2)
-        c[8] += invN * dz * dz; // C(2,2)
+        accum[0] += invN * dx * dx; // C(0,0)
+        accum[1] += invN * dx * dy; // C(1,0)
+        accum[2] += invN * dx * dz; // C(2,0)
+        accum[3] += invN * dy * dx; // C(0,1)
+        accum[4] += invN * dy * dy; // C(1,1)
+        accum[5] += invN * dy * dz; // C(2,1)
+        accum[6] += invN * dz * dx; // C(0,2)
+        accum[7] += invN * dz * dy; // C(1,2)
+        accum[8] += invN * dz * dz; // C(2,2)
+    }
+
+    for (int i = 0; i < 9; ++i)
+    {
+        c[i] = static_cast<Scalar>(accum[i]);
     }
 
     return C;

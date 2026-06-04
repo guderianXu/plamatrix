@@ -36,10 +36,14 @@ double measure(BenchmarkFn fn, int warmup, int trials)
 
     for (int i = 0; i < trials; ++i)
     {
+#ifdef PLAMATRIX_WITH_CUDA
         cudaDeviceSynchronize();
+#endif
         auto t_start = Clock::now();
         fn();
+#ifdef PLAMATRIX_WITH_CUDA
         cudaDeviceSynchronize();
+#endif
         auto t_end = Clock::now();
         double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         times.push_back(ms);
@@ -108,6 +112,29 @@ template <typename T>
 void doNotOptimize(T const& value)
 {
     asm volatile("" : : "r,m"(value) : "memory");
+}
+
+bool shouldRunCase(const std::vector<std::string>& case_filter, const char* name)
+{
+    return case_filter.empty()
+        || std::find(case_filter.begin(), case_filter.end(), std::string(name)) != case_filter.end();
+}
+
+bool hasTiming(const CaseResult& r)
+{
+    return r.time_serial_ms >= 0.0 || r.time_omp_ms >= 0.0 || r.time_cuda_ms >= 0.0 || r.time_transfer_ms >= 0.0;
+}
+
+void appendResultIfRan(BenchmarkReport& report, CaseResult&& r)
+{
+    if (hasTiming(r))
+    {
+        report.results.push_back(std::move(r));
+    }
+    else
+    {
+        std::cerr << "  " << r.name << " (skipped — no selected backend available at this size)" << std::endl;
+    }
 }
 
 } // anonymous namespace
@@ -414,13 +441,19 @@ void runPointTransformOmp(CaseResult& r, Index N)
 // runAllCases — dispatcher
 // ============================================================================
 
-void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cuda, BenchmarkReport& report)
+void runAllCases(const std::vector<Index>& sizes,
+                 bool serial,
+                 bool omp,
+                 bool cuda,
+                 BenchmarkReport& report,
+                 const std::vector<std::string>& case_filter)
 {
     for (Index N : sizes)
     {
         std::cerr << "--- N=" << N << " ---" << std::endl;
 
         // gemm
+        if (shouldRunCase(case_filter, "gemm"))
         {
             CaseResult r{"gemm", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  gemm serial..." << std::endl; runGemmSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -428,10 +461,11 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  gemm cuda..." << std::endl;   detail::runGemmCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // add
+        if (shouldRunCase(case_filter, "add"))
         {
             CaseResult r{"add", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  add serial..." << std::endl; runAddSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -439,10 +473,11 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  add cuda..." << std::endl;   detail::runAddCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // sub
+        if (shouldRunCase(case_filter, "sub"))
         {
             CaseResult r{"sub", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  sub serial..." << std::endl; runSubSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -450,10 +485,11 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  sub cuda..." << std::endl;   detail::runSubCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // transpose
+        if (shouldRunCase(case_filter, "transpose"))
         {
             CaseResult r{"transpose", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  transpose serial..." << std::endl; runTransposeSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -461,32 +497,35 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  transpose cuda..." << std::endl;   detail::runTransposeCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // scalarMul
+        if (shouldRunCase(case_filter, "scalarMul"))
         {
             CaseResult r{"scalarMul", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  scalarMul serial..." << std::endl; runScalarMulSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  scalarMul omp..." << std::endl;    runScalarMulOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
-        // svd — CPU Jacobi is O(n^4), skip large sizes
+        // svd — skip large CPU sizes; combine --case svd with tiny/smoke for focused CPU runs
+        if (shouldRunCase(case_filter, "svd"))
         {
             CaseResult r{"svd", N, -1.0, -1.0, -1.0, -1.0};
             const bool cpu_ok = (N <= 256);
             if (serial && cpu_ok) { std::cerr << "  svd serial..." << std::endl; runSvdSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            else if (serial)      { std::cerr << "  svd serial  (skipped — too large for CPU Jacobi)" << std::endl; }
+            else if (serial)      { std::cerr << "  svd serial  (skipped — too large for broad CPU benchmark)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  svd omp..." << std::endl;    runSvdOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            else if (omp)         { std::cerr << "  svd omp     (skipped — too large for CPU Jacobi)" << std::endl; }
+            else if (omp)         { std::cerr << "  svd omp     (skipped — too large for broad CPU benchmark)" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  svd cuda..." << std::endl;   detail::runSvdCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // qr — CPU Householder is O(n^3), skip large sizes
+        if (shouldRunCase(case_filter, "qr"))
         {
             CaseResult r{"qr", N, -1.0, -1.0, -1.0, -1.0};
             const bool cpu_ok = (N <= 256);
@@ -497,24 +536,26 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  qr cuda..." << std::endl;   detail::runQrCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
-        // eigh — CPU Jacobi is O(n^4), skip large sizes
+        // eigh — skip large CPU sizes; combine --case eigh with tiny/smoke for focused CPU runs
+        if (shouldRunCase(case_filter, "eigh"))
         {
             CaseResult r{"eigh", N, -1.0, -1.0, -1.0, -1.0};
             const bool cpu_ok = (N <= 256);
             if (serial && cpu_ok) { std::cerr << "  eigh serial..." << std::endl; runEighSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
-            else if (serial)      { std::cerr << "  eigh serial  (skipped — too large for CPU Jacobi)" << std::endl; }
+            else if (serial)      { std::cerr << "  eigh serial  (skipped — too large for broad CPU benchmark)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  eigh omp..." << std::endl;    runEighOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            else if (omp)         { std::cerr << "  eigh omp     (skipped — too large for CPU Jacobi)" << std::endl; }
+            else if (omp)         { std::cerr << "  eigh omp     (skipped — too large for broad CPU benchmark)" << std::endl; }
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  eigh cuda..." << std::endl;   detail::runEighCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // solve
+        if (shouldRunCase(case_filter, "solve"))
         {
             CaseResult r{"solve", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  solve serial..." << std::endl; runSolveSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -522,10 +563,11 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  solve cuda..." << std::endl;   detail::runSolveCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // covariance
+        if (shouldRunCase(case_filter, "covariance"))
         {
             CaseResult r{"covariance", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  covariance serial..." << std::endl; runCovarianceSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -533,10 +575,11 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  covariance cuda..." << std::endl;   detail::runCovarianceCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
 
         // pointTransform
+        if (shouldRunCase(case_filter, "pointTransform"))
         {
             CaseResult r{"pointTransform", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  pointTransform serial..." << std::endl; runPointTransformSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
@@ -544,7 +587,7 @@ void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cu
             #ifdef PLAMATRIX_WITH_CUDA
             if (cuda)   { std::cerr << "  pointTransform cuda..." << std::endl;   detail::runPointTransformCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
 #endif
-            report.results.push_back(std::move(r));
+            appendResultIfRan(report, std::move(r));
         }
     }
 }

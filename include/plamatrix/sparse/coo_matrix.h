@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 #include "plamatrix/core/device_matrix.h"
@@ -24,6 +25,10 @@ public:
     COOMatrix(Index rows, Index cols)
         : DeviceMatrix<Scalar, Dev>(0, 0)
     {
+        if (rows < 0 || cols < 0)
+        {
+            throw std::invalid_argument("COOMatrix dimensions must be non-negative");
+        }
         this->_rows = rows;
         this->_cols = cols;
     }
@@ -35,6 +40,10 @@ public:
     /// @param value  Non-zero value
     void add(Index row, Index col, Scalar value)
     {
+        if (row < 0 || row >= this->_rows || col < 0 || col >= this->_cols)
+        {
+            throw std::out_of_range("COOMatrix triplet index is out of bounds");
+        }
         _row_indices.push_back(row);
         _col_indices.push_back(col);
         _values.push_back(value);

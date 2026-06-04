@@ -28,6 +28,7 @@ DenseMatrix<Scalar, Dev> rotationMatrix(const Vec3<Scalar>& axis, Scalar angle);
 /// @param R  3x3 rotation matrix
 /// @param t  Translation vector
 /// @return  4x4 rigid transform matrix on the specified device
+/// @throws std::runtime_error if R is not 3x3
 template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> rigidTransform(const DenseMatrix<Scalar, Dev>& R, const Vec3<Scalar>& t);
 

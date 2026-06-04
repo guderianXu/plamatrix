@@ -14,6 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---- Options ----
 option(PLAMATRIX_USE_FLOAT  "Pre-compile float32 instantiations" ON)
 option(PLAMATRIX_USE_DOUBLE "Pre-compile float64 instantiations" ON)
+option(PLAMATRIX_WITH_SYSTEM_LINALG "Use system BLAS/LAPACK acceleration when available" ON)
 
 set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_BUILD_TESTS)
@@ -85,9 +86,31 @@ endif()
 # ---- OpenMP (always required) ----
 find_package(OpenMP REQUIRED)
 
+# ---- Optional CPU BLAS/LAPACK acceleration ----
+set(PLAMATRIX_LINALG_PROVIDER "fallback")
+set(PLAMATRIX_LINALG_LIBRARIES "")
+set(PLAMATRIX_WITH_FOUND_SYSTEM_LINALG OFF)
+if(PLAMATRIX_WITH_SYSTEM_LINALG)
+    find_package(BLAS QUIET)
+    find_package(LAPACK QUIET)
+
+    if(TARGET BLAS::BLAS AND TARGET LAPACK::LAPACK)
+        set(PLAMATRIX_LINALG_PROVIDER "system_blas_lapack")
+        set(PLAMATRIX_WITH_FOUND_SYSTEM_LINALG ON)
+        set(PLAMATRIX_LINALG_LIBRARIES
+            LAPACK::LAPACK
+            BLAS::BLAS
+        )
+    else()
+        message(STATUS "System BLAS/LAPACK not found; using PlaMatrix fallback linalg")
+    endif()
+endif()
+
 # ---- Library target ----
 add_library(plamatrix)
 add_library(plamatrix::plamatrix ALIAS plamatrix)
+
+target_compile_features(plamatrix PUBLIC cxx_std_17)
 
 if(PLAMATRIX_WITH_CUDA)
     set_target_properties(plamatrix PROPERTIES
@@ -125,6 +148,14 @@ target_compile_definitions(plamatrix
         $<$<BOOL:${PLAMATRIX_USE_FLOAT}>:PLAMATRIX_USE_FLOAT=1>
         $<$<BOOL:${PLAMATRIX_USE_DOUBLE}>:PLAMATRIX_USE_DOUBLE=1>
 )
+
+if(PLAMATRIX_LINALG_LIBRARIES)
+    target_link_libraries(plamatrix PUBLIC ${PLAMATRIX_LINALG_LIBRARIES})
+    target_compile_definitions(plamatrix PRIVATE
+        PLAMATRIX_WITH_BLAS=1
+        PLAMATRIX_WITH_LAPACK=1
+    )
+endif()
 
 # ---- Source files ----
 add_subdirectory(src)
@@ -181,6 +212,7 @@ if(PLAMATRIX_WITH_CUDA)
 endif()
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
+message(STATUS "  CPU linalg:      ${PLAMATRIX_LINALG_PROVIDER}")
 message(STATUS "  Build tests:     ${PLAMATRIX_BUILD_TESTS}")
 message(STATUS "  Build benchmarks:${PLAMATRIX_BUILD_BENCHMARKS}")
 message(STATUS "  Build docs:      ${PLAMATRIX_BUILD_DOCS}")

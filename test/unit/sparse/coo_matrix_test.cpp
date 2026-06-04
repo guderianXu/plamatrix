@@ -13,6 +13,12 @@ TEST(COOMatrix, construction)
     EXPECT_EQ(mat.nnz(), 0);
 }
 
+TEST(COOMatrix, construction_RejectsNegativeDimensions)
+{
+    EXPECT_THROW((COOMatrix<float, Device::CPU>(-1, 4)), std::invalid_argument);
+    EXPECT_THROW((COOMatrix<float, Device::CPU>(4, -1)), std::invalid_argument);
+}
+
 TEST(COOMatrix, addAndBuild)
 {
     COOMatrix<float, Device::CPU> mat(4, 4);
@@ -23,6 +29,16 @@ TEST(COOMatrix, addAndBuild)
     mat.add(3, 3, 5.0f);
 
     EXPECT_EQ(mat.nnz(), 5);
+}
+
+TEST(COOMatrix, add_RejectsOutOfBoundsTriplet)
+{
+    COOMatrix<float, Device::CPU> mat(2, 3);
+
+    EXPECT_THROW(mat.add(-1, 0, 1.0f), std::out_of_range);
+    EXPECT_THROW(mat.add(0, -1, 1.0f), std::out_of_range);
+    EXPECT_THROW(mat.add(2, 0, 1.0f), std::out_of_range);
+    EXPECT_THROW(mat.add(0, 3, 1.0f), std::out_of_range);
 }
 
 TEST(COOMatrix, toCsr_Cpu)

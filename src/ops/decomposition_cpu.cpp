@@ -7,6 +7,10 @@
 
 #include "plamatrix/ops/decomposition.h"
 
+#ifdef PLAMATRIX_WITH_LAPACK
+#include "fortran_linalg.h"
+#endif
+
 namespace plamatrix
 {
 
@@ -30,6 +34,71 @@ Scalar sign(Scalar val)
     return (val >= Scalar(0)) ? Scalar(1) : Scalar(-1);
 }
 
+template <typename Scalar>
+bool normalizeColumnCandidate(DenseMatrix<Scalar, Device::CPU>& U,
+                              Index col,
+                              std::vector<Scalar>& candidate,
+                              Scalar epsilon)
+{
+    Index rows = U.rows();
+    for (Index prev = 0; prev < col; ++prev)
+    {
+        Scalar dot = Scalar(0);
+        for (Index i = 0; i < rows; ++i)
+        {
+            dot += candidate[static_cast<std::size_t>(i)] * U(i, prev);
+        }
+        for (Index i = 0; i < rows; ++i)
+        {
+            candidate[static_cast<std::size_t>(i)] -= dot * U(i, prev);
+        }
+    }
+
+    Scalar norm = Scalar(0);
+    for (Index i = 0; i < rows; ++i)
+    {
+        Scalar v = candidate[static_cast<std::size_t>(i)];
+        norm += v * v;
+    }
+    norm = std::sqrt(norm);
+    if (norm <= epsilon)
+    {
+        return false;
+    }
+
+    Scalar inv_norm = Scalar(1) / norm;
+    for (Index i = 0; i < rows; ++i)
+    {
+        U(i, col) = candidate[static_cast<std::size_t>(i)] * inv_norm;
+    }
+    return true;
+}
+
+template <typename Scalar>
+void setOrthonormalColumn(DenseMatrix<Scalar, Device::CPU>& U,
+                          Index col,
+                          std::vector<Scalar> candidate,
+                          Scalar epsilon)
+{
+    if (normalizeColumnCandidate(U, col, candidate, epsilon))
+    {
+        return;
+    }
+
+    Index rows = U.rows();
+    for (Index basis = 0; basis < rows; ++basis)
+    {
+        std::fill(candidate.begin(), candidate.end(), Scalar(0));
+        candidate[static_cast<std::size_t>(basis)] = Scalar(1);
+        if (normalizeColumnCandidate(U, col, candidate, epsilon))
+        {
+            return;
+        }
+    }
+
+    throw std::runtime_error("SVD: failed to construct orthonormal U basis");
+}
+
 } // anonymous namespace
 
 template <typename Scalar>
@@ -43,6 +112,28 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     {
         throw std::runtime_error("SVD: input matrix has zero dimensions");
     }
+
+#ifdef PLAMATRIX_WITH_LAPACK
+    int m_int = detail::checkedLapackInt(m, "SVD m");
+    int n_int = detail::checkedLapackInt(n, "SVD n");
+    Index min_mn = (m < n) ? m : n;
+
+    DenseMatrix<Scalar, Device::CPU> A_work(m, n);
+    for (Index j = 0; j < n; ++j)
+    {
+        for (Index i = 0; i < m; ++i)
+        {
+            A_work(i, j) = A(i, j);
+        }
+    }
+
+    DenseMatrix<Scalar, Device::CPU> U_full(m, m);
+    DenseMatrix<Scalar, Device::CPU> S_compact(min_mn, 1);
+    DenseMatrix<Scalar, Device::CPU> Vt(n, n);
+
+    detail::fortranGesvd(m_int, n_int, A_work.data(), S_compact.data(), U_full.data(), Vt.data());
+    return {std::move(U_full), std::move(S_compact), std::move(Vt)};
+#else
 
     // U = copy of A (m x n), we work in-place on U (columns will become left singular vectors)
     DenseMatrix<Scalar, Device::CPU> U(m, n);
@@ -91,14 +182,15 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
 
                 max_off_diag = std::max(max_off_diag, std::abs(c));
 
-                // Skip if off-diagonal element is negligible
+                // Skip if either column pair cannot produce a stable rotation.
                 Scalar scale = a * b;
-                if (scale > Scalar(0))
+                if (scale <= epsilon * epsilon)
                 {
-                    if (std::abs(c) / std::sqrt(scale) < epsilon)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
+                if (std::abs(c) / std::sqrt(scale) < epsilon)
+                {
+                    continue;
                 }
 
                 // Compute Givens rotation to zero out c
@@ -200,7 +292,29 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
         }
     }
 
-    return {std::move(U_sorted), std::move(S_sorted), std::move(Vt_sorted)};
+    Index compact_singular_count = (m < n) ? m : n;
+    DenseMatrix<Scalar, Device::CPU> S_compact(compact_singular_count, 1);
+    for (Index i = 0; i < compact_singular_count; ++i)
+    {
+        S_compact(i, 0) = S_sorted(i, 0);
+    }
+
+    DenseMatrix<Scalar, Device::CPU> U_full(m, m);
+    for (Index col = 0; col < m; ++col)
+    {
+        std::vector<Scalar> candidate(static_cast<std::size_t>(m), Scalar(0));
+        if (col < n)
+        {
+            for (Index row = 0; row < m; ++row)
+            {
+                candidate[static_cast<std::size_t>(row)] = U_sorted(row, col);
+            }
+        }
+        setOrthonormalColumn(U_full, col, std::move(candidate), epsilon);
+    }
+
+    return {std::move(U_full), std::move(S_compact), std::move(Vt_sorted)};
+#endif
 }
 
 // Explicit template instantiations
@@ -354,6 +468,28 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
         throw std::runtime_error("Eigh: input matrix must be square");
     }
 
+#ifdef PLAMATRIX_WITH_LAPACK
+    int n_int = detail::checkedLapackInt(n, "Eigh n");
+    DenseMatrix<Scalar, Device::CPU> A_work(n, n);
+    for (Index j = 0; j < n; ++j)
+    {
+        for (Index i = 0; i < n; ++i)
+        {
+            A_work(i, j) = A(i, j);
+        }
+    }
+
+    std::vector<Scalar> eigenvalues(static_cast<std::size_t>(n));
+    detail::fortranSyev(n_int, A_work.data(), eigenvalues.data());
+
+    DenseMatrix<Scalar, Device::CPU> eigvals(n, 1);
+    for (Index i = 0; i < n; ++i)
+    {
+        eigvals(i, 0) = eigenvalues[static_cast<std::size_t>(n - 1 - i)];
+    }
+    return eigvals;
+#else
+
     // Copy A to working matrix
     DenseMatrix<Scalar, Device::CPU> A_work(n, n);
     for (Index j = 0; j < n; ++j)
@@ -449,6 +585,7 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     return eigvals;
+#endif
 }
 
 // Explicit template instantiations for qr

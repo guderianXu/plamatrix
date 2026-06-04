@@ -21,7 +21,7 @@ include/plamatrix/plamatrix.h          # 总入口
 │   ├── coo_matrix.h     COO 格式 + toCsr()
 │   └── csr_matrix.h     CSR 格式 (三数组)
 └── ops/          运算层
-    ├── gemm.h            矩阵乘法 (CPU OpenMP / cuBLAS)
+    ├── gemm.h            矩阵乘法 (CPU BLAS/fallback / cuBLAS)
     ├── decomposition.h   SVD / QR / Eigh
     ├── solver.h          线性求解
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
@@ -37,7 +37,7 @@ src/                            实现文件
 - 列优先 (column-major) 存储，兼容 cuBLAS Fortran 序
 - 显式设备管理：`toCpu()` / `toGpu()` 触发 `cudaMemcpy`
 - GPU 加速通过 cuBLAS / cuSOLVER 库 + 少量自定义 kernel
-- CPU 并行通过 OpenMP
+- CPU 后端优先使用系统 BLAS/LAPACK；项目内 fallback 对较大工作量使用 OpenMP
 
 ---
 
@@ -77,7 +77,7 @@ using Index = std::int64_t;
 | `cublasCreate/Destroy` | 返回 `CUBLAS_STATUS_SUCCESS` |
 | `cusolverDnCreate/Destroy` | 返回 `CUSOLVER_STATUS_SUCCESS` |
 
-`Device::GPU` 矩阵在无 CUDA 时使用 CPU 内存，功能完全可用，只是无 GPU 加速。这是一个关键的可用性决策：让用户代码不加修改即可在无 GPU 环境编译运行。
+无 CUDA 构建下，`Device::GPU` 矩阵的存储和传输桩使用 CPU 内存，以便公共头文件和 CPU-only 测试可编译。`.cu` 中的 GPU 算法不会构建；真实业务路径应使用 `Device::CPU`，需要 GPU 加速时重新启用 CUDA 构建。
 
 ### 2.4 内存分配器 (`core/allocator.h`)
 
@@ -167,7 +167,7 @@ protected:
 
 ### 3.3 逐元素运算 (`dense/dense_ops.h` + `dense_ops.cu`)
 
-CPU 路径使用 `#pragma omp parallel for` 对平坦数组做循环并行化：
+CPU 路径对小矩阵使用串行循环，超过内部阈值后用 `#pragma omp parallel for` 对平坦数组做循环并行化：
 ```cpp
 for (Index i = 0; i < n; ++i)
     C.data()[i] = A.data()[i] + B.data()[i];
@@ -181,6 +181,8 @@ GPU 路径使用自定义 kernel（见上表），256 线程/block，CEIL(n, 256
 
 ### 4.1 CPU 实现 (`gemm_cpu.cpp`)
 
+可用时优先调用系统 BLAS `sgemm/dgemm`。未启用或未检测到 BLAS 时使用项目内 fallback：
+
 三重循环，列优先访问模式：
 ```cpp
 #pragma omp parallel for collapse(2)
@@ -190,7 +192,7 @@ for (j = 0; j < n; ++j)           // C 的列
             C[i + j*m] += A[i + p*m] * B[p + j*k];
 ```
 
-- `collapse(2)` 融合外层两个循环，所有 `(i,j)` 对被并行分配到线程
+- 较大工作量下用 `collapse(2)` 融合外层两个循环，所有 `(i,j)` 对被并行分配到线程
 - 每个线程维护局部累加器 `sum`，避免对 `C[i,j]` 的竞争写入
 - 列优先索引：`A[i + p*m]`，`B[p + j*k]`，`C[i + j*m]`
 
@@ -209,7 +211,7 @@ cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 
 **为什么都是 `CUBLAS_OP_N`**：cuBLAS 假定列优先存储。当我们的矩阵也是列优先时，无需转置。`lda=m` 是因为列优先下 leading dimension 等于行数。
 
-**Handle 管理**：函数级 `static cublasHandle_t`，懒初始化（C++11 保证线程安全的 static 初始化）。整个进程生命周期内复用一个 handle。支持可选 `cudaStream_t` 参数，调用 `cublasSetStream` 设定。
+**Handle 管理**：函数级 `static cublasHandle_t`，懒初始化（C++11 保证线程安全的 static 初始化）。整个进程生命周期内复用一个 handle。支持可选 `cudaStream_t` 参数，调用 `cublasSetStream` 设定，并在返回前同步该 stream，避免调用方立即传回 CPU 时读到未完成结果。
 
 ---
 
@@ -217,7 +219,9 @@ cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 
 ### 5.1 SVD
 
-#### CPU：双边 Jacobi (`decomposition_cpu.cpp`)
+#### CPU：LAPACK gesvd / 双边 Jacobi fallback (`decomposition_cpu.cpp`)
+
+当 `PLAMATRIX_WITH_SYSTEM_LINALG=ON` 且 CMake 检测到 LAPACK 时，CPU SVD 调用 `sgesvd/dgesvd`，返回完整 `U(m,m)`、紧凑 `S(min(m,n),1)` 和完整 `Vt(n,n)`。无 LAPACK 时使用项目内双边 Jacobi fallback：
 
 **算法**：隐式双边 Jacobi（在 A 的列上直接工作，不显式构造 `A^T A`）：
 
@@ -231,7 +235,7 @@ cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 4. 归一化 U 的列
 5. 按奇异值降序排列
 
-**时间复杂度**：O(n⁴) 每轮扫描。基准测试中 N > 256 自动跳过 CPU SVD。
+**时间复杂度**：fallback 为 O(n⁴) 每轮扫描。基准测试中 N > 256 仍会跳过 CPU SVD，避免宽档位 benchmark 卡住；需要覆盖 CPU 分解时使用 `--size tiny` 或 `--size smoke`。
 
 #### GPU：cuSOLVER gesvd (`decomposition.cu`)
 
@@ -270,7 +274,9 @@ cusolverDnSgesvd(handle, 'A', 'A', m, n, A_copy, lda, S, U, ldu, Vt, ldvt,
 
 ### 5.3 对称特征值 (Eigh)
 
-#### CPU：经典 Jacobi (`decomposition_cpu.cpp`)
+#### CPU：LAPACK syev / 经典 Jacobi fallback (`decomposition_cpu.cpp`)
+
+当系统 LAPACK 可用时，CPU Eigh 调用 `ssyev/dsyev` 只求特征值，并按库 API 约束检查矩阵维度。无 LAPACK 时使用项目内 Jacobi fallback：
 
 直接在对称矩阵 A 上对角化：
 1. 扫描上三角元素对 `(p, q)`，跳过 `|a_pq| < 1e-12`
@@ -281,7 +287,7 @@ cusolverDnSgesvd(handle, 'A', 'A', m, n, A_copy, lda, S, U, ldu, Vt, ldvt,
 
 提取对角线作为特征值，选择排序降序排列。
 
-**时间复杂度**：O(n⁴) 每轮。同样在 N > 256 时跳过 CPU 基准测试。
+**时间复杂度**：fallback 为 O(n⁴) 每轮。同样在 N > 256 时跳过 CPU 基准测试。
 
 #### GPU：cuSOLVER syevd (`decomposition.cu`)
 
@@ -293,7 +299,7 @@ cusolverDnSsyevd(handle, CUSOLVER_EIG_MODE_NOVECTOR, CUBLAS_FILL_MODE_LOWER,
 - `NOVECTOR`：只求特征值，不求特征向量（点云协方差 PCA 场景只需特征值）
 - `LOWER`：只引用下三角（矩阵是对称的）
 - syevd 使用分治算法 (divide-and-conquer)，比 QR iteration 更快
-- **注意**：cuSOLVER 返回特征值 **升序**。代码在 CPU 侧做选择排序翻转为降序，便于与 CPU Jacobi 结果对照
+- **注意**：cuSOLVER 返回特征值 **升序**。代码在 CPU 侧做选择排序翻转为降序，便于 CPU/GPU 结果对照
 
 ---
 
@@ -356,7 +362,7 @@ CPU：
 2. 累加外积：`C[i*3+j] += (1/N) * (pi - ci) * (pj - cj)`
 3. 返回 3×3 半正定矩阵
 
-GPU：将 N×3 点云传回 CPU 计算协方差，再将 3×3 传回 GPU。协方差归约需要 reduction kernel，CPU 代码更简单且对 3×3 输出来说足够快。
+GPU：使用两遍 CUDA reduction。第一遍按 block 归约坐标和并计算均值；第二遍按 block 归约中心化乘积并写出 3×3 协方差。`float` 输入使用 `double` 累积，避免大坐标小方差场景下的 raw-moment 抵消误差。
 
 ---
 
@@ -428,12 +434,12 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 当 `-DPLAMATRIX_WITH_CUDA=OFF`：
 
 - `CMakeLists.txt` 不启用 CUDA 语言，不链接 CUDA 库
-- `no_cuda_stubs.h` 提供所有 CUDA 类型的桩定义
-- `Device::GPU` 仍然可用，但底层用 CPU 内存（`malloc`/`free`）
+- `no_cuda_stubs.h` 提供 CUDA 类型和存储/传输 API 的桩定义
+- `Device::GPU` 矩阵存储可编译，但 `.cu` 中的 GPU 算法不参与编译
 - cuBLAS/cuSOLVER 调用不参与编译（`.cu` 文件不编译）
-- GPU benchmark 函数通过 `#ifdef PLAMATRIX_WITH_CUDA` 保护
-- 运行时 `Device::GPU` 矩阵行为与 CPU 完全相同（无加速效果）
-- 所有 53 个单元测试在 CPU-only 构建中仍然通过
+- GPU benchmark 函数通过 `#ifdef PLAMATRIX_WITH_CUDA` 保护；CPU-only 构建会拒绝 `--mode cuda`
+- 业务代码在 CPU-only 构建下应使用 `Device::CPU` 运算路径
+- CPU-only 测试仍会运行核心矩阵、分解、稀疏和 no-CUDA 行为回归；GPU 专属用例按构建配置跳过
 
 ---
 
@@ -441,16 +447,16 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 
 `plamatrix_benchmark` 的结构：
 
-- `main.cpp`：CLI 参数解析（`--mode`, `--size`, `--output`, `--list`）
+- `main.cpp`：CLI 参数解析（`--mode`, `--size`, `--case`, `--output`, `--list`）
 - `benchmark_cases.cpp`：CPU 基准用例（每个运算的 serial + OMP 版本）
 - `benchmark_cases.cu`：GPU 基准用例（含传输时间单独测量）
 - `report_writer.cpp`：Markdown 报告生成 + 环境信息采集
 
 **计时方法**：`measure(fn, warmup, trials)`：
 1. warmup 次热身（不计时）
-2. trials 次计时，每次前后 `cudaDeviceSynchronize()`
+2. trials 次计时；CUDA 构建在每次计时前后同步设备，CPU-only 构建省略 CUDA 同步
 3. 取中位数返回
 
-**尺寸限制**：SVD/QR/Eigh 的 CPU 路径在 N > 256 时自动跳过（Jacobi O(n⁴) 太慢）。
+**尺寸限制**：SVD/QR/Eigh 的 CPU 路径在 N > 256 时自动跳过，防止宽档位 benchmark 被慢速分解主导；可用 `--size tiny --case svd,qr,eigh` 做快速专项回归。
 
 **CUDA 用时**不含数据传输时间（传输单独计时存入 `time_transfer_ms`）。

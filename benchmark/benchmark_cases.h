@@ -39,7 +39,13 @@ double measure(BenchmarkFn fn, int warmup = 3, int trials = 10);
 /// @param omp      Whether to run OpenMP CPU benchmarks
 /// @param cuda     Whether to run GPU benchmarks
 /// @param report   Output report to populate with results
-void runAllCases(const std::vector<Index>& sizes, bool serial, bool omp, bool cuda, BenchmarkReport& report);
+/// @param case_filter  Optional case names to run; empty means all cases
+void runAllCases(const std::vector<Index>& sizes,
+                 bool serial,
+                 bool omp,
+                 bool cuda,
+                 BenchmarkReport& report,
+                 const std::vector<std::string>& case_filter = {});
 
 /// Get the list of all benchmark case names.
 /// @return  Vector of case name strings

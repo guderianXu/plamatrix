@@ -2,6 +2,7 @@ add_executable(plamatrix_tests
     test_main.cpp
     unit/core/allocator_test.cpp
     unit/core/device_matrix_test.cpp
+    unit/core/parallel_test.cpp
     unit/dense/dense_matrix_test.cpp
     unit/dense/dense_ops_test.cpp
     unit/ops/gemm_test.cpp
@@ -11,6 +12,7 @@ add_executable(plamatrix_tests
     unit/sparse/coo_matrix_test.cpp
     unit/sparse/csr_matrix_test.cpp
     integration/cpu_gpu_consistency_test.cpp
+    integration/no_cuda_behavior_test.cpp
     integration/point_cloud_workflow_test.cpp
     integration/numpy_reference_test.cpp
 )

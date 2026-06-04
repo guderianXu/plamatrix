@@ -211,6 +211,19 @@ TYPED_TEST(CpuGpuConsistencyTest, svdReconstruction)
     auto Vt_cpu_from_gpu = Vt_gpu.toCpu();
     auto A_recon_gpu = this->reconstructFromSvd(U_cpu_from_gpu, S_cpu_from_gpu, Vt_cpu_from_gpu, M, N);
 
+    EXPECT_EQ(U_cpu.rows(), M);
+    EXPECT_EQ(U_cpu.cols(), M);
+    EXPECT_EQ(S_cpu.rows(), std::min(M, N));
+    EXPECT_EQ(S_cpu.cols(), 1);
+    EXPECT_EQ(Vt_cpu.rows(), N);
+    EXPECT_EQ(Vt_cpu.cols(), N);
+    EXPECT_EQ(U_cpu_from_gpu.rows(), M);
+    EXPECT_EQ(U_cpu_from_gpu.cols(), M);
+    EXPECT_EQ(S_cpu_from_gpu.rows(), std::min(M, N));
+    EXPECT_EQ(S_cpu_from_gpu.cols(), 1);
+    EXPECT_EQ(Vt_cpu_from_gpu.rows(), N);
+    EXPECT_EQ(Vt_cpu_from_gpu.cols(), N);
+
     // Verify both reconstructions match the original A
     const Scalar tol = this->tolerance(std::min(M, N));
     for (Index j = 0; j < N; ++j)

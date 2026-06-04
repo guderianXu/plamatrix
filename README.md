@@ -5,7 +5,7 @@
 ## 特性
 
 - **密集矩阵**：加减乘除、转置、标量运算，操作符重载 + 表达式模板
-- **矩阵分解**：SVD、QR、对称特征值 (CPU Jacobi / cuSOLVER)
+- **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
 - **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)，稀疏求解器
 - **稀疏矩阵**：COO / CSR 格式，COO→CSR 转换
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
@@ -32,7 +32,9 @@ cmake --build . -j$(nproc)
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `PLAMATRIX_CUDA_ARCH` | `native` | CUDA 计算能力目标 |
+| `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
+| `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
+| `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |
 | `BUILD_TESTS` | `OFF` | 构建单元测试 |
@@ -85,10 +87,14 @@ target_link_libraries(my_project plamatrix::plamatrix)
 
 # 完整对比 (CPU + GPU)
 ./benchmark/plamatrix_benchmark --mode all --size large --output report.md
+
+# 快速 smoke 或只跑指定 case
+./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
 ```
 
 | 档位 | 矩阵尺寸 |
 |------|----------|
+| smoke/tiny | 16, 32 |
 | small | 256, 512, 1024, 2048 |
 | medium | 1024, 2048, 4096, 8192 |
 | large | 4096, 8192, 12288, 16384 |
@@ -105,7 +111,7 @@ CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
 
 ### 基本运算
 ```cpp
-auto C = A * B;          // 矩阵乘法 (cuBLAS / CPU OpenMP)
+auto C = A * B;          // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
 auto D = A + B;          // 逐元素加法
 auto E = A.transpose();  // 转置
 auto F = 2.0f * A + B;   // 标量乘加

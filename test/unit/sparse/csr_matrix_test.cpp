@@ -20,3 +20,10 @@ TEST(CSRMatrix, constructionAndAccess)
         EXPECT_EQ(mat.rowOffsets()[r], 0);
     }
 }
+
+TEST(CSRMatrix, construction_RejectsNegativeDimensionsAndNnz)
+{
+    EXPECT_THROW((CSRMatrix<float, Device::CPU>(-1, 4, 0)), std::invalid_argument);
+    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, -1, 0)), std::invalid_argument);
+    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, 4, -1)), std::invalid_argument);
+}

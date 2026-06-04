@@ -1,8 +1,14 @@
 build/
+build-*/
 *.o
 *.obj
 *.cu.o
 .DS_Store
 benchmark_report*.md
+report.md
 install/
 .worktrees/
+task_plan.md
+findings.md
+progress.md
+docs/performance-bottlenecks.md

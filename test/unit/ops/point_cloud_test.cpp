@@ -86,6 +86,14 @@ TEST(PointCloud, rigidTransform_4x4)
     EXPECT_NEAR(T(2, 0), 0.0, 1e-9);
 }
 
+TEST(PointCloud, rigidTransform_RejectsNon3x3Rotation)
+{
+    DenseMatrix<double, Device::CPU> bad_R(3, 4);
+    Vec3<double> t = {1.0, 2.0, 3.0};
+
+    EXPECT_THROW((rigidTransform<double, Device::CPU>(bad_R, t)), std::runtime_error);
+}
+
 // PointCloud: covarianceMatrix_4Points_Cpu — 4 points, verify 3x3 PSD matrix
 TEST(PointCloud, covarianceMatrix_4Points_Cpu)
 {
@@ -131,6 +139,93 @@ TEST(PointCloud, covarianceMatrix_4Points_Cpu)
     EXPECT_NEAR(C(1, 2), expected_off, 1e-9);
     EXPECT_NEAR(C(2, 1), expected_off, 1e-9);
 }
+
+#ifdef PLAMATRIX_WITH_CUDA
+TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_MediumCloud)
+{
+    constexpr Index N = 4096;
+    DenseMatrix<float, Device::CPU> points(N, 3);
+    for (Index i = 0; i < N; ++i)
+    {
+        float x = static_cast<float>((i % 97) - 48) * 0.25f;
+        float y = static_cast<float>((i % 53) - 26) * -0.5f;
+        float z = static_cast<float>((i % 29) - 14) * 0.75f;
+        points.setValue(i, 0, x);
+        points.setValue(i, 1, y);
+        points.setValue(i, 2, z);
+    }
+
+    auto cpu = covarianceMatrix<float, Device::CPU>(points);
+    auto gpu = covarianceMatrix<float, Device::GPU>(points.toGpu()).toCpu();
+
+    for (Index j = 0; j < 3; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            EXPECT_NEAR(cpu(i, j), gpu(i, j), 1e-3f)
+                << "covariance mismatch at (" << i << ", " << j << ")";
+        }
+    }
+}
+
+TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_WithLargeOffset)
+{
+    constexpr Index N = 4096;
+    DenseMatrix<float, Device::CPU> points(N, 3);
+    for (Index i = 0; i < N; ++i)
+    {
+        float dx = static_cast<float>((i % 17) - 8) * 0.125f;
+        float dy = static_cast<float>((i % 19) - 9) * -0.25f;
+        float dz = static_cast<float>((i % 23) - 11) * 0.5f;
+        points.setValue(i, 0, 1000000.0f + dx);
+        points.setValue(i, 1, -2000000.0f + dy);
+        points.setValue(i, 2, 3000000.0f + dz);
+    }
+
+    double mean[3] = {};
+    for (Index i = 0; i < N; ++i)
+    {
+        mean[0] += points.getValue(i, 0);
+        mean[1] += points.getValue(i, 1);
+        mean[2] += points.getValue(i, 2);
+    }
+    for (double& value : mean)
+    {
+        value /= static_cast<double>(N);
+    }
+
+    double reference[9] = {};
+    for (Index k = 0; k < N; ++k)
+    {
+        double dx = static_cast<double>(points.getValue(k, 0)) - mean[0];
+        double dy = static_cast<double>(points.getValue(k, 1)) - mean[1];
+        double dz = static_cast<double>(points.getValue(k, 2)) - mean[2];
+        double centered[3] = {dx, dy, dz};
+        for (Index col = 0; col < 3; ++col)
+        {
+            for (Index row = 0; row < 3; ++row)
+            {
+                reference[row + col * 3] += centered[row] * centered[col] / static_cast<double>(N);
+            }
+        }
+    }
+
+    auto cpu = covarianceMatrix<float, Device::CPU>(points);
+    auto gpu = covarianceMatrix<float, Device::GPU>(points.toGpu()).toCpu();
+
+    for (Index j = 0; j < 3; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            float expected = static_cast<float>(reference[i + j * 3]);
+            EXPECT_NEAR(cpu(i, j), expected, 1e-3f)
+                << "large-offset CPU covariance mismatch at (" << i << ", " << j << ")";
+            EXPECT_NEAR(gpu(i, j), expected, 1e-3f)
+                << "large-offset GPU covariance mismatch at (" << i << ", " << j << ")";
+        }
+    }
+}
+#endif
 
 // PointCloud: transformPoints_Cpu — 2 points, translate by (10,0,0), verify shifted
 TEST(PointCloud, transformPoints_Cpu)

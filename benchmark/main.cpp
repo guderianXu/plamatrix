@@ -1,6 +1,9 @@
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,12 +20,14 @@ void printUsage(const char* prog)
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
               << "  --mode all|cpu|cuda     Benchmark mode (default: all)\n"
-              << "  --size small|medium|large  Size preset (default: medium)\n"
+              << "  --size tiny|smoke|small|medium|large  Size preset (default: medium)\n"
+              << "  --case LIST             Comma-separated cases to run (default: all)\n"
               << "  --output FILE           Output report path (default: benchmark_report.md)\n"
               << "  --list                  List all benchmark cases and exit\n"
               << "  --help                  Print this help message\n"
               << "\n"
               << "Size presets:\n"
+              << "  tiny/smoke: 16, 32\n"
               << "  small:  256, 512, 1024, 2048\n"
               << "  medium: 1024, 2048, 4096, 8192\n"
               << "  large:  4096, 8192, 12288, 16384\n";
@@ -31,6 +36,10 @@ void printUsage(const char* prog)
 /// Parse the --size argument into a vector of Index values.
 std::vector<plamatrix::Index> parseSize(const std::string& size_str)
 {
+    if (size_str == "tiny" || size_str == "smoke")
+    {
+        return {16, 32};
+    }
     if (size_str == "small")
     {
         return {256, 512, 1024, 2048};
@@ -47,6 +56,41 @@ std::vector<plamatrix::Index> parseSize(const std::string& size_str)
     return {1024, 2048, 4096, 8192};
 }
 
+/// Parse a comma-separated --case argument into benchmark case names.
+std::string trim(std::string value)
+{
+    auto is_not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    auto begin = std::find_if(value.begin(), value.end(), is_not_space);
+    auto end = std::find_if(value.rbegin(), value.rend(), is_not_space).base();
+    if (begin >= end)
+    {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::vector<std::string> parseCases(const std::string& case_str)
+{
+    std::vector<std::string> cases;
+    std::stringstream ss(case_str);
+    std::string item;
+    while (std::getline(ss, item, ','))
+    {
+        item = trim(item);
+        if (!item.empty())
+        {
+            cases.push_back(item);
+        }
+    }
+    return cases;
+}
+
+bool isKnownCase(const std::string& name)
+{
+    auto all = plamatrix::getAllCaseNames();
+    return std::find(all.begin(), all.end(), name) != all.end();
+}
+
 } // anonymous namespace
 
 int main(int argc, char** argv)
@@ -55,6 +99,7 @@ int main(int argc, char** argv)
     std::string mode_str = "all";
     std::string size_str = "medium";
     std::string output_path = "benchmark_report.md";
+    std::vector<std::string> case_filter;
     bool list_only = false;
 
     // Parse CLI arguments
@@ -78,6 +123,10 @@ int main(int argc, char** argv)
         else if (arg == "--size" && i + 1 < argc)
         {
             size_str = argv[++i];
+        }
+        else if (arg == "--case" && i + 1 < argc)
+        {
+            case_filter = parseCases(argv[++i]);
         }
         else if (arg == "--output" && i + 1 < argc)
         {
@@ -131,6 +180,29 @@ int main(int argc, char** argv)
         return 1;
     }
 
+#ifndef PLAMATRIX_WITH_CUDA
+    if (run_cuda)
+    {
+        if (!run_serial && !run_omp)
+        {
+            std::cerr << "CUDA benchmark mode requested, but this build was compiled with PLAMATRIX_WITH_CUDA=OFF.\n";
+            return 1;
+        }
+        std::cerr << "CUDA support is not compiled in; CUDA benchmark backend will be skipped.\n";
+        run_cuda = false;
+    }
+#endif
+
+    for (const auto& case_name : case_filter)
+    {
+        if (!isKnownCase(case_name))
+        {
+            std::cerr << "Unknown benchmark case: " << case_name << "\n";
+            std::cerr << "Use --list to show available cases.\n";
+            return 1;
+        }
+    }
+
     // Parse sizes
     auto sizes = parseSize(size_str);
 
@@ -141,6 +213,19 @@ int main(int argc, char** argv)
     {
         if (i > 0) std::cerr << ", ";
         std::cerr << sizes[i];
+    }
+    std::cerr << "\n  Cases: ";
+    if (case_filter.empty())
+    {
+        std::cerr << "all";
+    }
+    else
+    {
+        for (std::size_t i = 0; i < case_filter.size(); ++i)
+        {
+            if (i > 0) std::cerr << ", ";
+            std::cerr << case_filter[i];
+        }
     }
     std::cerr << "\n  Output: " << output_path << "\n" << std::endl;
 
@@ -155,9 +240,15 @@ int main(int argc, char** argv)
               << "  OS: " << report.os_info << "\n" << std::endl;
 
     std::cerr << "Running benchmarks..." << std::endl;
-    plamatrix::runAllCases(sizes, run_serial, run_omp, run_cuda, report);
+    plamatrix::runAllCases(sizes, run_serial, run_omp, run_cuda, report, case_filter);
 
     std::cerr << "Completed " << report.results.size() << " benchmark results." << std::endl;
+    if (report.results.empty())
+    {
+        std::cerr << "No benchmark results were produced for the selected mode, cases, and sizes.\n";
+        return 1;
+    }
+
     std::cerr << "Writing report to " << output_path << "..." << std::endl;
 
     report.writeMarkdown(output_path);
