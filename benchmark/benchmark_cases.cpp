@@ -37,12 +37,12 @@ double measure(BenchmarkFn fn, int warmup, int trials)
     for (int i = 0; i < trials; ++i)
     {
 #ifdef PLAMATRIX_WITH_CUDA
-        cudaDeviceSynchronize();
+        PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 #endif
         auto t_start = Clock::now();
         fn();
 #ifdef PLAMATRIX_WITH_CUDA
-        cudaDeviceSynchronize();
+        PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 #endif
         auto t_end = Clock::now();
         double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();

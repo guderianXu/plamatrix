@@ -45,18 +45,18 @@
 - 测试框架：Google Test + CUDA 测试宏
 
 # Git 同步
-- **每次 commit 后必须 push 到 GitHub**：`git push origin main`（含 tags: `git push origin <tag>`）
+- 只有在用户明确要求时才 commit 或 push。
 - 仓库地址：`https://github.com/guderianXu/plamatrix`
-- **Git 作者配置**：必须使用 GitHub 关联邮箱，否则提交不计入贡献统计
+- **Git 作者配置**：建议使用 GitHub 关联邮箱，否则提交不计入贡献统计
   - `git config user.email "guderian_xu@henu.edu.cn"`
   - `git config user.name "guderianXu"`
   - 注意：`guderian@plamatrix.local` 是不关联 GitHub 的本地邮箱，不要使用
-  - 如已用错误邮箱提交，需要用 `git filter-branch --env-filter` 重写历史
+  - 如已用错误邮箱提交，历史重写必须单独确认，不要自动执行
 
 # 编译验证
 - **每次修改代码后必须在 build 目录编译验证**：
   ```bash
-  cd build && cmake .. -DBUILD_TESTS=ON && cmake --build . -j$(nproc)
+  cd build && cmake .. -DPLAMATRIX_BUILD_TESTS=ON && cmake --build . -j$(nproc)
   ```
 - 编译失败不能提交；编译警告需评估
 
@@ -80,4 +80,3 @@ git checkout -b feat/<功能名>   # 从 main 创建功能分支
 git checkout main && git merge feat/<功能名>   # 测试通过后合并
 git push origin main
 ```
-

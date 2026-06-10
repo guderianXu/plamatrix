@@ -157,6 +157,80 @@ TEST(DenseOps, addSub_GpuTwoArgumentOverloads)
     EXPECT_FLOAT_EQ(diff(1, 1), -36.0f);
 }
 
+TEST(DenseOps, addSub_GpuOutputReuse)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
+    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    A_cpu.setValue(0, 0, 1.0f);
+    A_cpu.setValue(1, 0, 2.0f);
+    A_cpu.setValue(0, 1, 3.0f);
+    A_cpu.setValue(1, 1, 4.0f);
+    B_cpu.setValue(0, 0, 10.0f);
+    B_cpu.setValue(1, 0, 20.0f);
+    B_cpu.setValue(0, 1, 30.0f);
+    B_cpu.setValue(1, 1, 40.0f);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+    DenseMatrix<float, Device::GPU> sum_gpu(2, 2);
+    DenseMatrix<float, Device::GPU> diff_gpu(2, 2);
+
+    add(A_gpu, B_gpu, sum_gpu);
+    sub(A_gpu, B_gpu, diff_gpu);
+
+    auto sum = sum_gpu.toCpu();
+    auto diff = diff_gpu.toCpu();
+    EXPECT_FLOAT_EQ(sum(0, 0), 11.0f);
+    EXPECT_FLOAT_EQ(sum(1, 0), 22.0f);
+    EXPECT_FLOAT_EQ(sum(0, 1), 33.0f);
+    EXPECT_FLOAT_EQ(sum(1, 1), 44.0f);
+    EXPECT_FLOAT_EQ(diff(0, 0), -9.0f);
+    EXPECT_FLOAT_EQ(diff(1, 0), -18.0f);
+    EXPECT_FLOAT_EQ(diff(0, 1), -27.0f);
+    EXPECT_FLOAT_EQ(diff(1, 1), -36.0f);
+}
+
+TEST(DenseOps, addSubAsync_GpuDefaultStream)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
+    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    A_cpu.setValue(0, 0, 1.0f);
+    A_cpu.setValue(1, 0, 2.0f);
+    A_cpu.setValue(0, 1, 3.0f);
+    A_cpu.setValue(1, 1, 4.0f);
+    B_cpu.setValue(0, 0, 10.0f);
+    B_cpu.setValue(1, 0, 20.0f);
+    B_cpu.setValue(0, 1, 30.0f);
+    B_cpu.setValue(1, 1, 40.0f);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+    auto sum = addAsync(A_gpu, B_gpu).toCpu();
+    auto diff = subAsync(A_gpu, B_gpu).toCpu();
+
+    EXPECT_FLOAT_EQ(sum(0, 0), 11.0f);
+    EXPECT_FLOAT_EQ(sum(1, 0), 22.0f);
+    EXPECT_FLOAT_EQ(sum(0, 1), 33.0f);
+    EXPECT_FLOAT_EQ(sum(1, 1), 44.0f);
+    EXPECT_FLOAT_EQ(diff(0, 0), -9.0f);
+    EXPECT_FLOAT_EQ(diff(1, 0), -18.0f);
+    EXPECT_FLOAT_EQ(diff(0, 1), -27.0f);
+    EXPECT_FLOAT_EQ(diff(1, 1), -36.0f);
+}
+
+TEST(DenseOps, add_GpuRejectsOutputDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
+    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+
+    auto A_gpu = A_cpu.toGpu();
+    auto B_gpu = B_cpu.toGpu();
+    DenseMatrix<float, Device::GPU> C_gpu(2, 3);
+
+    EXPECT_THROW(add(A_gpu, B_gpu, C_gpu), std::runtime_error);
+    EXPECT_THROW(addAsync(A_gpu, B_gpu, C_gpu), std::runtime_error);
+}
+
 TEST(DenseOps, add_RejectsGpuDimensionMismatch)
 {
     DenseMatrix<float, Device::CPU> A_cpu(2, 3);

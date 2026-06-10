@@ -1,4 +1,7 @@
 #include <gtest/gtest.h>
+
+#include <limits>
+
 #include <plamatrix/core/allocator.h>
 
 using namespace plamatrix;
@@ -22,6 +25,12 @@ TEST(CpuAllocator, allocate_CanReadWrite)
     CpuAllocator<float>::deallocate(ptr);
 }
 
+TEST(CpuAllocator, allocate_RejectsByteSizeOverflow)
+{
+    const std::size_t count = std::numeric_limits<std::size_t>::max() / sizeof(float) + 1;
+    EXPECT_THROW(CpuAllocator<float>::allocate(count), std::overflow_error);
+}
+
 TEST(GpuAllocator, allocate_ReturnsNonNull)
 {
     float* ptr = GpuAllocator<float>::allocate(100);
@@ -43,4 +52,10 @@ TEST(GpuAllocator, allocate_CudaMemcpyRoundTrip)
     EXPECT_FLOAT_EQ(result[2], 3.0f);
 
     GpuAllocator<float>::deallocate(gpu_ptr);
+}
+
+TEST(GpuAllocator, allocate_RejectsByteSizeOverflow)
+{
+    const std::size_t count = std::numeric_limits<std::size_t>::max() / sizeof(float) + 1;
+    EXPECT_THROW(GpuAllocator<float>::allocate(count), std::overflow_error);
 }

@@ -15,7 +15,7 @@ namespace plamatrix
 template <typename Scalar>
 __global__ void transformPointsKernel(const Scalar* T, const Scalar* points, Scalar* result, Index N)
 {
-    Index i = blockIdx.x * blockDim.x + threadIdx.x;
+    Index i = static_cast<Index>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= N)
     {
         return;
@@ -32,6 +32,23 @@ __global__ void transformPointsKernel(const Scalar* T, const Scalar* points, Sca
     result[i + 1 * N] = T[1] * px + T[5] * py + T[9] * pz + T[13];
     result[i + 2 * N] = T[2] * px + T[6] * py + T[10] * pz + T[14];
 }
+
+namespace
+{
+
+int checkedCudaGrid1D(Index item_count, int block_size, const char* op)
+{
+    Index block_count = (item_count + block_size - 1) / block_size;
+    if (block_count > static_cast<Index>(std::numeric_limits<int>::max()))
+    {
+        std::ostringstream oss;
+        oss << op << ": item count exceeds CUDA grid range";
+        throw std::runtime_error(oss.str());
+    }
+    return static_cast<int>(block_count);
+}
+
+} // anonymous namespace
 
 template <typename Scalar>
 using CovarianceAccum = std::conditional_t<std::is_same_v<Scalar, float>, double, Scalar>;
@@ -356,8 +373,8 @@ DenseMatrix<Scalar, Device::GPU> transformPointsGpuImpl(const DenseMatrix<Scalar
 
     DenseMatrix<Scalar, Device::GPU> result(N, 3);
 
-    int block_size = 256;
-    int grid_size = static_cast<int>((N + block_size - 1) / block_size);
+    constexpr int block_size = 256;
+    int grid_size = checkedCudaGrid1D(N, block_size, "transformPoints");
 
     transformPointsKernel<<<grid_size, block_size>>>(T.data(), points.data(), result.data(), N);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
@@ -381,14 +398,9 @@ DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scala
     }
 
     constexpr int block_size = 256;
-    Index block_count_index = (N + block_size - 1) / block_size;
-    if (block_count_index > static_cast<Index>(std::numeric_limits<int>::max()))
-    {
-        throw std::runtime_error("covarianceMatrix: point count exceeds CUDA grid range");
-    }
+    int block_count = checkedCudaGrid1D(N, block_size, "covarianceMatrix");
 
     using Accum = CovarianceAccum<Scalar>;
-    int block_count = static_cast<int>(block_count_index);
     DenseMatrix<Accum, Device::GPU> partial_mean(block_count, 3);
     DenseMatrix<Accum, Device::GPU> mean(1, 3);
     DenseMatrix<Accum, Device::GPU> partial_covariance(block_count, 6);
@@ -409,56 +421,72 @@ DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scala
 
 // ---- Explicit specializations for GPU ----
 
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> rotationMatrix<float, Device::GPU>(const Vec3<float>& axis, float angle)
 {
     return rotationMatrixGpuImpl(axis, angle);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_DOUBLE
 template <>
 DenseMatrix<double, Device::GPU> rotationMatrix<double, Device::GPU>(const Vec3<double>& axis, double angle)
 {
     return rotationMatrixGpuImpl(axis, angle);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> rigidTransform<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& R,
                                                                       const Vec3<float>& t)
 {
     return rigidTransformGpuImpl(R, t);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_DOUBLE
 template <>
 DenseMatrix<double, Device::GPU> rigidTransform<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& R,
                                                                        const Vec3<double>& t)
 {
     return rigidTransformGpuImpl(R, t);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> transformPoints<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& T,
                                                                       const DenseMatrix<float, Device::GPU>& points)
 {
     return transformPointsGpuImpl(T, points);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_DOUBLE
 template <>
 DenseMatrix<double, Device::GPU> transformPoints<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& T,
                                                                         const DenseMatrix<double, Device::GPU>& points)
 {
     return transformPointsGpuImpl(T, points);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> covarianceMatrix<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& points)
 {
     return covarianceMatrixGpuImpl(points);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_DOUBLE
 template <>
 DenseMatrix<double, Device::GPU> covarianceMatrix<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& points)
 {
     return covarianceMatrixGpuImpl(points);
 }
+#endif
 
 } // namespace plamatrix

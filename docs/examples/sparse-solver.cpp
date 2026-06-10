@@ -1,14 +1,14 @@
 // ============================================================================
-// PlaMatrix 示例 3: 稀疏矩阵 — 三对角系统求解
+// PlaMatrix 示例 3: 稀疏矩阵 — COO 到 CSR 转换
 //
-// 编译: g++ -std=c++17 -O2 -I../include -fopenmp sparse-solver.cpp
-//       -L../build -lplamatrix -o sparse-solver
+// 编译: g++ -std=c++17 -O2 -Iinclude -fopenmp docs/examples/sparse-solver.cpp
+//       -Lbuild -lplamatrix -o sparse-solver
 //
-// 演示: COO 构建 → CSR 转换 → 稀疏求解 → GPU 加速
-//       模拟点云 BA (Bundle Adjustment) 中的稀疏线性系统
+// 演示: COO 构建 → CSR 转换 → CSR 结构检查 → 稠密求解对照
 // ============================================================================
 
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <random>
 
@@ -18,7 +18,7 @@ using namespace plamatrix;
 int main()
 {
     constexpr Index N = 500;
-    std::cout << "=== 稀疏求解示例 (N=" << N << ") ===\n" << std::endl;
+    std::cout << "=== 稀疏矩阵转换示例 (N=" << N << ") ===\n" << std::endl;
 
     // ---- 1. 构建三对角矩阵 (COO 格式) ----
     // 实际点云 BA 的 Hessian 矩阵具有带状稀疏结构
@@ -45,7 +45,10 @@ int main()
     auto csr = coo.toCsr();
 
     std::cout << "   CSR row_offsets[0..5]: ";
-    for (Index i = 0; i < 5; ++i) std::cout << csr.rowOffsets()[i] << " ";
+    for (Index i = 0; i < 5; ++i)
+    {
+        std::cout << csr.rowOffsets()[i] << " ";
+    }
     std::cout << "..." << std::endl;
 
     // ---- 3. 构建右端项 ----
@@ -53,17 +56,24 @@ int main()
     DenseMatrix<float, Device::CPU> b(N, 1);
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (Index i = 0; i < N; ++i) b(i, 0) = dist(rng);
+    for (Index i = 0; i < N; ++i)
+    {
+        b(i, 0) = dist(rng);
+    }
 
     // ---- 4. CPU 稠密求解 (对照) ----
     std::cout << "4. CPU 稠密求解 (对照)..." << std::endl;
     DenseMatrix<float, Device::CPU> A_dense(N, N);
-    A_dense(0, 0) = 2; A_dense(0, 1) = -1;
+    A_dense(0, 0) = 2;
+    A_dense(0, 1) = -1;
     for (Index i = 1; i < N - 1; ++i)
     {
-        A_dense(i, i-1) = -1; A_dense(i, i) = 2; A_dense(i, i+1) = -1;
+        A_dense(i, i - 1) = -1;
+        A_dense(i, i) = 2;
+        A_dense(i, i + 1) = -1;
     }
-    A_dense(N-1, N-2) = -1; A_dense(N-1, N-1) = 2;
+    A_dense(N - 1, N - 2) = -1;
+    A_dense(N - 1, N - 1) = 2;
 
     auto t1 = std::chrono::high_resolution_clock::now();
     auto x_dense = solve<float, Device::CPU>(A_dense, b);
@@ -76,34 +86,23 @@ int main()
     float max_residual = 0.0f;
     for (Index i = 0; i < N; ++i)
     {
-        float r = std::abs(residual(i,0) - b(i,0));
-        if (r > max_residual) max_residual = r;
+        float r = std::abs(residual(i, 0) - b(i, 0));
+        if (r > max_residual)
+        {
+            max_residual = r;
+        }
     }
     std::cout << "   最大残差: " << max_residual << std::endl;
 
-    // ---- 6. GPU 稀疏求解 ----
-    std::cout << "5. GPU 稀疏求解..." << std::endl;
-    auto coo_gpu = COOMatrix<float, Device::GPU>(N, N);
-    coo_gpu.add(0, 0, 2.0f); coo_gpu.add(0, 1, -1.0f);
-    for (Index i = 1; i < N - 1; ++i)
+    // ---- 6. CSR 结构检查 ----
+    std::cout << "6. CSR 结构检查..." << std::endl;
+    std::cout << "   row_offsets[N] = " << csr.rowOffsets()[N]
+              << ", nnz = " << csr.nnz() << std::endl;
+    std::cout << "   前 5 个 values: ";
+    for (Index i = 0; i < 5 && i < csr.nnz(); ++i)
     {
-        coo_gpu.add(i, i-1, -1.0f);
-        coo_gpu.add(i, i,   2.0f);
-        coo_gpu.add(i, i+1, -1.0f);
+        std::cout << csr.values()[i] << " ";
     }
-    coo_gpu.add(N-1, N-2, -1.0f); coo_gpu.add(N-1, N-1, 2.0f);
-
-    auto csr_gpu = coo_gpu.toCsr();
-    auto b_gpu = b.toGpu();
-    auto t3 = std::chrono::high_resolution_clock::now();
-    auto x_gpu = solve(csr_gpu, b_gpu);
-    cudaDeviceSynchronize();
-    auto t4 = std::chrono::high_resolution_clock::now();
-    auto x_result = x_gpu.toCpu();
-    auto gpu_ms = std::chrono::duration<double, std::milli>(t4 - t3).count();
-    std::cout << "   GPU 稀疏求解: " << gpu_ms << " ms" << std::endl;
-    std::cout << "   解的前5个元素: ";
-    for (Index i = 0; i < 5; ++i) std::cout << x_result(i, 0) << " ";
     std::cout << std::endl;
 
     std::cout << "\n=== 完成 ===" << std::endl;

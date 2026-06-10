@@ -318,10 +318,15 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
 }
 
 // Explicit template instantiations
+#ifdef PLAMATRIX_USE_FLOAT
 template std::tuple<DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>>
 svd(const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
 svd(const DenseMatrix<double, Device::CPU>&);
+#endif
 
 template <typename Scalar>
 std::tuple<DenseMatrix<Scalar, Device::CPU>, DenseMatrix<Scalar, Device::CPU>>
@@ -589,13 +594,23 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
 }
 
 // Explicit template instantiations for qr
+#ifdef PLAMATRIX_USE_FLOAT
 template std::tuple<DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>>
 qr(const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
 qr(const DenseMatrix<double, Device::CPU>&);
+#endif
 
 // Explicit template instantiations for eigh
+#ifdef PLAMATRIX_USE_FLOAT
 template DenseMatrix<float, Device::CPU> eigh(const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template DenseMatrix<double, Device::CPU> eigh(const DenseMatrix<double, Device::CPU>&);
+#endif
 
 } // namespace plamatrix

@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
 
 #ifdef PLAMATRIX_NO_CUDA
 #include "plamatrix/core/no_cuda_stubs.h"
@@ -13,6 +16,24 @@
 
 namespace plamatrix
 {
+
+namespace detail
+{
+
+template <typename Scalar>
+std::size_t checkedAllocationBytes(std::size_t count)
+{
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(Scalar))
+    {
+        std::ostringstream oss;
+        oss << "allocation size overflows size_t for " << count << " elements of "
+            << sizeof(Scalar) << " bytes";
+        throw std::overflow_error(oss.str());
+    }
+    return count * sizeof(Scalar);
+}
+
+} // namespace detail
 
 /// CPU memory allocator with 32-byte alignment (suitable for AVX/SSE).
 /// Available in both CPU-only and CUDA builds.
@@ -26,9 +47,13 @@ struct CpuAllocator
     /// @throws std::bad_alloc  if allocation fails
     static Scalar* allocate(std::size_t count)
     {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
         void* ptr = nullptr;
-        int rc = posix_memalign(&ptr, 32, count * sizeof(Scalar));
-        if (rc != 0) { throw std::bad_alloc(); }
+        int rc = posix_memalign(&ptr, 32, bytes);
+        if (rc != 0)
+        {
+            throw std::bad_alloc();
+        }
         return static_cast<Scalar*>(ptr);
     }
 
@@ -55,8 +80,9 @@ struct GpuAllocator
     /// @throws std::runtime_error  if CUDA allocation fails
     static Scalar* allocate(std::size_t count)
     {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
         Scalar* ptr = nullptr;
-        PLAMATRIX_CHECK_CUDA(cudaMalloc(&ptr, count * sizeof(Scalar)));
+        PLAMATRIX_CHECK_CUDA(cudaMalloc(&ptr, bytes));
         return ptr;
     }
 

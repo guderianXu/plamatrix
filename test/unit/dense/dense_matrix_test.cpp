@@ -98,6 +98,18 @@ TEST(DenseMatrix, setValue_cpu_ColumnMajorIndexing)
     EXPECT_FLOAT_EQ(mat(0, 0), 0.0f);
 }
 
+TEST(DenseMatrix, accessors_RejectOutOfRangeIndices)
+{
+    DenseMatrix<float, Device::CPU> mat(3, 4);
+
+    EXPECT_THROW(mat(-1, 0), std::out_of_range);
+    EXPECT_THROW(mat(0, -1), std::out_of_range);
+    EXPECT_THROW(mat(3, 0), std::out_of_range);
+    EXPECT_THROW(mat(0, 4), std::out_of_range);
+    EXPECT_THROW(mat.setValue(3, 0, 1.0f), std::out_of_range);
+    EXPECT_THROW(mat.getValue(0, 4), std::out_of_range);
+}
+
 TEST(DenseMatrix, moveConstructor)
 {
     DenseMatrix<float, Device::CPU> mat(3, 4);

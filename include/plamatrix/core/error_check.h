@@ -102,11 +102,47 @@ inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, con
 #define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
 
-#else  // !PLAMATRIX_WITH_CUDA — no-op fallbacks
+#else  // !PLAMATRIX_WITH_CUDA — checked stub fallbacks
 
-#define PLAMATRIX_CHECK_CUDA(call)    static_cast<void>(call)
-#define PLAMATRIX_CHECK_CUBLAS(call)  static_cast<void>(call)
-#define PLAMATRIX_CHECK_CUSOLVER(call) static_cast<void>(call)
+/// Check CUDA stub API errors in CPU-only builds.
+inline void cudaCheck(cudaError_t err, const char* file, int line, const char* expr)
+{
+    if (err != cudaSuccess)
+    {
+        std::ostringstream oss;
+        oss << "CUDA stub error at " << file << ":" << line
+            << " (" << expr << "): " << cudaGetErrorString(err);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuBLAS stub API errors in CPU-only builds.
+inline void cublasCheck(cublasStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUBLAS_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuBLAS stub error at " << file << ":" << line
+            << " (" << expr << "): status " << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuSOLVER stub API errors in CPU-only builds.
+inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSOLVER_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSOLVER stub error at " << file << ":" << line
+            << " (" << expr << "): status " << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+#define PLAMATRIX_CHECK_CUDA(call)    plamatrix::cudaCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
 
 #endif // PLAMATRIX_WITH_CUDA
 

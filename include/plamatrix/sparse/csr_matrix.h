@@ -35,37 +35,49 @@ public:
         {
             throw std::invalid_argument("CSRMatrix nnz must be non-negative");
         }
+        if (nnz > 0 && (rows == 0 || cols == 0))
+        {
+            throw std::invalid_argument("CSRMatrix cannot store non-zero entries with zero rows or columns");
+        }
         this->_rows = rows;
         this->_cols = cols;
 
-        if (nnz > 0)
+        try
         {
+            if (nnz > 0)
+            {
+                if constexpr (Dev == Device::CPU)
+                {
+                    _values = CpuAllocator<Scalar>::allocate(static_cast<std::size_t>(nnz));
+                    _col_indices = CpuAllocator<Index>::allocate(static_cast<std::size_t>(nnz));
+                    std::memset(_col_indices, 0, static_cast<std::size_t>(nnz) * sizeof(Index));
+                }
+                else
+                {
+                    _values = GpuAllocator<Scalar>::allocate(static_cast<std::size_t>(nnz));
+                    _col_indices = GpuAllocator<Index>::allocate(static_cast<std::size_t>(nnz));
+                    PLAMATRIX_CHECK_CUDA(
+                        cudaMemset(_col_indices, 0, static_cast<std::size_t>(nnz) * sizeof(Index)));
+                }
+            }
+
+            // row_offsets is always allocated (size rows+1), zero-initialized
             if constexpr (Dev == Device::CPU)
             {
-                _values = CpuAllocator<Scalar>::allocate(static_cast<std::size_t>(nnz));
-                _col_indices = CpuAllocator<Index>::allocate(static_cast<std::size_t>(nnz));
-                std::memset(_col_indices, 0, static_cast<std::size_t>(nnz) * sizeof(Index));
+                _row_offsets = CpuAllocator<Index>::allocate(static_cast<std::size_t>(rows) + 1);
+                std::memset(_row_offsets, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Index));
             }
             else
             {
-                _values = GpuAllocator<Scalar>::allocate(static_cast<std::size_t>(nnz));
-                _col_indices = GpuAllocator<Index>::allocate(static_cast<std::size_t>(nnz));
+                _row_offsets = GpuAllocator<Index>::allocate(static_cast<std::size_t>(rows) + 1);
                 PLAMATRIX_CHECK_CUDA(
-                    cudaMemset(_col_indices, 0, static_cast<std::size_t>(nnz) * sizeof(Index)));
+                    cudaMemset(_row_offsets, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Index)));
             }
         }
-
-        // row_offsets is always allocated (size rows+1), zero-initialized
-        if constexpr (Dev == Device::CPU)
+        catch (...)
         {
-            _row_offsets = CpuAllocator<Index>::allocate(static_cast<std::size_t>(rows) + 1);
-            std::memset(_row_offsets, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Index));
-        }
-        else
-        {
-            _row_offsets = GpuAllocator<Index>::allocate(static_cast<std::size_t>(rows) + 1);
-            PLAMATRIX_CHECK_CUDA(
-                cudaMemset(_row_offsets, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Index)));
+            releaseArrays();
+            throw;
         }
     }
 

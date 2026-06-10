@@ -91,10 +91,17 @@ void readGpuInfo(std::string& gpu_model, std::string& gpu_driver, std::string& c
     }
 
     int runtime_version = 0;
-    cudaRuntimeGetVersion(&runtime_version);
-    int rt_major = runtime_version / 1000;
-    int rt_minor = (runtime_version % 1000) / 10;
-    cuda_ver = std::to_string(rt_major) + "." + std::to_string(rt_minor);
+    cu_err = cudaRuntimeGetVersion(&runtime_version);
+    if (cu_err != cudaSuccess)
+    {
+        cuda_ver = "N/A";
+    }
+    else
+    {
+        int rt_major = runtime_version / 1000;
+        int rt_minor = (runtime_version % 1000) / 10;
+        cuda_ver = std::to_string(rt_major) + "." + std::to_string(rt_minor);
+    }
 
     int device_count = 0;
     cu_err = cudaGetDeviceCount(&device_count);

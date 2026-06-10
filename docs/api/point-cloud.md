@@ -54,6 +54,7 @@ DenseMatrix<Scalar, Dev> transformPoints(
 
 - **CPU**：逐点循环计算
 - **GPU**：`transformPointsKernel` 并行处理
+- `T` 必须是 4×4，`points` 必须是 N×3；GPU 路径需要 `PLAMATRIX_WITH_CUDA=ON`
 
 ## 协方差矩阵
 
@@ -68,7 +69,7 @@ DenseMatrix<Scalar, Dev> covarianceMatrix(
 );
 ```
 
-返回 3×3 半正定矩阵。常用于 PCA 法线估计和点云配准。
+返回 3×3 半正定矩阵。`points` 必须是 N×3 且 N >= 2；GPU 路径需要 `PLAMATRIX_WITH_CUDA=ON`。常用于 PCA 法线估计和点云配准。
 
 ## 典型工作流：点云配准
 
@@ -92,10 +93,12 @@ DenseMatrix<float, Device::CPU> point_cloud(num_points, 3);
 auto transformed_cpu = transformPoints<float, Device::CPU>(T, point_cloud);
 
 // 5. GPU 加速大批量变换
+#ifdef PLAMATRIX_WITH_CUDA
 auto pts_gpu = point_cloud.toGpu();
 auto T_gpu = T.toGpu();
 auto transformed_gpu = transformPoints<float, Device::GPU>(T_gpu, pts_gpu);
 auto result = transformed_gpu.toCpu();
+#endif
 
 // 6. 计算协方差矩阵 (用于 PCA)
 auto cov = covarianceMatrix<float, Device::CPU>(point_cloud);

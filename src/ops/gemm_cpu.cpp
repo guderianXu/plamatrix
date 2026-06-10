@@ -86,9 +86,14 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
 }
 
 // Explicit template instantiations
+#ifdef PLAMATRIX_USE_FLOAT
 template DenseMatrix<float, Device::CPU> gemm(const DenseMatrix<float, Device::CPU>&,
                                                 const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template DenseMatrix<double, Device::CPU> gemm(const DenseMatrix<double, Device::CPU>&,
                                                  const DenseMatrix<double, Device::CPU>&);
+#endif
 
 } // namespace plamatrix

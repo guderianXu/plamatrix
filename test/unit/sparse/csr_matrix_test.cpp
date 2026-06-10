@@ -27,3 +27,9 @@ TEST(CSRMatrix, construction_RejectsNegativeDimensionsAndNnz)
     EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, -1, 0)), std::invalid_argument);
     EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, 4, -1)), std::invalid_argument);
 }
+
+TEST(CSRMatrix, construction_RejectsNonZerosWithZeroDimensions)
+{
+    EXPECT_THROW((CSRMatrix<float, Device::CPU>(0, 4, 1)), std::invalid_argument);
+    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, 0, 1)), std::invalid_argument);
+}

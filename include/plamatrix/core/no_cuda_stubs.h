@@ -42,6 +42,11 @@ inline cusolverStatus_t cusolverDnDestroy(cusolverDnHandle_t) { return CUSOLVER_
 // ---- Stub CUDA runtime API — uses CPU memory ----
 inline cudaError_t cudaMalloc(void** ptr, std::size_t size)
 {
+    if (size == 0)
+    {
+        *ptr = nullptr;
+        return cudaSuccess;
+    }
     *ptr = std::malloc(size);
     return (*ptr != nullptr) ? cudaSuccess : 1;
 }
@@ -63,17 +68,26 @@ inline cudaError_t cudaFree(void* ptr)
 
 inline cudaError_t cudaMemcpy(void* dst, const void* src, std::size_t count, int)
 {
+    if (count == 0)
+    {
+        return cudaSuccess;
+    }
     std::memcpy(dst, src, count);
     return cudaSuccess;
 }
 
 inline cudaError_t cudaMemset(void* ptr, int value, std::size_t count)
 {
+    if (count == 0)
+    {
+        return cudaSuccess;
+    }
     std::memset(ptr, value, count);
     return cudaSuccess;
 }
 
 inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }
+inline cudaError_t cudaStreamSynchronize(cudaStream_t) { return cudaSuccess; }
 inline cudaError_t cudaGetLastError() { return cudaSuccess; }
 
 constexpr int cudaMemcpyHostToDevice = 0;

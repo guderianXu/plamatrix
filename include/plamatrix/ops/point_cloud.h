@@ -49,6 +49,7 @@ DenseMatrix<Scalar, Dev> transformPoints(const DenseMatrix<Scalar, Dev>& T, cons
 /// @tparam Dev     Device (CPU or GPU)
 /// @param points  Nx3 input point cloud
 /// @return  3x3 covariance matrix (positive semi-definite) on the specified device
+/// @throws std::runtime_error if points is not Nx3 or has fewer than 2 rows
 template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> covarianceMatrix(const DenseMatrix<Scalar, Dev>& points);
 

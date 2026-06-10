@@ -28,6 +28,21 @@ void checkSameDimensions(const char* op,
     }
 }
 
+template <typename Scalar, Device Dev>
+void checkOutputDimensions(const char* op,
+                           const DenseMatrix<Scalar, Dev>& output,
+                           Index rows,
+                           Index cols)
+{
+    if (output.rows() != rows || output.cols() != cols)
+    {
+        std::ostringstream oss;
+        oss << op << " output dimension mismatch: output is " << output.rows() << "x" << output.cols()
+            << ", expected " << rows << "x" << cols;
+        throw std::runtime_error(oss.str());
+    }
+}
+
 } // namespace detail
 
 /// Element-wise addition of two CPU matrices.
@@ -36,7 +51,8 @@ void checkSameDimensions(const char* op,
 /// @param B  Right operand matrix (must have same dimensions as A)
 /// @return  New CPU matrix C where C[i] = A[i] + B[i]
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A, const DenseMatrix<Scalar, Device::CPU>& B)
+DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A,
+                                     const DenseMatrix<Scalar, Device::CPU>& B)
 {
     detail::checkSameDimensions("add", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
@@ -65,7 +81,8 @@ DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A, 
 /// @param B  Right operand matrix (must have same dimensions as A)
 /// @return  New CPU matrix C where C[i] = A[i] - B[i]
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A, const DenseMatrix<Scalar, Device::CPU>& B)
+DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A,
+                                     const DenseMatrix<Scalar, Device::CPU>& B)
 {
     detail::checkSameDimensions("sub", A, B);
     DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
@@ -99,10 +116,45 @@ DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
                                       const DenseMatrix<Scalar, Device::GPU>& B,
                                       cudaStream_t stream);
 
+/// GPU element-wise addition into an existing output matrix.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param C  Output GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+template <typename Scalar>
+void add(const DenseMatrix<Scalar, Device::GPU>& A,
+         const DenseMatrix<Scalar, Device::GPU>& B,
+         DenseMatrix<Scalar, Device::GPU>& C,
+         cudaStream_t stream = nullptr);
+
 /// GPU element-wise addition on the default CUDA stream.
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
                                      const DenseMatrix<Scalar, Device::GPU>& B);
+
+/// Asynchronously launch GPU element-wise addition.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+/// @return  New GPU matrix C where C[i] = A[i] + B[i]
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> addAsync(const DenseMatrix<Scalar, Device::GPU>& A,
+                                          const DenseMatrix<Scalar, Device::GPU>& B,
+                                          cudaStream_t stream = nullptr);
+
+/// Asynchronously launch GPU element-wise addition into an existing output matrix.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param C  Output GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+template <typename Scalar>
+void addAsync(const DenseMatrix<Scalar, Device::GPU>& A,
+              const DenseMatrix<Scalar, Device::GPU>& B,
+              DenseMatrix<Scalar, Device::GPU>& C,
+              cudaStream_t stream = nullptr);
 
 /// GPU element-wise subtraction (declaration only — definition in dense_ops.cu).
 /// @tparam Scalar  Element type (float or double)
@@ -115,10 +167,129 @@ DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
                                       const DenseMatrix<Scalar, Device::GPU>& B,
                                       cudaStream_t stream);
 
+/// GPU element-wise subtraction into an existing output matrix.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param C  Output GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+template <typename Scalar>
+void sub(const DenseMatrix<Scalar, Device::GPU>& A,
+         const DenseMatrix<Scalar, Device::GPU>& B,
+         DenseMatrix<Scalar, Device::GPU>& C,
+         cudaStream_t stream = nullptr);
+
 /// GPU element-wise subtraction on the default CUDA stream.
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
                                      const DenseMatrix<Scalar, Device::GPU>& B);
+
+/// Asynchronously launch GPU element-wise subtraction.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+/// @return  New GPU matrix C where C[i] = A[i] - B[i]
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> subAsync(const DenseMatrix<Scalar, Device::GPU>& A,
+                                          const DenseMatrix<Scalar, Device::GPU>& B,
+                                          cudaStream_t stream = nullptr);
+
+/// Asynchronously launch GPU element-wise subtraction into an existing output matrix.
+/// @tparam Scalar  Element type (float or double)
+/// @param A  Left operand GPU matrix
+/// @param B  Right operand GPU matrix (must have same dimensions as A)
+/// @param C  Output GPU matrix (must have same dimensions as A)
+/// @param stream  Optional CUDA stream
+template <typename Scalar>
+void subAsync(const DenseMatrix<Scalar, Device::GPU>& A,
+              const DenseMatrix<Scalar, Device::GPU>& B,
+              DenseMatrix<Scalar, Device::GPU>& C,
+              cudaStream_t stream = nullptr);
+
+#ifdef PLAMATRIX_NO_CUDA
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>&,
+                                      const DenseMatrix<Scalar, Device::GPU>&,
+                                      cudaStream_t)
+{
+    throw std::runtime_error("add: GPU element-wise addition requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+void add(const DenseMatrix<Scalar, Device::GPU>&,
+         const DenseMatrix<Scalar, Device::GPU>&,
+         DenseMatrix<Scalar, Device::GPU>&,
+         cudaStream_t)
+{
+    throw std::runtime_error("add: GPU element-wise addition requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
+                                     const DenseMatrix<Scalar, Device::GPU>& B)
+{
+    return add(A, B, nullptr);
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> addAsync(const DenseMatrix<Scalar, Device::GPU>&,
+                                           const DenseMatrix<Scalar, Device::GPU>&,
+                                           cudaStream_t)
+{
+    throw std::runtime_error("addAsync: GPU element-wise addition requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+void addAsync(const DenseMatrix<Scalar, Device::GPU>&,
+              const DenseMatrix<Scalar, Device::GPU>&,
+              DenseMatrix<Scalar, Device::GPU>&,
+              cudaStream_t)
+{
+    throw std::runtime_error("addAsync: GPU element-wise addition requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>&,
+                                      const DenseMatrix<Scalar, Device::GPU>&,
+                                      cudaStream_t)
+{
+    throw std::runtime_error("sub: GPU element-wise subtraction requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+void sub(const DenseMatrix<Scalar, Device::GPU>&,
+         const DenseMatrix<Scalar, Device::GPU>&,
+         DenseMatrix<Scalar, Device::GPU>&,
+         cudaStream_t)
+{
+    throw std::runtime_error("sub: GPU element-wise subtraction requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
+                                     const DenseMatrix<Scalar, Device::GPU>& B)
+{
+    return sub(A, B, nullptr);
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> subAsync(const DenseMatrix<Scalar, Device::GPU>&,
+                                           const DenseMatrix<Scalar, Device::GPU>&,
+                                           cudaStream_t)
+{
+    throw std::runtime_error("subAsync: GPU element-wise subtraction requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
+void subAsync(const DenseMatrix<Scalar, Device::GPU>&,
+              const DenseMatrix<Scalar, Device::GPU>&,
+              DenseMatrix<Scalar, Device::GPU>&,
+              cudaStream_t)
+{
+    throw std::runtime_error("subAsync: GPU element-wise subtraction requires PLAMATRIX_WITH_CUDA=ON");
+}
+#endif
 
 /// Scalar multiplication: alpha * A (element-wise).
 /// @tparam Scalar  Element type (float or double)

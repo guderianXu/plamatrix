@@ -143,9 +143,14 @@ DenseMatrix<Scalar, Dev> solve(const DenseMatrix<Scalar, Dev>& A, const DenseMat
 }
 
 // Explicit template instantiations for CPU
+#ifdef PLAMATRIX_USE_FLOAT
 template DenseMatrix<float, Device::CPU> solve(const DenseMatrix<float, Device::CPU>&,
                                                 const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template DenseMatrix<double, Device::CPU> solve(const DenseMatrix<double, Device::CPU>&,
                                                  const DenseMatrix<double, Device::CPU>&);
+#endif
 
 } // namespace plamatrix

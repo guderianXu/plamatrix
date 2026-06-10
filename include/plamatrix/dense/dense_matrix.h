@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <sstream>
+#include <stdexcept>
 
 #include "plamatrix/core/device_matrix.h"
 
@@ -58,7 +60,7 @@ public:
     Scalar operator()(Index row, Index col) const
     {
         static_assert(Dev == Device::CPU, "operator() is only available on CPU matrices");
-        return this->_data[row + col * this->_rows];
+        return this->_data[checkedOffset(row, col)];
     }
 
     /// Element access — CPU only, column-major layout: data[row + col * rows].
@@ -68,7 +70,7 @@ public:
     Scalar& operator()(Index row, Index col)
     {
         static_assert(Dev == Device::CPU, "operator() is only available on CPU matrices");
-        return this->_data[row + col * this->_rows];
+        return this->_data[checkedOffset(row, col)];
     }
 
     /// Set a single element value. Works on both CPU and GPU.
@@ -77,14 +79,15 @@ public:
     /// @param value  Value to set
     void setValue(Index row, Index col, Scalar value)
     {
+        Index offset = checkedOffset(row, col);
         if constexpr (Dev == Device::CPU)
         {
-            this->_data[row + col * this->_rows] = value;
+            this->_data[offset] = value;
         }
         else
         {
             PLAMATRIX_CHECK_CUDA(
-                cudaMemcpy(this->_data + (row + col * this->_rows), &value, sizeof(Scalar), cudaMemcpyHostToDevice));
+                cudaMemcpy(this->_data + offset, &value, sizeof(Scalar), cudaMemcpyHostToDevice));
         }
     }
 
@@ -94,15 +97,16 @@ public:
     /// @return  Value at (row, col)
     Scalar getValue(Index row, Index col) const
     {
+        Index offset = checkedOffset(row, col);
         if constexpr (Dev == Device::CPU)
         {
-            return this->_data[row + col * this->_rows];
+            return this->_data[offset];
         }
         else
         {
             Scalar host_val;
             PLAMATRIX_CHECK_CUDA(
-                cudaMemcpy(&host_val, this->_data + (row + col * this->_rows), sizeof(Scalar), cudaMemcpyDeviceToHost));
+                cudaMemcpy(&host_val, this->_data + offset, sizeof(Scalar), cudaMemcpyDeviceToHost));
             return host_val;
         }
     }
@@ -179,8 +183,12 @@ public:
         if constexpr (Dev == Device::CPU)
         {
             for (Index j = 0; j < this->_cols; ++j)
+            {
                 for (Index i = 0; i < this->_rows; ++i)
+                {
                     result(j, i) = (*this)(i, j);
+                }
+            }
         }
         else
         {
@@ -190,6 +198,29 @@ public:
     }
 
 private:
+    Index checkedOffset(Index row, Index col) const
+    {
+        if (row < 0 || row >= this->_rows || col < 0 || col >= this->_cols)
+        {
+            std::ostringstream oss;
+            oss << "DenseMatrix index out of range: (" << row << ", " << col
+                << ") for matrix " << this->_rows << "x" << this->_cols;
+            throw std::out_of_range(oss.str());
+        }
+        return row + col * this->_rows;
+    }
+
+#ifdef PLAMATRIX_NO_CUDA
+    void fillGpuKernel(Scalar)
+    {
+        throw std::runtime_error("DenseMatrix::fill: non-zero GPU fill requires PLAMATRIX_WITH_CUDA=ON");
+    }
+
+    void transposeGpuKernel(DenseMatrix&) const
+    {
+        throw std::runtime_error("DenseMatrix::transpose: GPU transpose requires PLAMATRIX_WITH_CUDA=ON");
+    }
+#else
     /// GPU fill kernel wrapper (implemented in dense_matrix.cu).
     /// @param value  Non-zero fill value
     void fillGpuKernel(Scalar value);
@@ -197,6 +228,7 @@ private:
     /// GPU transpose kernel wrapper (implemented in dense_matrix.cu).
     /// @param result  Output matrix (cols x rows dimensions, pre-allocated)
     void transposeGpuKernel(DenseMatrix& result) const;
+#endif
 };
 
 } // namespace plamatrix

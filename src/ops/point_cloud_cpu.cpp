@@ -254,18 +254,20 @@ DenseMatrix<Scalar, Dev> covarianceMatrix(const DenseMatrix<Scalar, Dev>& points
 
 // ---- Explicit template instantiations for CPU ----
 
+#ifdef PLAMATRIX_USE_FLOAT
 template DenseMatrix<float, Device::CPU> rotationMatrix(const Vec3<float>&, float);
-template DenseMatrix<double, Device::CPU> rotationMatrix(const Vec3<double>&, double);
-
 template DenseMatrix<float, Device::CPU> rigidTransform(const DenseMatrix<float, Device::CPU>&, const Vec3<float>&);
-template DenseMatrix<double, Device::CPU> rigidTransform(const DenseMatrix<double, Device::CPU>&, const Vec3<double>&);
-
 template DenseMatrix<float, Device::CPU> transformPoints(const DenseMatrix<float, Device::CPU>&,
                                                            const DenseMatrix<float, Device::CPU>&);
+template DenseMatrix<float, Device::CPU> covarianceMatrix(const DenseMatrix<float, Device::CPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
+template DenseMatrix<double, Device::CPU> rotationMatrix(const Vec3<double>&, double);
+template DenseMatrix<double, Device::CPU> rigidTransform(const DenseMatrix<double, Device::CPU>&, const Vec3<double>&);
 template DenseMatrix<double, Device::CPU> transformPoints(const DenseMatrix<double, Device::CPU>&,
                                                             const DenseMatrix<double, Device::CPU>&);
-
-template DenseMatrix<float, Device::CPU> covarianceMatrix(const DenseMatrix<float, Device::CPU>&);
 template DenseMatrix<double, Device::CPU> covarianceMatrix(const DenseMatrix<double, Device::CPU>&);
+#endif
 
 } // namespace plamatrix

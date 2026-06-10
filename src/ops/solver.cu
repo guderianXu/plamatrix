@@ -1,5 +1,6 @@
 #include <sstream>
 #include <stdexcept>
+#include <limits>
 #include <type_traits>
 
 #include <cusolverDn.h>
@@ -22,6 +23,17 @@ cusolverDnHandle_t getCusolverHandle()
         PLAMATRIX_CHECK_CUSOLVER(cusolverDnCreate(&handle));
     }
     return handle;
+}
+
+int checkedCusolverInt(Index value, const char* name)
+{
+    if (value < 0 || value > static_cast<Index>(std::numeric_limits<int>::max()))
+    {
+        std::ostringstream oss;
+        oss << name << " is outside cuSOLVER int range: " << value;
+        throw std::runtime_error(oss.str());
+    }
+    return static_cast<int>(value);
 }
 
 /// GPU linear solve via cuSOLVER getrf/getrs.
@@ -54,8 +66,8 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
 
     cusolverDnHandle_t handle = getCusolverHandle();
 
-    int n_int     = static_cast<int>(n);
-    int nrhs_int  = static_cast<int>(nrhs);
+    int n_int     = checkedCusolverInt(n, "Solve n");
+    int nrhs_int  = checkedCusolverInt(nrhs, "Solve nrhs");
     int lda       = n_int;
     int ldb       = n_int;
 
@@ -170,18 +182,22 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
 } // anonymous namespace
 
 // Explicit specializations for GPU
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> solve<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& A,
                                                             const DenseMatrix<float, Device::GPU>& B)
 {
     return solveGpuImpl(A, B);
 }
+#endif
 
+#ifdef PLAMATRIX_USE_DOUBLE
 template <>
 DenseMatrix<double, Device::GPU> solve<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& A,
                                                               const DenseMatrix<double, Device::GPU>& B)
 {
     return solveGpuImpl(A, B);
 }
+#endif
 
 } // namespace plamatrix

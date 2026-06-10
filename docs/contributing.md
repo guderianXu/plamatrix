@@ -40,7 +40,7 @@ git checkout main && git merge feat/<feature-name>
 
 ### 提交前检查
 
-- [ ] `cd build && cmake .. -DBUILD_TESTS=ON && cmake --build . -j$(nproc)` 编译通过
+- [ ] `cd build && cmake .. -DPLAMATRIX_BUILD_TESTS=ON && cmake --build . -j$(nproc)` 编译通过
 - [ ] `./test/plamatrix_tests` 全部测试通过
 - [ ] 无编译警告
 - [ ] 单文件不超过 400 行

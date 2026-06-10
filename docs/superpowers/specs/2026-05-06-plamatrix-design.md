@@ -1,5 +1,7 @@
 # PlaMatrix 设计规格
 
+> **历史文档**：本文件记录早期设计设想，可能包含未实现或已调整的 API。当前公开 API、构建选项和示例以 `README.md` 与 `docs/api/` 为准。
+
 ## 1. 项目概述
 
 PlaMatrix 是一个面向点云处理的高性能矩阵运算库，利用 CUDA/cuBLAS/cuSOLVER 和多线程 CPU 进行并行计算优化。API 参考 Eigen 风格但更精简，聚焦点云处理场景中需求量最大的矩阵运算。

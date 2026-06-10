@@ -1,5 +1,7 @@
 # PlaMatrix Implementation Plan
 
+> **历史文档**：本文件记录早期实现计划，可能包含未实现或已调整的 API 设想。当前公开 API、构建选项和示例以 `README.md` 与 `docs/api/` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a high-performance matrix computation library for point cloud processing with CUDA/cuBLAS/cuSOLVER and multi-threaded CPU optimization.

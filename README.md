@@ -4,9 +4,9 @@
 
 ## 特性
 
-- **密集矩阵**：加减乘除、转置、标量运算，操作符重载 + 表达式模板
+- **密集矩阵**：矩阵乘法、逐元素加减、转置、CPU 标量运算
 - **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
-- **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)，稀疏求解器
+- **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)
 - **稀疏矩阵**：COO / CSR 格式，COO→CSR 转换
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
@@ -22,7 +22,7 @@
 git clone https://github.com/guderianXu/plamatrix.git
 cd plamatrix
 mkdir build && cd build
-cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
+cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
 cmake --build . -j$(nproc)
 ```
 
@@ -37,8 +37,10 @@ cmake --build . -j$(nproc)
 | `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |
-| `BUILD_TESTS` | `OFF` | 构建单元测试 |
-| `BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
+| `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 |
+| `PLAMATRIX_BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
+
+独立顶层构建时仍兼容 `BUILD_TESTS` / `BUILD_BENCHMARKS` 短名；作为子项目集成时优先使用 `PLAMATRIX_BUILD_*` 选项。
 
 ### 第一个程序
 
@@ -92,6 +94,8 @@ target_link_libraries(my_project plamatrix::plamatrix)
 ./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
 ```
 
+CUDA 模式下 GEMM/add/sub 的计算时间使用 CUDA event 计时，并复用输出矩阵；输入传输时间仍单独记录。
+
 | 档位 | 矩阵尺寸 |
 |------|----------|
 | smoke/tiny | 16, 32 |
@@ -111,10 +115,16 @@ CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
 
 ### 基本运算
 ```cpp
-auto C = A * B;          // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
-auto D = A + B;          // 逐元素加法
+auto C = gemm(A, B);     // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
+auto D = add(A, B);      // 逐元素加法
 auto E = A.transpose();  // 转置
-auto F = 2.0f * A + B;   // 标量乘加
+auto F = add(2.0f * A, B); // CPU 标量乘加
+
+// GPU 热循环可复用输出矩阵并异步提交
+cudaStream_t stream = nullptr;
+DenseMatrix<float, Device::GPU> C_gpu(A_gpu.rows(), B_gpu.cols());
+gemmAsync(A_gpu, B_gpu, C_gpu, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 ```
 
 ### 高级运算

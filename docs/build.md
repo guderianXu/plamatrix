@@ -11,7 +11,7 @@
 | CMake | 3.18+ | 构建系统 |
 | CUDA Toolkit | 11.0+ | GPU 加速（可选，无 NVIDIA GPU 可跳过） |
 | OpenMP | 4.5+ | CPU 多线程（随 GCC 安装，无需额外操作） |
-| Google Test | 1.11+ | 单元测试（仅 `-DBUILD_TESTS=ON` 时需要） |
+| Google Test | 1.11+ | 单元测试（仅 `-DPLAMATRIX_BUILD_TESTS=ON` 时需要） |
 
 ---
 
@@ -121,7 +121,7 @@ sudo apt install -y build-essential cmake git
 git clone https://github.com/guderianXu/plamatrix.git
 cd plamatrix
 mkdir build && cd build
-cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DBUILD_TESTS=ON
+cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DPLAMATRIX_BUILD_TESTS=ON
 cmake --build . -j$(nproc)
 ```
 
@@ -156,7 +156,7 @@ sudo make install
 git clone https://github.com/guderianXu/plamatrix.git
 cd plamatrix
 mkdir build && cd build
-cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
+cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
 cmake --build . -j$(nproc)
 ```
 
@@ -169,8 +169,10 @@ cmake --build . -j$(nproc)
 | `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake `find_package(BLAS/LAPACK)` 检测并使用系统 BLAS/LAPACK 加速 CPU GEMM/SVD/eigh |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 `float` (32-bit) 实例化 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 `double` (64-bit) 实例化 |
-| `BUILD_TESTS` | `OFF` | 构建单元测试 (需要 Google Test) |
-| `BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
+| `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 (需要 Google Test) |
+| `PLAMATRIX_BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
+
+独立顶层构建时仍兼容 `BUILD_TESTS` / `BUILD_BENCHMARKS` 短名；作为 `add_subdirectory()` 子项目集成时应使用 `PLAMATRIX_BUILD_*` 选项。
 
 ### 3.3 常用构建组合
 
@@ -186,7 +188,7 @@ cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DPLAMATRIX_WITH_SYSTEM_LINALG=OFF
 cmake --build . -j$(nproc)
 
 # 开发模式（测试 + benchmark）
-cmake .. -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON && cmake --build . -j$(nproc)
+cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON && cmake --build . -j$(nproc)
 
 # 生产安装
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
@@ -263,7 +265,7 @@ cmake .. -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
 **解决**：按 [2.4 节](#24-google-test运行测试时需要) 安装，或者不构建测试：
 
 ```bash
-cmake .. -DBUILD_TESTS=OFF
+cmake .. -DPLAMATRIX_BUILD_TESTS=OFF
 ```
 
 ### POSIX memalign not supported（macOS）

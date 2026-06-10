@@ -54,6 +54,8 @@ auto At = A.transpose();  // 返回新矩阵，维度交换 (cols×rows)
 - CPU: 嵌套循环
 - GPU: 2D CUDA kernel
 
+CPU-only 构建 (`PLAMATRIX_WITH_CUDA=OFF`) 下仍可构造 `Device::GPU` 矩阵并做显式传输测试，但 GPU 算法入口（非零 `fill()`、GPU `transpose()`、GPU `add/sub/gemm` 等）会抛出明确异常或不可用；实际业务应使用 `Device::CPU`，需要 GPU 算法时启用 CUDA 构建。
+
 ## 设备传输
 
 ```cpp
@@ -62,6 +64,28 @@ auto A_cpu = A_gpu.toCpu();  // GPU → CPU (cudaMemcpy DeviceToHost)
 ```
 
 传输是一次性的、显式的、昂贵的。库不会隐式搬移数据。
+
+## GPU 异步计算和输出复用
+
+同步 GPU 运算会在返回前同步传入的 CUDA stream，适合直接取结果：
+
+```cpp
+auto C_gpu = gemm(A_gpu, B_gpu);
+auto D_gpu = add(A_gpu, B_gpu);
+```
+
+需要在循环或 benchmark 中减少分配和同步开销时，可复用输出矩阵并使用异步接口：
+
+```cpp
+DenseMatrix<float, Device::GPU> C_gpu(A_gpu.rows(), B_gpu.cols());
+DenseMatrix<float, Device::GPU> D_gpu(A_gpu.rows(), A_gpu.cols());
+
+gemmAsync(A_gpu, B_gpu, C_gpu, stream);
+addAsync(A_gpu, A_gpu, D_gpu, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+```
+
+`gemmAsync`、`addAsync`、`subAsync` 只提交 GPU 工作，不主动同步；调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。
 
 ## 基类方法
 

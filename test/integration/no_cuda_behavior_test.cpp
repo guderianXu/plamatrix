@@ -1,10 +1,19 @@
 #include <gtest/gtest.h>
 
 #include <plamatrix/dense/dense_matrix.h>
+#include <plamatrix/dense/dense_ops.h>
+#include <plamatrix/ops/gemm.h>
 
 using namespace plamatrix;
 
 #ifdef PLAMATRIX_NO_CUDA
+TEST(NoCudaStubs, checkMacros_ThrowOnStubbedErrors)
+{
+    EXPECT_THROW(PLAMATRIX_CHECK_CUDA(static_cast<cudaError_t>(1)), std::runtime_error);
+    EXPECT_THROW(PLAMATRIX_CHECK_CUBLAS(static_cast<cublasStatus_t>(1)), std::runtime_error);
+    EXPECT_THROW(PLAMATRIX_CHECK_CUSOLVER(static_cast<cusolverStatus_t>(1)), std::runtime_error);
+}
+
 TEST(NoCudaStubs, transfer_RoundTripUsesStubbedDeviceMemory)
 {
     DenseMatrix<double, Device::CPU> cpu(2, 3);
@@ -46,5 +55,20 @@ TEST(NoCudaStubs, transfer_ZeroSizedDeviceMatrixRoundTrips)
     EXPECT_EQ(back.cols(), 7);
     EXPECT_EQ(back.size(), 0);
     EXPECT_EQ(back.data(), nullptr);
+}
+
+TEST(NoCudaStubs, gpuDenseAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCudaObjects)
+{
+    DenseMatrix<float, Device::GPU> A(2, 2);
+    DenseMatrix<float, Device::GPU> B(2, 2);
+
+    EXPECT_THROW(A.fill(1.0f), std::runtime_error);
+    EXPECT_THROW(A.transpose(), std::runtime_error);
+    EXPECT_THROW(add(A, B), std::runtime_error);
+    EXPECT_THROW(addAsync(A, B), std::runtime_error);
+    EXPECT_THROW(sub(A, B), std::runtime_error);
+    EXPECT_THROW(subAsync(A, B), std::runtime_error);
+    EXPECT_THROW(gemm(A, B), std::runtime_error);
+    EXPECT_THROW(gemmAsync(A, B), std::runtime_error);
 }
 #endif

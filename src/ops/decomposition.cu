@@ -1,5 +1,6 @@
 #include <sstream>
 #include <stdexcept>
+#include <limits>
 #include <type_traits>
 
 #include <cublas_v2.h>
@@ -25,6 +26,17 @@ cusolverDnHandle_t getCusolverHandle()
     return handle;
 }
 
+int checkedCusolverInt(Index value, const char* name)
+{
+    if (value < 0 || value > static_cast<Index>(std::numeric_limits<int>::max()))
+    {
+        std::ostringstream oss;
+        oss << name << " is outside cuSOLVER int range: " << value;
+        throw std::runtime_error(oss.str());
+    }
+    return static_cast<int>(value);
+}
+
 template <typename Scalar>
 std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
 svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
@@ -36,14 +48,18 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     {
         throw std::runtime_error("SVD: input matrix has zero dimensions");
     }
+    if (m < n)
+    {
+        throw std::runtime_error("SVD: GPU backend requires rows >= columns with legacy cuSOLVER gesvd");
+    }
 
     cusolverDnHandle_t handle = getCusolverHandle();
 
     signed char jobu  = 'A';  // All m columns of U
     signed char jobvt = 'A';  // All n rows of Vt
 
-    int m_int    = static_cast<int>(m);
-    int n_int    = static_cast<int>(n);
+    int m_int    = checkedCusolverInt(m, "SVD m");
+    int n_int    = checkedCusolverInt(n, "SVD n");
     int lda      = m_int;
     int ldu      = m_int;
     int ldvt     = n_int;
@@ -148,10 +164,15 @@ svd(const DenseMatrix<Scalar, Device::GPU>& A)
 }
 
 // Explicit template instantiations
+#ifdef PLAMATRIX_USE_FLOAT
 template std::tuple<DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>>
 svd(const DenseMatrix<float, Device::GPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template std::tuple<DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>>
 svd(const DenseMatrix<double, Device::GPU>&);
+#endif
 
 namespace
 {
@@ -170,8 +191,8 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
 
     cusolverDnHandle_t handle = getCusolverHandle();
 
-    int m_int = static_cast<int>(m);
-    int n_int = static_cast<int>(n);
+    int m_int = checkedCusolverInt(m, "QR m");
+    int n_int = checkedCusolverInt(n, "QR n");
     int lda   = m_int;
     int min_mn = (m_int < n_int) ? m_int : n_int;
 
@@ -261,8 +282,8 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
                        cudaMemcpyHostToDevice));
     }
 
-    // Copy the upper triangular part and Householder vectors from R to Q_full's first n columns
-    for (Index j = 0; j < n; ++j)
+    // Copy the Householder vectors from R into the columns accepted by orgqr.
+    for (Index j = 0; j < static_cast<Index>(min_mn); ++j)
     {
         PLAMATRIX_CHECK_CUDA(
             cudaMemcpy(Q_full.data() + static_cast<std::size_t>(j) * static_cast<std::size_t>(m),
@@ -363,7 +384,7 @@ DenseMatrix<Scalar, Device::GPU> eighGpuImpl(const DenseMatrix<Scalar, Device::G
 
     cusolverDnHandle_t handle = getCusolverHandle();
 
-    int n_int = static_cast<int>(n);
+    int n_int = checkedCusolverInt(n, "Eigh n");
     int lda   = n_int;
 
     // We only need eigenvalues, not eigenvectors
@@ -493,13 +514,23 @@ DenseMatrix<Scalar, Device::GPU> eigh(const DenseMatrix<Scalar, Device::GPU>& A)
 }
 
 // Explicit template instantiations for qr
+#ifdef PLAMATRIX_USE_FLOAT
 template std::tuple<DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>>
 qr(const DenseMatrix<float, Device::GPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template std::tuple<DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>>
 qr(const DenseMatrix<double, Device::GPU>&);
+#endif
 
 // Explicit template instantiations for eigh
+#ifdef PLAMATRIX_USE_FLOAT
 template DenseMatrix<float, Device::GPU> eigh(const DenseMatrix<float, Device::GPU>&);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
 template DenseMatrix<double, Device::GPU> eigh(const DenseMatrix<double, Device::GPU>&);
+#endif
 
 } // namespace plamatrix
