@@ -3,6 +3,7 @@
 #include <plamatrix/dense/dense_matrix.h>
 #include <plamatrix/dense/dense_ops.h>
 #include <plamatrix/ops/gemm.h>
+#include <plamatrix/ops/point_cloud.h>
 
 using namespace plamatrix;
 
@@ -40,6 +41,30 @@ TEST(NoCudaStubs, transfer_RoundTripUsesStubbedDeviceMemory)
     EXPECT_DOUBLE_EQ(back(1, 2), 42.5);
 }
 
+TEST(NoCudaStubs, transferAsync_RoundTripUsesStubbedDeviceMemory)
+{
+    auto cpu = DenseMatrix<double, Device::CPU>::pinned(2, 2);
+    cpu(0, 0) = 1.0;
+    cpu(1, 0) = 2.0;
+    cpu(0, 1) = 3.0;
+    cpu(1, 1) = 4.0;
+    EXPECT_TRUE(cpu.isPinnedHost());
+
+    cudaStream_t stream = nullptr;
+    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+
+    auto device = cpu.toGpuAsync(stream);
+    auto back = DenseMatrix<double, Device::CPU>::pinned(2, 2);
+    device.copyToCpuAsync(back, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+
+    EXPECT_DOUBLE_EQ(back(0, 0), 1.0);
+    EXPECT_DOUBLE_EQ(back(1, 0), 2.0);
+    EXPECT_DOUBLE_EQ(back(0, 1), 3.0);
+    EXPECT_DOUBLE_EQ(back(1, 1), 4.0);
+}
+
 TEST(NoCudaStubs, transfer_ZeroSizedDeviceMatrixRoundTrips)
 {
     DenseMatrix<float, Device::CPU> cpu(0, 7);
@@ -70,5 +95,22 @@ TEST(NoCudaStubs, gpuDenseAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCuda
     EXPECT_THROW(subAsync(A, B), std::runtime_error);
     EXPECT_THROW(gemm(A, B), std::runtime_error);
     EXPECT_THROW(gemmAsync(A, B), std::runtime_error);
+}
+
+TEST(NoCudaStubs, gpuPointCloudAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCudaObjects)
+{
+    DenseMatrix<float, Device::GPU> T(4, 4);
+    DenseMatrix<float, Device::GPU> points(2, 3);
+    DenseMatrix<float, Device::GPU> transformed(2, 3);
+    DenseMatrix<float, Device::GPU> covariance(3, 3);
+    GpuCovarianceWorkspace<float> workspace;
+
+    EXPECT_THROW(transformPoints(T, points), std::runtime_error);
+    EXPECT_THROW(transformPoints(T, points, transformed), std::runtime_error);
+    EXPECT_THROW(transformPointsAsync(T, points), std::runtime_error);
+    EXPECT_THROW(transformPointsAsync(T, points, transformed), std::runtime_error);
+    EXPECT_THROW(covarianceMatrix(points), std::runtime_error);
+    EXPECT_THROW(covarianceMatrix(points, covariance), std::runtime_error);
+    EXPECT_THROW(covarianceMatrixAsync(points, covariance, workspace), std::runtime_error);
 }
 #endif

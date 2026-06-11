@@ -48,13 +48,30 @@ DenseMatrix<Scalar, Dev> transformPoints(
     const DenseMatrix<Scalar, Dev>& T,      // 4×4 刚体变换
     const DenseMatrix<Scalar, Dev>& points  // N×3 点云
 );
+
+template <typename Scalar>
+void transformPoints(
+    const DenseMatrix<Scalar, Device::GPU>& T,
+    const DenseMatrix<Scalar, Device::GPU>& points,
+    DenseMatrix<Scalar, Device::GPU>& output,
+    cudaStream_t stream = nullptr
+);
+
+template <typename Scalar>
+void transformPointsAsync(
+    const DenseMatrix<Scalar, Device::GPU>& T,
+    const DenseMatrix<Scalar, Device::GPU>& points,
+    DenseMatrix<Scalar, Device::GPU>& output,
+    cudaStream_t stream = nullptr
+);
 ```
 
 返回 N×3 变换后的点云。
 
 - **CPU**：逐点循环计算
 - **GPU**：`transformPointsKernel` 并行处理
-- `T` 必须是 4×4，`points` 必须是 N×3；GPU 路径需要 `PLAMATRIX_WITH_CUDA=ON`
+- `T` 必须是 4×4，`points` 必须是 N×3，输出复用矩阵必须是 N×3
+- 同步 GPU 输出复用重载返回前会同步传入 stream；`transformPointsAsync` 只提交 kernel
 
 ## 协方差矩阵
 
@@ -67,9 +84,32 @@ template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> covarianceMatrix(
     const DenseMatrix<Scalar, Dev>& points  // N×3 点云
 );
+
+template <typename Scalar>
+void covarianceMatrix(
+    const DenseMatrix<Scalar, Device::GPU>& points,
+    DenseMatrix<Scalar, Device::GPU>& output,
+    cudaStream_t stream = nullptr
+);
+
+template <typename Scalar>
+class GpuCovarianceWorkspace;
+
+template <typename Scalar>
+void covarianceMatrixAsync(
+    const DenseMatrix<Scalar, Device::GPU>& points,
+    DenseMatrix<Scalar, Device::GPU>& output,
+    GpuCovarianceWorkspace<Scalar>& workspace,
+    cudaStream_t stream = nullptr
+);
 ```
 
-返回 3×3 半正定矩阵。`points` 必须是 N×3 且 N >= 2；GPU 路径需要 `PLAMATRIX_WITH_CUDA=ON`。常用于 PCA 法线估计和点云配准。
+返回 3×3 半正定矩阵。`points` 必须是 N×3 且 N >= 2；GPU 输出复用矩阵必须是 3×3。
+常用于 PCA 法线估计和点云配准。
+
+`covarianceMatrixAsync` 需要调用方持有 `GpuCovarianceWorkspace`，并保证它和输入/输出矩阵在 stream 完成前保持有效。
+workspace 扩容时会保留旧缓冲到自身析构，以避免同一 workspace 在连续异步提交中释放仍被使用的临时内存。
+同步 GPU 重载使用内部 workspace 并在返回前同步，适合直接读取结果。
 
 ## 典型工作流：点云配准
 
@@ -98,9 +138,20 @@ auto pts_gpu = point_cloud.toGpu();
 auto T_gpu = T.toGpu();
 auto transformed_gpu = transformPoints<float, Device::GPU>(T_gpu, pts_gpu);
 auto result = transformed_gpu.toCpu();
+
+DenseMatrix<float, Device::GPU> transformed_reuse(pts_gpu.rows(), 3);
+transformPointsAsync(T_gpu, pts_gpu, transformed_reuse, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 #endif
 
 // 6. 计算协方差矩阵 (用于 PCA)
 auto cov = covarianceMatrix<float, Device::CPU>(point_cloud);
 auto eigenvalues = eigh(cov);  // 特征值即为主成分方差
+
+#ifdef PLAMATRIX_WITH_CUDA
+DenseMatrix<float, Device::GPU> cov_gpu(3, 3);
+GpuCovarianceWorkspace<float> workspace;
+covarianceMatrixAsync(pts_gpu, cov_gpu, workspace, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+#endif
 ```

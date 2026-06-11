@@ -78,6 +78,20 @@ void DenseMatrix<double, Device::GPU>::fillGpuKernel(double value)
 }
 #endif
 
+template <>
+void DenseMatrix<int, Device::GPU>::fillGpuKernel(int value)
+{
+    Index count = this->size();
+    if (count == 0)
+    {
+        return;
+    }
+    constexpr int block_size = 256;
+    int grid_size = checkedCudaGrid1D(count, block_size, "DenseMatrix::fill");
+    fillKernel<int><<<grid_size, block_size>>>(this->_data, count, value);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+}
+
 template <typename Scalar>
 __global__ void transposeKernel(const Scalar* src, Scalar* dst, Index src_rows, Index src_cols)
 {

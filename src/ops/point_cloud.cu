@@ -48,6 +48,66 @@ int checkedCudaGrid1D(Index item_count, int block_size, const char* op)
     return static_cast<int>(block_count);
 }
 
+template <typename Scalar>
+void checkTransformInputs(const DenseMatrix<Scalar, Device::GPU>& T,
+                          const DenseMatrix<Scalar, Device::GPU>& points)
+{
+    if (T.rows() != 4 || T.cols() != 4)
+    {
+        std::ostringstream oss;
+        oss << "transformPoints: T must be 4x4, got " << T.rows() << "x" << T.cols();
+        throw std::runtime_error(oss.str());
+    }
+    if (points.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "transformPoints: points must be Nx3, got " << points.rows() << "x" << points.cols();
+        throw std::runtime_error(oss.str());
+    }
+}
+
+template <typename Scalar>
+void checkTransformOutput(const DenseMatrix<Scalar, Device::GPU>& output, Index point_count)
+{
+    if (output.rows() != point_count || output.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "transformPoints output dimension mismatch: output is "
+            << output.rows() << "x" << output.cols()
+            << ", expected " << point_count << "x3";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+template <typename Scalar>
+void checkCovarianceInputs(const DenseMatrix<Scalar, Device::GPU>& points)
+{
+    Index N = points.rows();
+    if (N < 2)
+    {
+        throw std::runtime_error("covarianceMatrix: need at least 2 points");
+    }
+    if (points.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "covarianceMatrix: points must be Nx3, got " << points.rows() << "x" << points.cols();
+        throw std::runtime_error(oss.str());
+    }
+}
+
+template <typename Scalar>
+void checkCovarianceOutput(const DenseMatrix<Scalar, Device::GPU>& output)
+{
+    if (output.rows() != 3 || output.cols() != 3)
+    {
+        std::ostringstream oss;
+        oss << "covarianceMatrix output dimension mismatch: output is "
+            << output.rows() << "x" << output.cols()
+            << ", expected 3x3";
+        throw std::runtime_error(oss.str());
+    }
+}
+
 } // anonymous namespace
 
 template <typename Scalar>
@@ -352,71 +412,113 @@ template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> transformPointsGpuImpl(const DenseMatrix<Scalar, Device::GPU>& T,
                                                           const DenseMatrix<Scalar, Device::GPU>& points)
 {
-    if (T.rows() != 4 || T.cols() != 4)
-    {
-        std::ostringstream oss;
-        oss << "transformPoints: T must be 4x4, got " << T.rows() << "x" << T.cols();
-        throw std::runtime_error(oss.str());
-    }
-    if (points.cols() != 3)
-    {
-        std::ostringstream oss;
-        oss << "transformPoints: points must be Nx3, got " << points.rows() << "x" << points.cols();
-        throw std::runtime_error(oss.str());
-    }
+    auto result = transformPointsAsync(T, points);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
+    return result;
+}
 
+template <typename Scalar>
+void transformPointsAsync(const DenseMatrix<Scalar, Device::GPU>& T,
+                          const DenseMatrix<Scalar, Device::GPU>& points,
+                          DenseMatrix<Scalar, Device::GPU>& output,
+                          cudaStream_t stream)
+{
+    checkTransformInputs(T, points);
     Index N = points.rows();
+    checkTransformOutput(output, N);
     if (N == 0)
     {
-        return DenseMatrix<Scalar, Device::GPU>(0, 3);
+        return;
     }
-
-    DenseMatrix<Scalar, Device::GPU> result(N, 3);
 
     constexpr int block_size = 256;
     int grid_size = checkedCudaGrid1D(N, block_size, "transformPoints");
-
-    transformPointsKernel<<<grid_size, block_size>>>(T.data(), points.data(), result.data(), N);
+    transformPointsKernel<<<grid_size, block_size, 0, stream>>>(T.data(), points.data(), output.data(), N);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+}
 
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> transformPointsAsync(const DenseMatrix<Scalar, Device::GPU>& T,
+                                                      const DenseMatrix<Scalar, Device::GPU>& points,
+                                                      cudaStream_t stream)
+{
+    checkTransformInputs(T, points);
+    DenseMatrix<Scalar, Device::GPU> result(points.rows(), 3);
+    transformPointsAsync(T, points, result, stream);
     return result;
+}
+
+template <typename Scalar>
+void transformPoints(const DenseMatrix<Scalar, Device::GPU>& T,
+                     const DenseMatrix<Scalar, Device::GPU>& points,
+                     DenseMatrix<Scalar, Device::GPU>& output,
+                     cudaStream_t stream)
+{
+    transformPointsAsync(T, points, output, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+}
+
+template <typename Scalar>
+void covarianceMatrixGpuAsyncImpl(const DenseMatrix<Scalar, Device::GPU>& points,
+                                  DenseMatrix<Scalar, Device::GPU>& output,
+                                  GpuCovarianceWorkspace<Scalar>& workspace,
+                                  cudaStream_t stream)
+{
+    checkCovarianceInputs(points);
+    checkCovarianceOutput(output);
+
+    Index N = points.rows();
+    constexpr int block_size = 256;
+    int block_count = checkedCudaGrid1D(N, block_size, "covarianceMatrix");
+
+    using Accum = CovarianceAccum<Scalar>;
+    workspace.reserveBlocks(block_count);
+    DenseMatrix<Accum, Device::GPU>& partial_mean = workspace.partialMean();
+    DenseMatrix<Accum, Device::GPU>& mean = workspace.mean();
+    DenseMatrix<Accum, Device::GPU>& partial_covariance = workspace.partialCovariance();
+
+    covarianceMeanPartialKernel<Scalar, Accum><<<block_count, block_size, 0, stream>>>(
+        points.data(), partial_mean.data(), N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceMeanFinalizeKernel<Accum><<<1, block_size, 0, stream>>>(
+        partial_mean.data(), mean.data(), block_count, N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceCenteredPartialKernel<Scalar, Accum><<<block_count, block_size, 0, stream>>>(
+        points.data(), mean.data(), partial_covariance.data(), N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    covarianceCenteredFinalizeKernel<Scalar, Accum><<<1, block_size, 0, stream>>>(
+        partial_covariance.data(), output.data(), block_count, N);
+    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scalar, Device::GPU>& points)
 {
-    Index N = points.rows();
-    if (N < 2)
-    {
-        throw std::runtime_error("covarianceMatrix: need at least 2 points");
-    }
-    if (points.cols() != 3)
-    {
-        std::ostringstream oss;
-        oss << "covarianceMatrix: points must be Nx3, got " << points.rows() << "x" << points.cols();
-        throw std::runtime_error(oss.str());
-    }
+    checkCovarianceInputs(points);
+    DenseMatrix<Scalar, Device::GPU> output(3, 3);
+    GpuCovarianceWorkspace<Scalar> workspace;
+    covarianceMatrixGpuAsyncImpl(points, output, workspace, nullptr);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
+    return output;
+}
 
-    constexpr int block_size = 256;
-    int block_count = checkedCudaGrid1D(N, block_size, "covarianceMatrix");
+template <typename Scalar>
+void covarianceMatrix(const DenseMatrix<Scalar, Device::GPU>& points,
+                      DenseMatrix<Scalar, Device::GPU>& output,
+                      cudaStream_t stream)
+{
+    GpuCovarianceWorkspace<Scalar> workspace;
+    covarianceMatrixGpuAsyncImpl(points, output, workspace, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+}
 
-    using Accum = CovarianceAccum<Scalar>;
-    DenseMatrix<Accum, Device::GPU> partial_mean(block_count, 3);
-    DenseMatrix<Accum, Device::GPU> mean(1, 3);
-    DenseMatrix<Accum, Device::GPU> partial_covariance(block_count, 6);
-    DenseMatrix<Scalar, Device::GPU> C_gpu(3, 3);
-
-    covarianceMeanPartialKernel<Scalar, Accum><<<block_count, block_size>>>(points.data(), partial_mean.data(), N);
-    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    covarianceMeanFinalizeKernel<Accum><<<1, block_size>>>(partial_mean.data(), mean.data(), block_count, N);
-    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    covarianceCenteredPartialKernel<Scalar, Accum><<<block_count, block_size>>>(
-        points.data(), mean.data(), partial_covariance.data(), N);
-    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    covarianceCenteredFinalizeKernel<Scalar, Accum><<<1, block_size>>>(
-        partial_covariance.data(), C_gpu.data(), block_count, N);
-    PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    return C_gpu;
+template <typename Scalar>
+void covarianceMatrixAsync(const DenseMatrix<Scalar, Device::GPU>& points,
+                           DenseMatrix<Scalar, Device::GPU>& output,
+                           GpuCovarianceWorkspace<Scalar>& workspace,
+                           cudaStream_t stream)
+{
+    covarianceMatrixGpuAsyncImpl(points, output, workspace, stream);
 }
 
 // ---- Explicit specializations for GPU ----
@@ -474,6 +576,38 @@ DenseMatrix<double, Device::GPU> transformPoints<double, Device::GPU>(const Dens
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
+template DenseMatrix<float, Device::GPU> transformPointsAsync(const DenseMatrix<float, Device::GPU>&,
+                                                              const DenseMatrix<float, Device::GPU>&,
+                                                              cudaStream_t);
+
+template void transformPointsAsync(const DenseMatrix<float, Device::GPU>&,
+                                   const DenseMatrix<float, Device::GPU>&,
+                                   DenseMatrix<float, Device::GPU>&,
+                                   cudaStream_t);
+
+template void transformPoints(const DenseMatrix<float, Device::GPU>&,
+                              const DenseMatrix<float, Device::GPU>&,
+                              DenseMatrix<float, Device::GPU>&,
+                              cudaStream_t);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
+template DenseMatrix<double, Device::GPU> transformPointsAsync(const DenseMatrix<double, Device::GPU>&,
+                                                               const DenseMatrix<double, Device::GPU>&,
+                                                               cudaStream_t);
+
+template void transformPointsAsync(const DenseMatrix<double, Device::GPU>&,
+                                   const DenseMatrix<double, Device::GPU>&,
+                                   DenseMatrix<double, Device::GPU>&,
+                                   cudaStream_t);
+
+template void transformPoints(const DenseMatrix<double, Device::GPU>&,
+                              const DenseMatrix<double, Device::GPU>&,
+                              DenseMatrix<double, Device::GPU>&,
+                              cudaStream_t);
+#endif
+
+#ifdef PLAMATRIX_USE_FLOAT
 template <>
 DenseMatrix<float, Device::GPU> covarianceMatrix<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& points)
 {
@@ -487,6 +621,28 @@ DenseMatrix<double, Device::GPU> covarianceMatrix<double, Device::GPU>(const Den
 {
     return covarianceMatrixGpuImpl(points);
 }
+#endif
+
+#ifdef PLAMATRIX_USE_FLOAT
+template void covarianceMatrix(const DenseMatrix<float, Device::GPU>&,
+                               DenseMatrix<float, Device::GPU>&,
+                               cudaStream_t);
+
+template void covarianceMatrixAsync(const DenseMatrix<float, Device::GPU>&,
+                                    DenseMatrix<float, Device::GPU>&,
+                                    GpuCovarianceWorkspace<float>&,
+                                    cudaStream_t);
+#endif
+
+#ifdef PLAMATRIX_USE_DOUBLE
+template void covarianceMatrix(const DenseMatrix<double, Device::GPU>&,
+                               DenseMatrix<double, Device::GPU>&,
+                               cudaStream_t);
+
+template void covarianceMatrixAsync(const DenseMatrix<double, Device::GPU>&,
+                                    DenseMatrix<double, Device::GPU>&,
+                                    GpuCovarianceWorkspace<double>&,
+                                    cudaStream_t);
 #endif
 
 } // namespace plamatrix

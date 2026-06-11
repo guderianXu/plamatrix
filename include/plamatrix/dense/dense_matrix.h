@@ -29,19 +29,17 @@ public:
     DenseMatrix(Index rows, Index cols)
         : DeviceMatrix<Scalar, Dev>(rows, cols)
     {
-        if (this->size() == 0)
-        {
-            return;
-        }
-        if constexpr (Dev == Device::CPU)
-        {
-            std::memset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar));
-        }
-        else
-        {
-            PLAMATRIX_CHECK_CUDA(
-                cudaMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar)));
-        }
+        zeroInitialize();
+    }
+
+    /// Construct a CPU matrix backed by pinned/page-locked host memory.
+    /// @param rows  Number of rows
+    /// @param cols  Number of columns
+    /// @return  CPU matrix suitable for asynchronous CUDA transfers
+    static DenseMatrix pinned(Index rows, Index cols)
+    {
+        static_assert(Dev == Device::CPU, "pinned() is only available for CPU matrices");
+        return DenseMatrix(rows, cols, detail::HostAllocationKind::Pinned);
     }
 
     /// Move constructor (defaulted).
@@ -52,6 +50,19 @@ public:
     /// @param other  Source matrix
     /// @return  Reference to this matrix
     DenseMatrix& operator=(DenseMatrix&& other) noexcept = default;
+
+    /// @return true if this CPU matrix uses pinned/page-locked host memory.
+    bool isPinnedHost() const
+    {
+        if constexpr (Dev == Device::CPU)
+        {
+            return this->_host_allocation_kind == detail::HostAllocationKind::Pinned;
+        }
+        else
+        {
+            return false;
+        }
+    }
 
     /// Element access — CPU only, column-major layout: data[row + col * rows].
     /// @param row  Row index (0-based)
@@ -154,6 +165,33 @@ public:
         return result;
     }
 
+    /// Asynchronously transfer a GPU matrix to CPU on the given CUDA stream.
+    /// @param stream  CUDA stream used for cudaMemcpyAsync
+    /// @return  CPU copy of this matrix; caller must synchronize stream before reading it
+    DenseMatrix<Scalar, Device::CPU> toCpuAsync(cudaStream_t stream = nullptr) const
+    {
+        static_assert(Dev == Device::GPU, "toCpuAsync() is only available on GPU matrices");
+        DenseMatrix<Scalar, Device::CPU> result(this->_rows, this->_cols);
+        copyToCpuAsync(result, stream);
+        return result;
+    }
+
+    /// Asynchronously transfer this GPU matrix into an existing CPU matrix.
+    /// @param output  CPU output matrix with the same dimensions as this matrix
+    /// @param stream  CUDA stream used for cudaMemcpyAsync
+    void copyToCpuAsync(DenseMatrix<Scalar, Device::CPU>& output, cudaStream_t stream = nullptr) const
+    {
+        static_assert(Dev == Device::GPU, "copyToCpuAsync() is only available on GPU matrices");
+        checkTransferOutputDimensions("copyToCpuAsync", output.rows(), output.cols());
+        if (this->size() == 0)
+        {
+            return;
+        }
+        PLAMATRIX_CHECK_CUDA(
+            cudaMemcpyAsync(output.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
+                            cudaMemcpyDeviceToHost, stream));
+    }
+
     /// Transfer a CPU matrix to GPU.
     /// @return  GPU copy of this matrix
     DenseMatrix<Scalar, Device::GPU> toGpu() const
@@ -168,6 +206,33 @@ public:
             cudaMemcpy(result.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
                        cudaMemcpyHostToDevice));
         return result;
+    }
+
+    /// Asynchronously transfer a CPU matrix to GPU on the given CUDA stream.
+    /// @param stream  CUDA stream used for cudaMemcpyAsync
+    /// @return  GPU copy of this matrix; caller must synchronize stream before reading it on another stream
+    DenseMatrix<Scalar, Device::GPU> toGpuAsync(cudaStream_t stream = nullptr) const
+    {
+        static_assert(Dev == Device::CPU, "toGpuAsync() is only available on CPU matrices");
+        DenseMatrix<Scalar, Device::GPU> result(this->_rows, this->_cols);
+        copyToGpuAsync(result, stream);
+        return result;
+    }
+
+    /// Asynchronously transfer this CPU matrix into an existing GPU matrix.
+    /// @param output  GPU output matrix with the same dimensions as this matrix
+    /// @param stream  CUDA stream used for cudaMemcpyAsync
+    void copyToGpuAsync(DenseMatrix<Scalar, Device::GPU>& output, cudaStream_t stream = nullptr) const
+    {
+        static_assert(Dev == Device::CPU, "copyToGpuAsync() is only available on CPU matrices");
+        checkTransferOutputDimensions("copyToGpuAsync", output.rows(), output.cols());
+        if (this->size() == 0)
+        {
+            return;
+        }
+        PLAMATRIX_CHECK_CUDA(
+            cudaMemcpyAsync(output.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
+                            cudaMemcpyHostToDevice, stream));
     }
 
     /// Compute the transpose of this matrix.
@@ -198,6 +263,29 @@ public:
     }
 
 private:
+    DenseMatrix(Index rows, Index cols, detail::HostAllocationKind host_allocation_kind)
+        : DeviceMatrix<Scalar, Dev>(rows, cols, host_allocation_kind)
+    {
+        zeroInitialize();
+    }
+
+    void zeroInitialize()
+    {
+        if (this->size() == 0)
+        {
+            return;
+        }
+        if constexpr (Dev == Device::CPU)
+        {
+            std::memset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar));
+        }
+        else
+        {
+            PLAMATRIX_CHECK_CUDA(
+                cudaMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar)));
+        }
+    }
+
     Index checkedOffset(Index row, Index col) const
     {
         if (row < 0 || row >= this->_rows || col < 0 || col >= this->_cols)
@@ -208,6 +296,17 @@ private:
             throw std::out_of_range(oss.str());
         }
         return row + col * this->_rows;
+    }
+
+    void checkTransferOutputDimensions(const char* op, Index rows, Index cols) const
+    {
+        if (rows != this->_rows || cols != this->_cols)
+        {
+            std::ostringstream oss;
+            oss << "DenseMatrix::" << op << " output dimension mismatch: output is "
+                << rows << "x" << cols << ", expected " << this->_rows << "x" << this->_cols;
+            throw std::runtime_error(oss.str());
+        }
     }
 
 #ifdef PLAMATRIX_NO_CUDA

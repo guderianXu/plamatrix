@@ -52,14 +52,14 @@ void randomFill(FloatMatrix& mat)
 
 FloatMatrix makeRandom(Index rows, Index cols)
 {
-    FloatMatrix mat(rows, cols);
+    auto mat = FloatMatrix::pinned(rows, cols);
     randomFill(mat);
     return mat;
 }
 
 FloatMatrix makeRandomSymmetric(Index n)
 {
-    FloatMatrix mat(n, n);
+    auto mat = FloatMatrix::pinned(n, n);
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     for (Index j = 0; j < n; ++j)
@@ -380,13 +380,14 @@ void runCovarianceCuda(CaseResult& r, Index N)
     r.time_transfer_ms = measureTransferOne(pts_cpu);
 
     auto pts_gpu = pts_cpu.toGpu();
+    GpuFloatMatrix C_gpu(3, 3);
+    GpuCovarianceWorkspace<float> workspace;
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
     {
-        auto C = covarianceMatrix<float, Device::GPU>(pts_gpu);
-        PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
-        doNotOptimize(C.data());
+        covarianceMatrixAsync(pts_gpu, C_gpu, workspace, stream);
+        doNotOptimize(C_gpu.data());
     });
 }
 
@@ -421,12 +422,12 @@ void runPointTransformCuda(CaseResult& r, Index N)
 
     auto pts_gpu = pts_cpu.toGpu();
     auto T_gpu = T_cpu.toGpu();
+    GpuFloatMatrix result(N, 3);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
     {
-        auto result = transformPoints<float, Device::GPU>(T_gpu, pts_gpu);
-        PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
+        transformPointsAsync(T_gpu, pts_gpu, result, stream);
         doNotOptimize(result.data());
     });
 }

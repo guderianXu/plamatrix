@@ -54,16 +54,66 @@ auto At = A.transpose();  // 返回新矩阵，维度交换 (cols×rows)
 - CPU: 嵌套循环
 - GPU: 2D CUDA kernel
 
-CPU-only 构建 (`PLAMATRIX_WITH_CUDA=OFF`) 下仍可构造 `Device::GPU` 矩阵并做显式传输测试，但 GPU 算法入口（非零 `fill()`、GPU `transpose()`、GPU `add/sub/gemm` 等）会抛出明确异常或不可用；实际业务应使用 `Device::CPU`，需要 GPU 算法时启用 CUDA 构建。
+CPU-only 构建 (`PLAMATRIX_WITH_CUDA=OFF`) 下仍可构造 `Device::GPU` 矩阵并做显式传输测试，
+但 GPU 算法入口（非零 `fill()`、GPU `transpose()`、GPU `add/sub/gemm` 等）
+会抛出明确异常或不可用；
+实际业务应使用 `Device::CPU`，需要 GPU 算法时启用 CUDA 构建。
 
 ## 设备传输
 
 ```cpp
 auto A_gpu = A.toGpu();  // CPU → GPU (cudaMemcpy HostToDevice)
 auto A_cpu = A_gpu.toCpu();  // GPU → CPU (cudaMemcpy DeviceToHost)
+
+auto B_gpu = A.toGpuAsync(stream);  // CPU → GPU (cudaMemcpyAsync)
+auto B_cpu = B_gpu.toCpuAsync(stream);  // GPU → CPU (cudaMemcpyAsync)
 ```
 
 传输是一次性的、显式的、昂贵的。库不会隐式搬移数据。
+
+普通 CPU 矩阵使用 pageable host memory。需要让 `cudaMemcpyAsync` 满足真正异步传输条件时，
+使用 pinned/page-locked CPU 矩阵：
+
+```cpp
+auto pinned = DenseMatrix<float, Device::CPU>::pinned(rows, cols);
+bool is_pinned = pinned.isPinnedHost(); // true
+```
+
+异步传输返回后不会主动同步；调用方必须在读取 CPU 结果或跨 stream 使用 GPU 结果前
+等待对应 stream。
+热循环里可以复用输出矩阵：
+
+```cpp
+auto host = DenseMatrix<float, Device::CPU>::pinned(A.rows(), A.cols());
+DenseMatrix<float, Device::GPU> gpu(A.rows(), A.cols());
+auto back = DenseMatrix<float, Device::CPU>::pinned(A.rows(), A.cols());
+
+host.copyToGpuAsync(gpu, stream);
+gpu.copyToCpuAsync(back, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+```
+
+如果 host 指针不是 pinned memory，`cudaMemcpyAsync` 仍可能在驱动内部阻塞。
+异步传输 API 仍提供明确的 stream ordering 和输出复用入口。
+
+## GPU 内存池
+
+默认 GPU 分配继续直接使用 `cudaMalloc/cudaFree`。需要减少同尺寸矩阵反复分配成本时，
+可显式开启进程内 GPU memory pool：
+
+```cpp
+GpuAllocator<float>::setMemoryPoolEnabled(true);
+
+{
+    DenseMatrix<float, Device::GPU> tmp(rows, cols);
+} // tmp 的 block 进入 pool，后续同字节数分配可复用
+
+GpuAllocator<float>::releaseMemoryPool();
+GpuAllocator<float>::setMemoryPoolEnabled(false);
+```
+
+内存池按字节数缓存空闲 block，`releaseMemoryPool()` 会释放当前缓存。
+异步 kernel 或异步传输仍要求调用方保证相关矩阵在 stream 完成前保持有效。
 
 ## GPU 异步计算和输出复用
 
@@ -85,7 +135,8 @@ addAsync(A_gpu, A_gpu, D_gpu, stream);
 PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 ```
 
-`gemmAsync`、`addAsync`、`subAsync` 只提交 GPU 工作，不主动同步；调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。
+`gemmAsync`、`addAsync`、`subAsync` 只提交 GPU 工作，不主动同步；
+调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。
 
 ## 基类方法
 

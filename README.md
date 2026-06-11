@@ -94,7 +94,8 @@ target_link_libraries(my_project plamatrix::plamatrix)
 ./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
 ```
 
-CUDA 模式下 GEMM/add/sub 的计算时间使用 CUDA event 计时，并复用输出矩阵；输入传输时间仍单独记录。
+CUDA 模式下 GEMM/add/sub 的计算时间使用 CUDA event 计时，并复用输出矩阵；
+输入传输时间使用 pinned host buffer，仍单独记录。
 
 | 档位 | 矩阵尺寸 |
 |------|----------|
@@ -141,12 +142,30 @@ auto R = rotationMatrix(axis, angle);    // Rodrigues 旋转矩阵
 auto T = rigidTransform(R, translation); // 4×4 刚体变换
 auto pts_t = transformPoints(T, points); // 批量点变换
 auto cov = covarianceMatrix(points);     // 协方差矩阵
+
+// GPU 点云热循环可复用输出矩阵并异步提交
+DenseMatrix<float, Device::GPU> pts_out(pts_gpu.rows(), 3);
+DenseMatrix<float, Device::GPU> cov_out(3, 3);
+GpuCovarianceWorkspace<float> cov_workspace;
+transformPointsAsync(T_gpu, pts_gpu, pts_out, stream);
+covarianceMatrixAsync(pts_gpu, cov_out, cov_workspace, stream);
 ```
 
 ### 设备传输
 ```cpp
 auto A_gpu = A_cpu.toGpu();  // CPU → GPU (触发 cudaMemcpy)
 auto A_cpu = A_gpu.toCpu();  // GPU → CPU (触发 cudaMemcpy)
+auto pinned = DenseMatrix<float, Device::CPU>::pinned(A_cpu.rows(), A_cpu.cols());
+auto B_gpu = pinned.toGpuAsync(stream); // 异步传输，调用方负责同步 stream
+```
+
+高频 GPU 临时矩阵可显式开启内存池，减少同尺寸 `DenseMatrix<Device::GPU>` 反复分配成本：
+
+```cpp
+GpuAllocator<float>::setMemoryPoolEnabled(true);
+// ... GPU pipeline / benchmark ...
+GpuAllocator<float>::releaseMemoryPool();
+GpuAllocator<float>::setMemoryPoolEnabled(false);
 ```
 
 ## 文档

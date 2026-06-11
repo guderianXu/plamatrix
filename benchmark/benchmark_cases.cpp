@@ -10,6 +10,7 @@
 
 #include <omp.h>
 
+#include "plamatrix/core/allocator.h"
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/dense/dense_ops.h"
 #include "plamatrix/ops/gemm.h"
@@ -136,6 +137,44 @@ void appendResultIfRan(BenchmarkReport& report, CaseResult&& r)
         std::cerr << "  " << r.name << " (skipped — no selected backend available at this size)" << std::endl;
     }
 }
+
+#ifdef PLAMATRIX_WITH_CUDA
+class GpuMemoryPoolBenchmarkGuard
+{
+public:
+    explicit GpuMemoryPoolBenchmarkGuard(bool enabled)
+        : _enabled(enabled)
+    {
+        if (_enabled)
+        {
+            GpuAllocator<float>::releaseMemoryPool();
+            GpuAllocator<float>::setMemoryPoolEnabled(true);
+        }
+    }
+
+    ~GpuMemoryPoolBenchmarkGuard()
+    {
+        if (_enabled)
+        {
+            static_cast<void>(cudaDeviceSynchronize());
+            try
+            {
+                GpuAllocator<float>::releaseMemoryPool();
+            }
+            catch (...)
+            {
+            }
+            GpuAllocator<float>::setMemoryPoolEnabled(false);
+        }
+    }
+
+    GpuMemoryPoolBenchmarkGuard(const GpuMemoryPoolBenchmarkGuard&) = delete;
+    GpuMemoryPoolBenchmarkGuard& operator=(const GpuMemoryPoolBenchmarkGuard&) = delete;
+
+private:
+    bool _enabled;
+};
+#endif
 
 } // anonymous namespace
 
@@ -448,6 +487,10 @@ void runAllCases(const std::vector<Index>& sizes,
                  BenchmarkReport& report,
                  const std::vector<std::string>& case_filter)
 {
+#ifdef PLAMATRIX_WITH_CUDA
+    GpuMemoryPoolBenchmarkGuard gpu_pool_guard(cuda);
+#endif
+
     for (Index N : sizes)
     {
         std::cerr << "--- N=" << N << " ---" << std::endl;

@@ -14,6 +14,20 @@ TEST(DenseMatrix, construction_Cpu)
     EXPECT_NE(mat.data(), nullptr);
 }
 
+TEST(DenseMatrix, construction_PinnedCpu)
+{
+    auto mat = DenseMatrix<float, Device::CPU>::pinned(3, 4);
+    EXPECT_EQ(mat.rows(), 3);
+    EXPECT_EQ(mat.cols(), 4);
+    EXPECT_EQ(mat.size(), 12);
+    EXPECT_EQ(mat.device(), Device::CPU);
+    EXPECT_TRUE(mat.isPinnedHost());
+    EXPECT_NE(mat.data(), nullptr);
+
+    mat(0, 0) = 42.0f;
+    EXPECT_FLOAT_EQ(mat(0, 0), 42.0f);
+}
+
 TEST(DenseMatrix, construction_Gpu)
 {
     DenseMatrix<float, Device::GPU> mat(3, 4);
@@ -72,6 +86,56 @@ TEST(DenseMatrix, transpose_ZeroSizedGpu)
     EXPECT_EQ(transposed.cols(), 0);
     EXPECT_EQ(transposed.size(), 0);
     EXPECT_EQ(transposed.data(), nullptr);
+}
+
+TEST(DenseMatrix, transferAsync_RoundTripsOnExplicitStream)
+{
+    auto cpu = DenseMatrix<float, Device::CPU>::pinned(2, 2);
+    cpu(0, 0) = 1.0f;
+    cpu(1, 0) = 2.0f;
+    cpu(0, 1) = 3.0f;
+    cpu(1, 1) = 4.0f;
+
+    cudaStream_t stream = nullptr;
+    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+
+    auto gpu = cpu.toGpuAsync(stream);
+    auto back = DenseMatrix<float, Device::CPU>::pinned(2, 2);
+    gpu.copyToCpuAsync(back, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+
+    EXPECT_TRUE(back.isPinnedHost());
+    EXPECT_FLOAT_EQ(back(0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(back(1, 0), 2.0f);
+    EXPECT_FLOAT_EQ(back(0, 1), 3.0f);
+    EXPECT_FLOAT_EQ(back(1, 1), 4.0f);
+}
+
+TEST(DenseMatrix, transferAsync_RejectsOutputDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> cpu(2, 2);
+    DenseMatrix<float, Device::GPU> gpu(2, 2);
+    DenseMatrix<float, Device::GPU> wrong_gpu(2, 3);
+    DenseMatrix<float, Device::CPU> wrong_cpu(3, 2);
+
+    EXPECT_THROW(cpu.copyToGpuAsync(wrong_gpu), std::runtime_error);
+    EXPECT_THROW(gpu.copyToCpuAsync(wrong_cpu), std::runtime_error);
+}
+
+TEST(DenseMatrix, fill_NonZeroGpuIntMatrix)
+{
+    DenseMatrix<int, Device::GPU> gpu(2, 3);
+    gpu.fill(7);
+
+    const auto cpu = gpu.toCpu();
+    for (Index col = 0; col < cpu.cols(); ++col)
+    {
+        for (Index row = 0; row < cpu.rows(); ++row)
+        {
+            EXPECT_EQ(cpu(row, col), 7);
+        }
+    }
 }
 #endif
 

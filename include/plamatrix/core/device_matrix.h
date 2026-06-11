@@ -10,6 +10,17 @@
 namespace plamatrix
 {
 
+namespace detail
+{
+
+enum class HostAllocationKind
+{
+    Pageable,
+    Pinned
+};
+
+} // namespace detail
+
 template <typename Scalar, Device Dev>
 class DeviceMatrix
 {
@@ -23,6 +34,7 @@ public:
         : _rows(rows)
         , _cols(cols)
         , _data(nullptr)
+        , _host_allocation_kind(detail::HostAllocationKind::Pageable)
     {
         allocate(checkedElementCount(rows, cols));
     }
@@ -43,10 +55,12 @@ public:
         : _rows(other._rows)
         , _cols(other._cols)
         , _data(other._data)
+        , _host_allocation_kind(other._host_allocation_kind)
     {
         other._rows = 0;
         other._cols = 0;
         other._data = nullptr;
+        other._host_allocation_kind = detail::HostAllocationKind::Pageable;
     }
 
     /// Move assignment. Releases current data and transfers ownership from source.
@@ -60,9 +74,11 @@ public:
             _rows = other._rows;
             _cols = other._cols;
             _data = other._data;
+            _host_allocation_kind = other._host_allocation_kind;
             other._rows = 0;
             other._cols = 0;
             other._data = nullptr;
+            other._host_allocation_kind = detail::HostAllocationKind::Pageable;
         }
         return *this;
     }
@@ -86,6 +102,15 @@ public:
     static constexpr Device device() { return Dev; }
 
 protected:
+    DeviceMatrix(Index rows, Index cols, detail::HostAllocationKind host_allocation_kind)
+        : _rows(rows)
+        , _cols(cols)
+        , _data(nullptr)
+        , _host_allocation_kind(host_allocation_kind)
+    {
+        allocate(checkedElementCount(rows, cols));
+    }
+
     /// Allocate memory for `count` elements using the device-specific allocator.
     /// @param count  Number of elements to allocate
     static std::size_t checkedElementCount(Index rows, Index cols)
@@ -114,7 +139,14 @@ protected:
         }
         if constexpr (Dev == Device::CPU)
         {
-            _data = CpuAllocator<Scalar>::allocate(count);
+            if (_host_allocation_kind == detail::HostAllocationKind::Pinned)
+            {
+                _data = PinnedCpuAllocator<Scalar>::allocate(count);
+            }
+            else
+            {
+                _data = CpuAllocator<Scalar>::allocate(count);
+            }
         }
         else
         {
@@ -129,11 +161,18 @@ protected:
         {
             if constexpr (Dev == Device::CPU)
             {
-                CpuAllocator<Scalar>::deallocateNoThrow(_data);
+                if (_host_allocation_kind == detail::HostAllocationKind::Pinned)
+                {
+                    PinnedCpuAllocator<Scalar>::deallocateNoThrow(_data);
+                }
+                else
+                {
+                    CpuAllocator<Scalar>::deallocateNoThrow(_data);
+                }
             }
             else
             {
-                GpuAllocator<Scalar>::deallocateNoThrow(_data);
+                GpuAllocator<Scalar>::deallocateNoThrow(_data, static_cast<std::size_t>(size()));
             }
             _data = nullptr;
         }
@@ -142,6 +181,7 @@ protected:
     Index _rows = 0;
     Index _cols = 0;
     Scalar* _data = nullptr;
+    detail::HostAllocationKind _host_allocation_kind = detail::HostAllocationKind::Pageable;
 };
 
 } // namespace plamatrix

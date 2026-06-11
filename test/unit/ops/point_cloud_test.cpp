@@ -225,6 +225,105 @@ TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_WithLargeOffset)
         }
     }
 }
+
+TEST(PointCloud, covarianceMatrix_GpuOutputReuseAndAsyncWorkspace)
+{
+    DenseMatrix<float, Device::CPU> points(4, 3);
+    points.setValue(0, 0, 1.0f);
+    points.setValue(0, 1, 0.0f);
+    points.setValue(0, 2, 0.0f);
+    points.setValue(1, 0, 0.0f);
+    points.setValue(1, 1, 1.0f);
+    points.setValue(1, 2, 0.0f);
+    points.setValue(2, 0, 0.0f);
+    points.setValue(2, 1, 0.0f);
+    points.setValue(2, 2, 1.0f);
+    points.setValue(3, 0, 0.0f);
+    points.setValue(3, 1, 0.0f);
+    points.setValue(3, 2, 0.0f);
+
+    auto expected = covarianceMatrix<float, Device::CPU>(points);
+    auto points_gpu = points.toGpu();
+    DenseMatrix<float, Device::GPU> sync_output(3, 3);
+    DenseMatrix<float, Device::GPU> async_output(3, 3);
+    GpuCovarianceWorkspace<float> workspace;
+
+    covarianceMatrix(points_gpu, sync_output);
+
+    cudaStream_t stream = nullptr;
+    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+    covarianceMatrixAsync(points_gpu, async_output, workspace, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+
+    auto sync_cpu = sync_output.toCpu();
+    auto async_cpu = async_output.toCpu();
+    for (Index j = 0; j < 3; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            EXPECT_NEAR(sync_cpu(i, j), expected(i, j), 1e-6f);
+            EXPECT_NEAR(async_cpu(i, j), expected(i, j), 1e-6f);
+        }
+    }
+}
+
+TEST(PointCloud, covarianceMatrix_GpuWorkspaceHandlesAsyncGrowth)
+{
+    DenseMatrix<float, Device::CPU> small_points(4, 3);
+    DenseMatrix<float, Device::CPU> large_points(300, 3);
+
+    for (Index i = 0; i < small_points.rows(); ++i)
+    {
+        small_points.setValue(i, 0, static_cast<float>(i));
+        small_points.setValue(i, 1, static_cast<float>(i * 2));
+        small_points.setValue(i, 2, static_cast<float>(i % 2));
+    }
+    for (Index i = 0; i < large_points.rows(); ++i)
+    {
+        large_points.setValue(i, 0, static_cast<float>(i % 17) * 0.25f);
+        large_points.setValue(i, 1, static_cast<float>(i % 11) * 0.5f);
+        large_points.setValue(i, 2, static_cast<float>(i % 7) * 0.75f);
+    }
+
+    auto small_expected = covarianceMatrix<float, Device::CPU>(small_points);
+    auto large_expected = covarianceMatrix<float, Device::CPU>(large_points);
+    auto small_gpu = small_points.toGpu();
+    auto large_gpu = large_points.toGpu();
+
+    DenseMatrix<float, Device::GPU> small_output(3, 3);
+    DenseMatrix<float, Device::GPU> large_output(3, 3);
+    GpuCovarianceWorkspace<float> workspace;
+
+    cudaStream_t stream = nullptr;
+    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+    covarianceMatrixAsync(small_gpu, small_output, workspace, stream);
+    EXPECT_EQ(workspace.blockCapacity(), 1);
+    covarianceMatrixAsync(large_gpu, large_output, workspace, stream);
+    EXPECT_EQ(workspace.blockCapacity(), 2);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+
+    auto small_cpu = small_output.toCpu();
+    auto large_cpu = large_output.toCpu();
+    for (Index j = 0; j < 3; ++j)
+    {
+        for (Index i = 0; i < 3; ++i)
+        {
+            EXPECT_NEAR(small_cpu(i, j), small_expected(i, j), 1e-6f);
+            EXPECT_NEAR(large_cpu(i, j), large_expected(i, j), 1e-5f);
+        }
+    }
+}
+
+TEST(PointCloud, covarianceMatrix_GpuRejectsOutputDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> points(4, 3);
+    auto points_gpu = points.toGpu();
+    DenseMatrix<float, Device::GPU> bad_output(3, 2);
+
+    EXPECT_THROW(covarianceMatrix(points_gpu, bad_output), std::runtime_error);
+}
 #endif
 
 // PointCloud: transformPoints_Cpu — 2 points, translate by (10,0,0), verify shifted
@@ -265,3 +364,66 @@ TEST(PointCloud, transformPoints_Cpu)
     EXPECT_NEAR(transformed(1, 1), 5.0, 1e-9);
     EXPECT_NEAR(transformed(1, 2), 6.0, 1e-9);
 }
+
+#ifdef PLAMATRIX_WITH_CUDA
+TEST(PointCloud, transformPoints_GpuOutputReuseAndAsync)
+{
+    DenseMatrix<float, Device::CPU> R(3, 3);
+    for (Index i = 0; i < 3; ++i)
+    {
+        R.setValue(i, i, 1.0f);
+    }
+
+    Vec3<float> t = {10.0f, 0.0f, 0.0f};
+    auto T_gpu = rigidTransform<float, Device::CPU>(R, t).toGpu();
+
+    DenseMatrix<float, Device::CPU> points(2, 3);
+    points.setValue(0, 0, 1.0f);
+    points.setValue(0, 1, 2.0f);
+    points.setValue(0, 2, 3.0f);
+    points.setValue(1, 0, 4.0f);
+    points.setValue(1, 1, 5.0f);
+    points.setValue(1, 2, 6.0f);
+    auto points_gpu = points.toGpu();
+
+    DenseMatrix<float, Device::GPU> sync_output(2, 3);
+    DenseMatrix<float, Device::GPU> async_output(2, 3);
+
+    transformPoints(T_gpu, points_gpu, sync_output);
+
+    cudaStream_t stream = nullptr;
+    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+    transformPointsAsync(T_gpu, points_gpu, async_output, stream);
+    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+
+    auto sync_cpu = sync_output.toCpu();
+    auto async_cpu = async_output.toCpu();
+
+    EXPECT_FLOAT_EQ(sync_cpu(0, 0), 11.0f);
+    EXPECT_FLOAT_EQ(sync_cpu(0, 1), 2.0f);
+    EXPECT_FLOAT_EQ(sync_cpu(0, 2), 3.0f);
+    EXPECT_FLOAT_EQ(sync_cpu(1, 0), 14.0f);
+    EXPECT_FLOAT_EQ(sync_cpu(1, 1), 5.0f);
+    EXPECT_FLOAT_EQ(sync_cpu(1, 2), 6.0f);
+    EXPECT_FLOAT_EQ(async_cpu(0, 0), 11.0f);
+    EXPECT_FLOAT_EQ(async_cpu(1, 0), 14.0f);
+}
+
+TEST(PointCloud, transformPoints_GpuRejectsOutputDimensionMismatch)
+{
+    DenseMatrix<float, Device::CPU> R(3, 3);
+    for (Index i = 0; i < 3; ++i)
+    {
+        R.setValue(i, i, 1.0f);
+    }
+
+    Vec3<float> t = {0.0f, 0.0f, 0.0f};
+    auto T_gpu = rigidTransform<float, Device::CPU>(R, t).toGpu();
+    DenseMatrix<float, Device::CPU> points(2, 3);
+    auto points_gpu = points.toGpu();
+    DenseMatrix<float, Device::GPU> bad_output(3, 3);
+
+    EXPECT_THROW(transformPoints(T_gpu, points_gpu, bad_output), std::runtime_error);
+}
+#endif
