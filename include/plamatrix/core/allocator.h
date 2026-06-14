@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
+
 #ifdef PLAMATRIX_NO_CUDA
 #include "plamatrix/core/no_cuda_stubs.h"
 #else
@@ -178,11 +182,19 @@ struct CpuAllocator
     {
         std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
         void* ptr = nullptr;
+#if defined(_MSC_VER)
+        ptr = _aligned_malloc(bytes, 32);
+        if (ptr == nullptr)
+        {
+            throw std::bad_alloc();
+        }
+#else
         int rc = posix_memalign(&ptr, 32, bytes);
         if (rc != 0)
         {
             throw std::bad_alloc();
         }
+#endif
         return static_cast<Scalar*>(ptr);
     }
 
@@ -190,12 +202,20 @@ struct CpuAllocator
     /// @param ptr  Pointer to free (nullptr is safe)
     static void deallocate(Scalar* ptr)
     {
+#if defined(_MSC_VER)
+        _aligned_free(ptr);
+#else
         std::free(ptr);
+#endif
     }
 
     static void deallocateNoThrow(Scalar* ptr) noexcept
     {
+#if defined(_MSC_VER)
+        _aligned_free(ptr);
+#else
         std::free(ptr);
+#endif
     }
 };
 
