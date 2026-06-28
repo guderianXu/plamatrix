@@ -2,8 +2,10 @@
 
 #include <plamatrix/dense/dense_matrix.h>
 #include <plamatrix/dense/dense_ops.h>
+#include <plamatrix/ops/decomposition.h>
 #include <plamatrix/ops/gemm.h>
 #include <plamatrix/ops/point_cloud.h>
+#include <plamatrix/ops/solver.h>
 
 using namespace plamatrix;
 
@@ -112,5 +114,18 @@ TEST(NoCudaStubs, gpuPointCloudAlgorithms_ThrowClearErrorsInsteadOfLinkingMissin
     EXPECT_THROW(covarianceMatrix(points), std::runtime_error);
     EXPECT_THROW(covarianceMatrix(points, covariance), std::runtime_error);
     EXPECT_THROW(covarianceMatrixAsync(points, covariance, workspace), std::runtime_error);
+}
+#endif
+
+#ifdef PLAMATRIX_NO_GPU
+TEST(NoBackendStubs, decompositionAndSolverAlgorithms_ThrowClearErrors)
+{
+    DenseMatrix<float, Device::GPU> A(2, 2);
+    DenseMatrix<float, Device::GPU> B(2, 1);
+
+    EXPECT_THROW(svd(A), std::runtime_error);
+    EXPECT_THROW(qr(A), std::runtime_error);
+    EXPECT_THROW(eigh(A), std::runtime_error);
+    EXPECT_THROW(solve(A, B), std::runtime_error);
 }
 #endif

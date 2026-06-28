@@ -9,6 +9,7 @@
 
 #include "benchmark/benchmark_cases.h"
 #include "benchmark/report_writer.h"
+#include "plamatrix/core/gpu_backend.h"
 #include "plamatrix/core/types.h"
 
 namespace
@@ -19,7 +20,7 @@ void printUsage(const char* prog)
 {
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
-              << "  --mode all|cpu|cuda     Benchmark mode (default: all)\n"
+              << "  --mode all|cpu|gpu|cuda Benchmark mode (default: all; cuda is a gpu alias)\n"
               << "  --size tiny|smoke|small|medium|large  Size preset (default: medium)\n"
               << "  --case LIST             Comma-separated cases to run (default: all)\n"
               << "  --output FILE           Output report path (default: benchmark_report.md)\n"
@@ -154,42 +155,50 @@ int main(int argc, char** argv)
     // Validate mode
     bool run_serial = false;
     bool run_omp = false;
-    bool run_cuda = false;
+    bool run_gpu = false;
 
     if (mode_str == "all")
     {
         run_serial = true;
         run_omp = true;
-        run_cuda = true;
+        run_gpu = true;
     }
     else if (mode_str == "cpu")
     {
         run_serial = true;
         run_omp = true;
-        run_cuda = false;
+        run_gpu = false;
     }
-    else if (mode_str == "cuda")
+    else if (mode_str == "gpu" || mode_str == "cuda")
     {
         run_serial = false;
         run_omp = false;
-        run_cuda = true;
+        run_gpu = true;
     }
     else
     {
-        std::cerr << "Unknown mode: " << mode_str << ". Use all, cpu, or cuda.\n";
+        std::cerr << "Unknown mode: " << mode_str << ". Use all, cpu, gpu, or cuda.\n";
         return 1;
     }
 
-#ifndef PLAMATRIX_WITH_CUDA
-    if (run_cuda)
+#ifdef PLAMATRIX_NO_GPU
+    if (run_gpu)
     {
         if (!run_serial && !run_omp)
         {
-            std::cerr << "CUDA benchmark mode requested, but this build was compiled with PLAMATRIX_WITH_CUDA=OFF.\n";
+            std::cerr << "GPU benchmark mode requested, but this build has no GPU backend compiled in.\n";
             return 1;
         }
-        std::cerr << "CUDA support is not compiled in; CUDA benchmark backend will be skipped.\n";
-        run_cuda = false;
+        std::cerr << "No GPU backend is compiled in; GPU benchmark backend will be skipped.\n";
+        run_gpu = false;
+    }
+#endif
+
+#ifndef PLAMATRIX_WITH_OPENMP
+    if (run_omp)
+    {
+        std::cerr << "OpenMP support is not compiled in; OMP benchmark backend will be skipped.\n";
+        run_omp = false;
     }
 #endif
 
@@ -235,12 +244,13 @@ int main(int argc, char** argv)
 
     std::cerr << "Environment:\n"
               << "  CPU: " << report.cpu_model << " (" << report.cpu_cores << " cores)\n"
+              << "  GPU backend: " << plamatrix::gpuBackendName() << "\n"
               << "  GPU: " << report.gpu_model << "\n"
               << "  CUDA: " << report.cuda_version << "\n"
               << "  OS: " << report.os_info << "\n" << std::endl;
 
     std::cerr << "Running benchmarks..." << std::endl;
-    plamatrix::runAllCases(sizes, run_serial, run_omp, run_cuda, report, case_filter);
+    plamatrix::runAllCases(sizes, run_serial, run_omp, run_gpu, report, case_filter);
 
     std::cerr << "Completed " << report.results.size() << " benchmark results." << std::endl;
     if (report.results.empty())

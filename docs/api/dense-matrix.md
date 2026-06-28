@@ -32,7 +32,7 @@ A(2, 3) = 5.0f;           // 设置第2行第3列 (0-based, 列优先)
 float val = A(2, 3);      // 读取
 
 // GPU 矩阵 — 使用 setValue/getValue
-B.setValue(0, 1, 42.0f);  // GPU 矩阵设置单个元素 (触发 cudaMemcpy)
+B.setValue(0, 1, 42.0f);  // GPU 矩阵设置单个元素 (触发后端传输)
 float v = B.getValue(0, 1); // GPU 矩阵读取单个元素
 ```
 
@@ -42,7 +42,7 @@ float v = B.getValue(0, 1); // GPU 矩阵读取单个元素
 
 ```cpp
 A.fill(3.14f);  // 所有元素设为 3.14
-A.fill(0.0f);   // 清零 (CPU 用 memset, GPU 用 cudaMemset)
+A.fill(0.0f);   // 清零 (CPU 用 memset, GPU 用后端 memset)
 ```
 
 ## 转置
@@ -52,18 +52,17 @@ auto At = A.transpose();  // 返回新矩阵，维度交换 (cols×rows)
 ```
 
 - CPU: 嵌套循环
-- GPU: 2D CUDA kernel
+- GPU: CUDA kernel 或 Metal kernel
 
-CPU-only 构建 (`PLAMATRIX_WITH_CUDA=OFF`) 下仍可构造 `Device::GPU` 矩阵并做显式传输测试，
-但 GPU 算法入口（非零 `fill()`、GPU `transpose()`、GPU `add/sub/gemm` 等）
-会抛出明确异常或不可用；
-实际业务应使用 `Device::CPU`，需要 GPU 算法时启用 CUDA 构建。
+macOS Metal 构建下，`DenseMatrix<Scalar, Device::GPU>` 由 Metal/MPS 后端管理；CUDA 构建下由 CUDA 后端管理。
+无 GPU 后端构建 (`PLAMATRIX_GPU_BACKEND=NONE`) 下仍可构造 `Device::GPU` 矩阵并做显式传输测试，
+但 GPU 算法入口会抛出明确异常；实际业务应使用 `Device::CPU`。
 
 ## 设备传输
 
 ```cpp
-auto A_gpu = A.toGpu();  // CPU → GPU (cudaMemcpy HostToDevice)
-auto A_cpu = A_gpu.toCpu();  // GPU → CPU (cudaMemcpy DeviceToHost)
+auto A_gpu = A.toGpu();  // CPU → GPU
+auto A_cpu = A_gpu.toCpu();  // GPU → CPU
 
 auto B_gpu = A.toGpuAsync(stream);  // CPU → GPU (cudaMemcpyAsync)
 auto B_cpu = B_gpu.toCpuAsync(stream);  // GPU → CPU (cudaMemcpyAsync)
@@ -71,8 +70,8 @@ auto B_cpu = B_gpu.toCpuAsync(stream);  // GPU → CPU (cudaMemcpyAsync)
 
 传输是一次性的、显式的、昂贵的。库不会隐式搬移数据。
 
-普通 CPU 矩阵使用 pageable host memory。需要让 `cudaMemcpyAsync` 满足真正异步传输条件时，
-使用 pinned/page-locked CPU 矩阵：
+普通 CPU 矩阵使用 pageable host memory。CUDA 后端需要让 `cudaMemcpyAsync` 满足真正异步传输条件时，
+可使用 pinned/page-locked CPU 矩阵；Metal 后端会忽略 CUDA stream 参数并保持同步语义：
 
 ```cpp
 auto pinned = DenseMatrix<float, Device::CPU>::pinned(rows, cols);
@@ -98,7 +97,7 @@ PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 
 ## GPU 内存池
 
-默认 GPU 分配继续直接使用 `cudaMalloc/cudaFree`。需要减少同尺寸矩阵反复分配成本时，
+默认 GPU 分配使用当前平台后端（CUDA `cudaMalloc/cudaFree` 或 Metal `MTLBuffer`）。需要减少同尺寸矩阵反复分配成本时，
 可显式开启进程内 GPU memory pool：
 
 ```cpp
@@ -117,7 +116,7 @@ GpuAllocator<float>::setMemoryPoolEnabled(false);
 
 ## GPU 异步计算和输出复用
 
-同步 GPU 运算会在返回前同步传入的 CUDA stream，适合直接取结果：
+同步 GPU 运算会在返回前完成当前后端工作，适合直接取结果：
 
 ```cpp
 auto C_gpu = gemm(A_gpu, B_gpu);
@@ -136,7 +135,7 @@ PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 ```
 
 `gemmAsync`、`addAsync`、`subAsync` 只提交 GPU 工作，不主动同步；
-调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。
+调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。Metal 后端目前忽略 `cudaStream_t` 兼容参数，操作在返回前完成。
 
 ## 基类方法
 

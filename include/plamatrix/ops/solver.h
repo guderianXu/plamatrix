@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdexcept>
+
 #include "plamatrix/dense/dense_matrix.h"
 
 namespace plamatrix
@@ -17,5 +19,14 @@ namespace plamatrix
 /// @throws std::runtime_error if A is not square, dimensions mismatch, or matrix is singular
 template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> solve(const DenseMatrix<Scalar, Dev>& A, const DenseMatrix<Scalar, Dev>& B);
+
+#if defined(PLAMATRIX_NO_GPU)
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> solve(const DenseMatrix<Scalar, Device::GPU>&,
+                                       const DenseMatrix<Scalar, Device::GPU>&)
+{
+    throw std::runtime_error("solve: GPU linear solve requires a GPU backend");
+}
+#endif
 
 } // namespace plamatrix

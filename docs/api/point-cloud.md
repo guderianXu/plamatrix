@@ -69,7 +69,7 @@ void transformPointsAsync(
 返回 N×3 变换后的点云。
 
 - **CPU**：逐点循环计算
-- **GPU**：`transformPointsKernel` 并行处理
+- **GPU**：CUDA kernel 或 Metal compute kernel 并行处理；Metal `double` 路径使用共享内存 fallback
 - `T` 必须是 4×4，`points` 必须是 N×3，输出复用矩阵必须是 N×3
 - 同步 GPU 输出复用重载返回前会同步传入 stream；`transformPointsAsync` 只提交 kernel
 
@@ -110,6 +110,7 @@ void covarianceMatrixAsync(
 `covarianceMatrixAsync` 需要调用方持有 `GpuCovarianceWorkspace`，并保证它和输入/输出矩阵在 stream 完成前保持有效。
 workspace 扩容时会保留旧缓冲到自身析构，以避免同一 workspace 在连续异步提交中释放仍被使用的临时内存。
 同步 GPU 重载使用内部 workspace 并在返回前同步，适合直接读取结果。
+Metal 后端首版使用 CPU/共享内存 fallback 计算协方差后写回 `Device::GPU` 输出矩阵。
 
 ## 典型工作流：点云配准
 
@@ -133,7 +134,7 @@ DenseMatrix<float, Device::CPU> point_cloud(num_points, 3);
 auto transformed_cpu = transformPoints<float, Device::CPU>(T, point_cloud);
 
 // 5. GPU 加速大批量变换
-#ifdef PLAMATRIX_WITH_CUDA
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 auto pts_gpu = point_cloud.toGpu();
 auto T_gpu = T.toGpu();
 auto transformed_gpu = transformPoints<float, Device::GPU>(T_gpu, pts_gpu);
@@ -148,7 +149,7 @@ PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 auto cov = covarianceMatrix<float, Device::CPU>(point_cloud);
 auto eigenvalues = eigh(cov);  // 特征值即为主成分方差
 
-#ifdef PLAMATRIX_WITH_CUDA
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 DenseMatrix<float, Device::GPU> cov_gpu(3, 3);
 GpuCovarianceWorkspace<float> workspace;
 covarianceMatrixAsync(pts_gpu, cov_gpu, workspace, stream);

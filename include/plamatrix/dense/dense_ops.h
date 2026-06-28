@@ -3,7 +3,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include "plamatrix/core/parallel.h"
 #include "plamatrix/dense/dense_matrix.h"
@@ -59,7 +61,7 @@ DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A,
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
-        #pragma omp parallel for
+        PLAMATRIX_OMP_PARALLEL_FOR
         for (Index i = 0; i < n; ++i)
         {
             C.data()[i] = A.data()[i] + B.data()[i];
@@ -89,7 +91,7 @@ DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A,
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
-        #pragma omp parallel for
+        PLAMATRIX_OMP_PARALLEL_FOR
         for (Index i = 0; i < n; ++i)
         {
             C.data()[i] = A.data()[i] - B.data()[i];
@@ -303,7 +305,7 @@ DenseMatrix<Scalar, Device::CPU> operator*(Scalar alpha, const DenseMatrix<Scala
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
-        #pragma omp parallel for
+        PLAMATRIX_OMP_PARALLEL_FOR
         for (Index i = 0; i < n; ++i)
         {
             C.data()[i] = alpha * A.data()[i];
@@ -342,7 +344,7 @@ DenseMatrix<Scalar, Device::CPU> operator+(Scalar alpha, const DenseMatrix<Scala
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
-        #pragma omp parallel for
+        PLAMATRIX_OMP_PARALLEL_FOR
         for (Index i = 0; i < n; ++i)
         {
             C.data()[i] = alpha + A.data()[i];

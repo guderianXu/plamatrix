@@ -10,8 +10,10 @@
 include/plamatrix/plamatrix.h          # 总入口
 ├── core/         基础类型 + 内存管理
 │   ├── types.h          Device 枚举, Index 类型
-│   ├── error_check.h    CUDA/cuBLAS/cuSOLVER 错误宏
-│   ├── no_cuda_stubs.h  无 CUDA 时的桩实现
+│   ├── gpu_backend.h    编译期 GPU 后端查询 (CUDA / METAL / NONE)
+│   ├── gpu_runtime.h    GPU 分配、传输、memset 抽象
+│   ├── error_check.h    CUDA/cuBLAS/cuSOLVER 错误宏与兼容桩
+│   ├── no_cuda_stubs.h  无 CUDA 或 Metal 构建时的 CUDA 类型兼容桩
 │   ├── allocator.h      CpuAllocator / GpuAllocator
 │   └── device_matrix.h  RAII 矩阵基类
 ├── dense/        密集矩阵
@@ -27,17 +29,18 @@ include/plamatrix/plamatrix.h          # 总入口
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
 
 src/                            实现文件
-├── dense/*.cu                  GPU kernel (fill, transpose, add, sub)
-├── ops/*.cu + *_cpu.cpp        GPU + CPU 运算实现
+├── core/*_metal.mm             Metal runtime / MTLBuffer / MPS 辅助
+├── dense/*.cu / *_metal.mm     CUDA 或 Metal dense 运算
+├── ops/*.cu / *_metal.mm + *_cpu.cpp  GPU + CPU 运算实现
 └── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
 ```
 
 **核心设计原则**：
 - `DeviceMatrix<Scalar, Device>` 作为 RAII 基类，编译期 `if constexpr` 分发 CPU/GPU 代码
 - 列优先 (column-major) 存储，兼容 cuBLAS Fortran 序
-- 显式设备管理：`toCpu()` / `toGpu()` 触发 `cudaMemcpy`
-- GPU 加速通过 cuBLAS / cuSOLVER 库 + 少量自定义 kernel
-- CPU 后端优先使用系统 BLAS/LAPACK；项目内 fallback 对较大工作量使用 OpenMP
+- 显式设备管理：`toCpu()` / `toGpu()` 触发当前 GPU 后端传输
+- GPU 加速通过 CUDA/cuBLAS/cuSOLVER 或 macOS Metal/MPS + 少量自定义 kernel
+- CPU 后端优先使用系统 BLAS/LAPACK；项目内 fallback 可在 OpenMP 可用时并行
 
 ---
 
@@ -52,7 +55,20 @@ using Index = std::int64_t;
 
 `Device` 作为模板参数实现编译期设备分发。选择 `int` 作为底层类型以便在 `enum class` 上用 `if constexpr`。`Index` 使用 64 位有符号整数，支持千万级点云的索引。
 
-### 2.2 错误处理 (`core/error_check.h`)
+### 2.2 GPU 后端选择 (`core/gpu_backend.h`)
+
+CMake 通过 `PLAMATRIX_GPU_BACKEND=AUTO|CUDA|METAL|NONE` 决定 `Device::GPU` 的实际平台后端：
+
+| 后端 | 宏 | 说明 |
+|------|----|------|
+| CUDA | `PLAMATRIX_WITH_CUDA` | 编译 `.cu` 源文件，使用 CUDA runtime、cuBLAS、cuSOLVER |
+| Metal | `PLAMATRIX_WITH_METAL` | macOS 编译 `.mm` 源文件，使用 `MTLBuffer`、Metal kernel 和 MPS |
+| None | `PLAMATRIX_NO_GPU` / `PLAMATRIX_NO_CUDA` | 只保留存储/传输桩和明确的 runtime error |
+
+`AUTO` 在 macOS 优先选择 Metal；其他平台在找到 CUDA Toolkit 时选择 CUDA，否则选择 NONE。
+公共 API 不暴露平台类型，用户仍写 `DenseMatrix<Scalar, Device::GPU>`。
+
+### 2.3 错误处理 (`core/error_check.h`)
 
 三个检查宏，每个捕获 `__FILE__`、`__LINE__` 和字符串化的表达式：
 
@@ -64,9 +80,9 @@ using Index = std::int64_t;
 
 `cublasStatusString()` / `cusolverStatusString()` 对全部状态码做 exhaustive switch，输出如 `CUBLAS_STATUS_EXECUTION_FAILED (13)`。
 
-### 2.3 无 CUDA 时的桩实现 (`core/no_cuda_stubs.h`)
+### 2.4 无 CUDA 时的桩实现 (`core/no_cuda_stubs.h`)
 
-当 `-DPLAMATRIX_WITH_CUDA=OFF`，`PLAMATRIX_NO_CUDA=1` 被定义，此文件在 `error_check.h` 中替换 `<cuda_runtime.h>` 等头文件：
+当 CUDA 不参与编译时，此文件在 `error_check.h` 中提供 CUDA 类型和函数兼容定义。NONE 后端使用这些桩做 CPU 内存传输测试；Metal 后端使用这些类型保持 `cudaStream_t` 等 API 兼容，但实际 GPU 存储由 Metal runtime 管理。
 
 | 真实 API | 桩实现 |
 |----------|--------|
@@ -77,9 +93,9 @@ using Index = std::int64_t;
 | `cublasCreate/Destroy` | 返回 `CUBLAS_STATUS_SUCCESS` |
 | `cusolverDnCreate/Destroy` | 返回 `CUSOLVER_STATUS_SUCCESS` |
 
-无 CUDA 构建下，`Device::GPU` 矩阵的存储和传输桩使用 CPU 内存，以便公共头文件和 CPU-only 测试可编译。`.cu` 中的 GPU 算法不会构建；真实业务路径应使用 `Device::CPU`，需要 GPU 加速时重新启用 CUDA 构建。
+NONE 后端下，`Device::GPU` 矩阵的存储和传输桩使用 CPU 内存，以便公共头文件和 CPU-only 测试可编译。`.cu` / `.mm` 中的 GPU 算法不会构建；真实业务路径应使用 `Device::CPU`，需要 GPU 加速时选择 CUDA 或 Metal 后端。
 
-### 2.4 内存分配器 (`core/allocator.h`)
+### 2.5 内存分配器 (`core/allocator.h`)
 
 ```cpp
 template <typename Scalar>
@@ -97,9 +113,9 @@ struct GpuAllocator {
 };
 ```
 
-CPU 分配器使用 32 字节对齐（`posix_memalign`），适配 AVX-256 向量化。GPU 分配器包装 `cudaMalloc`/`cudaFree`，无 CUDA 时通过桩回退到 `malloc`/`free`。
+CPU 分配器使用 32 字节对齐（`posix_memalign`），适配 AVX-256 向量化。GPU 分配器通过 `gpu_runtime.h` 分发到 CUDA `cudaMalloc/cudaFree`、Metal `MTLBuffer` 或 NONE 后端桩。
 
-### 2.5 矩阵基类 (`core/device_matrix.h`)
+### 2.6 矩阵基类 (`core/device_matrix.h`)
 
 ```cpp
 template <typename Scalar, Device Dev>
@@ -437,7 +453,7 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 - `no_cuda_stubs.h` 提供 CUDA 类型和存储/传输 API 的桩定义
 - `Device::GPU` 矩阵存储可编译，但 `.cu` 中的 GPU 算法不参与编译
 - cuBLAS/cuSOLVER 调用不参与编译（`.cu` 文件不编译）
-- GPU benchmark 函数通过 `#ifdef PLAMATRIX_WITH_CUDA` 保护；CPU-only 构建会拒绝 `--mode cuda`
+- GPU benchmark 函数按编译后端保护；CPU-only 构建会拒绝 `--mode gpu`，`--mode cuda` 保留为兼容别名
 - 业务代码在 CPU-only 构建下应使用 `Device::CPU` 运算路径
 - CPU-only 测试仍会运行核心矩阵、分解、稀疏和 no-CUDA 行为回归；GPU 专属用例按构建配置跳过
 
@@ -449,7 +465,8 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 
 - `main.cpp`：CLI 参数解析（`--mode`, `--size`, `--case`, `--output`, `--list`）
 - `benchmark_cases.cpp`：CPU 基准用例（每个运算的 serial + OMP 版本）
-- `benchmark_cases.cu`：GPU 基准用例（含传输时间单独测量）
+- `benchmark_cases.cu`：CUDA 基准用例（含传输时间单独测量）
+- `benchmark_cases_metal.mm`：Metal/MPS 基准用例（覆盖真实 Metal GPU 路径）
 - `report_writer.cpp`：Markdown 报告生成 + 环境信息采集
 
 **计时方法**：`measure(fn, warmup, trials)`：
@@ -459,4 +476,5 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 
 **尺寸限制**：SVD/QR/Eigh 的 CPU 路径在 N > 256 时自动跳过，防止宽档位 benchmark 被慢速分解主导；可用 `--size tiny --case svd,qr,eigh` 做快速专项回归。
 
-**CUDA 用时**不含数据传输时间（传输单独计时存入 `time_transfer_ms`）。
+**GPU 用时**不含数据传输时间（传输单独计时存入 `time_transfer_ms`）。
+报告列使用当前后端命名，例如 `GPU cuda (ms)` 或 `GPU metal (ms)`。

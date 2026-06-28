@@ -2,7 +2,9 @@
 #include <cstdlib>
 
 #include <gtest/gtest.h>
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include <plamatrix/plamatrix.h>
 
@@ -22,7 +24,9 @@ protected:
         // Seed random number generator for reproducibility across runs.
         std::srand(42);
         // Force single-threaded CPU execution for deterministic results.
+#ifdef PLAMATRIX_WITH_OPENMP
         omp_set_num_threads(1);
+#endif
     }
 
     /// Create an m x n matrix filled with pseudo-random values in [0, 1).

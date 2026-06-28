@@ -493,6 +493,38 @@ TEST(Eigh, nonSquareCpu_Throws)
     EXPECT_THROW(eigh(A), std::runtime_error);
 }
 
+#ifdef PLAMATRIX_WITH_METAL
+TEST(DecompositionMetal, svdQrEigh_FloatApiMatchesCpuFallback)
+{
+    DenseMatrix<float, Device::CPU> A(2, 2);
+    A.setValue(0, 0, 2.0f);
+    A.setValue(1, 0, 0.0f);
+    A.setValue(0, 1, 0.0f);
+    A.setValue(1, 1, 1.0f);
+
+    auto [U_cpu, S_cpu, Vt_cpu] = svd(A);
+    auto [U_gpu, S_gpu, Vt_gpu] = svd(A.toGpu());
+    auto S = S_gpu.toCpu();
+    EXPECT_EQ(U_gpu.toCpu().rows(), U_cpu.rows());
+    EXPECT_EQ(Vt_gpu.toCpu().cols(), Vt_cpu.cols());
+    EXPECT_NEAR(S(0, 0), S_cpu(0, 0), 1e-5f);
+    EXPECT_NEAR(S(1, 0), S_cpu(1, 0), 1e-5f);
+
+    auto [Q_gpu, R_gpu] = qr(A.toGpu());
+    auto Q = Q_gpu.toCpu();
+    auto R = R_gpu.toCpu();
+    EXPECT_EQ(Q.rows(), 2);
+    EXPECT_EQ(Q.cols(), 2);
+    EXPECT_EQ(R.rows(), 2);
+    EXPECT_EQ(R.cols(), 2);
+
+    auto E_cpu = eigh(A);
+    auto E_gpu = eigh(A.toGpu()).toCpu();
+    EXPECT_NEAR(E_gpu(0, 0), E_cpu(0, 0), 1e-5f);
+    EXPECT_NEAR(E_gpu(1, 0), E_cpu(1, 0), 1e-5f);
+}
+#endif
+
 // Eigh: symmetric_2x2_Gpu — same matrix on GPU via cuSOLVER
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(Eigh, symmetric_2x2_Gpu)

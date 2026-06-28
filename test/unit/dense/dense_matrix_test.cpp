@@ -139,6 +139,47 @@ TEST(DenseMatrix, fill_NonZeroGpuIntMatrix)
 }
 #endif
 
+#ifdef PLAMATRIX_WITH_METAL
+TEST(DenseMatrixMetal, fill_NonZeroFloatUsesMetalBackend)
+{
+    DenseMatrix<float, Device::GPU> gpu(2, 3);
+    gpu.fill(7.5f);
+
+    auto cpu = gpu.toCpu();
+    for (Index col = 0; col < cpu.cols(); ++col)
+    {
+        for (Index row = 0; row < cpu.rows(); ++row)
+        {
+            EXPECT_FLOAT_EQ(cpu(row, col), 7.5f);
+        }
+    }
+}
+
+TEST(DenseMatrixMetal, transpose_FloatMatchesCpu)
+{
+    DenseMatrix<float, Device::CPU> cpu(2, 3);
+    cpu(0, 0) = 1.0f;
+    cpu(1, 0) = 2.0f;
+    cpu(0, 1) = 3.0f;
+    cpu(1, 1) = 4.0f;
+    cpu(0, 2) = 5.0f;
+    cpu(1, 2) = 6.0f;
+
+    auto gpu = cpu.toGpu();
+    auto transposed = gpu.transpose().toCpu();
+
+    ASSERT_EQ(transposed.rows(), 3);
+    ASSERT_EQ(transposed.cols(), 2);
+    for (Index row = 0; row < transposed.rows(); ++row)
+    {
+        for (Index col = 0; col < transposed.cols(); ++col)
+        {
+            EXPECT_FLOAT_EQ(transposed(row, col), cpu(col, row));
+        }
+    }
+}
+#endif
+
 TEST(DenseMatrix, fill_Cpu)
 {
     DenseMatrix<float, Device::CPU> mat(3, 4);

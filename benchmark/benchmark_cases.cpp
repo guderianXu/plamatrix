@@ -8,7 +8,9 @@
 #include <random>
 #include <vector>
 
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include "plamatrix/core/allocator.h"
 #include "plamatrix/dense/dense_matrix.h"
@@ -17,6 +19,10 @@
 #include "plamatrix/ops/decomposition.h"
 #include "plamatrix/ops/solver.h"
 #include "plamatrix/ops/point_cloud.h"
+
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
+#define PLAMATRIX_BENCHMARK_WITH_GPU 1
+#endif
 
 namespace plamatrix
 {
@@ -101,12 +107,27 @@ FloatMatrix makeRandomSymmetric(Index n)
 class OmpThreadGuard
 {
 public:
-    explicit OmpThreadGuard(int threads) : _prev(omp_get_max_threads()) { omp_set_num_threads(threads); }
-    ~OmpThreadGuard() { omp_set_num_threads(_prev); }
+    explicit OmpThreadGuard(int threads)
+    {
+#ifdef PLAMATRIX_WITH_OPENMP
+        _prev = omp_get_max_threads();
+        omp_set_num_threads(threads);
+#else
+        static_cast<void>(threads);
+#endif
+    }
+
+    ~OmpThreadGuard()
+    {
+#ifdef PLAMATRIX_WITH_OPENMP
+        omp_set_num_threads(_prev);
+#endif
+    }
+
     OmpThreadGuard(const OmpThreadGuard&) = delete;
     OmpThreadGuard& operator=(const OmpThreadGuard&) = delete;
 private:
-    int _prev;
+    int _prev = 1;
 };
 
 template <typename T>
@@ -123,7 +144,7 @@ bool shouldRunCase(const std::vector<std::string>& case_filter, const char* name
 
 bool hasTiming(const CaseResult& r)
 {
-    return r.time_serial_ms >= 0.0 || r.time_omp_ms >= 0.0 || r.time_cuda_ms >= 0.0 || r.time_transfer_ms >= 0.0;
+    return r.time_serial_ms >= 0.0 || r.time_omp_ms >= 0.0 || r.time_gpu_ms >= 0.0 || r.time_transfer_ms >= 0.0;
 }
 
 void appendResultIfRan(BenchmarkReport& report, CaseResult&& r)
@@ -483,12 +504,12 @@ void runPointTransformOmp(CaseResult& r, Index N)
 void runAllCases(const std::vector<Index>& sizes,
                  bool serial,
                  bool omp,
-                 bool cuda,
+                 bool gpu,
                  BenchmarkReport& report,
                  const std::vector<std::string>& case_filter)
 {
 #ifdef PLAMATRIX_WITH_CUDA
-    GpuMemoryPoolBenchmarkGuard gpu_pool_guard(cuda);
+    GpuMemoryPoolBenchmarkGuard gpu_pool_guard(gpu);
 #endif
 
     for (Index N : sizes)
@@ -501,8 +522,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"gemm", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  gemm serial..." << std::endl; runGemmSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  gemm omp..." << std::endl;    runGemmOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  gemm cuda..." << std::endl;   detail::runGemmCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  gemm gpu..." << std::endl;   detail::runGemmGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -513,8 +534,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"add", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  add serial..." << std::endl; runAddSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  add omp..." << std::endl;    runAddOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  add cuda..." << std::endl;   detail::runAddCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  add gpu..." << std::endl;   detail::runAddGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -525,8 +546,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"sub", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  sub serial..." << std::endl; runSubSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  sub omp..." << std::endl;    runSubOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  sub cuda..." << std::endl;   detail::runSubCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  sub gpu..." << std::endl;   detail::runSubGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -537,8 +558,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"transpose", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  transpose serial..." << std::endl; runTransposeSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  transpose omp..." << std::endl;    runTransposeOmp(r, N); std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  transpose cuda..." << std::endl;   detail::runTransposeCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  transpose gpu..." << std::endl;   detail::runTransposeGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -561,8 +582,8 @@ void runAllCases(const std::vector<Index>& sizes,
             else if (serial)      { std::cerr << "  svd serial  (skipped — too large for broad CPU benchmark)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  svd omp..." << std::endl;    runSvdOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             else if (omp)         { std::cerr << "  svd omp     (skipped — too large for broad CPU benchmark)" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  svd cuda..." << std::endl;   detail::runSvdCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_WITH_CUDA
+            if (gpu)   { std::cerr << "  svd gpu..." << std::endl;   detail::runSvdGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -576,8 +597,8 @@ void runAllCases(const std::vector<Index>& sizes,
             else if (serial)      { std::cerr << "  qr serial   (skipped — too large for CPU)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  qr omp..." << std::endl;    runQrOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             else if (omp)         { std::cerr << "  qr omp      (skipped — too large for CPU)" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  qr cuda..." << std::endl;   detail::runQrCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_WITH_CUDA
+            if (gpu)   { std::cerr << "  qr gpu..." << std::endl;   detail::runQrGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -591,8 +612,8 @@ void runAllCases(const std::vector<Index>& sizes,
             else if (serial)      { std::cerr << "  eigh serial  (skipped — too large for broad CPU benchmark)" << std::endl; }
             if (omp && cpu_ok)    { std::cerr << "  eigh omp..." << std::endl;    runEighOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
             else if (omp)         { std::cerr << "  eigh omp     (skipped — too large for broad CPU benchmark)" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  eigh cuda..." << std::endl;   detail::runEighCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_WITH_CUDA
+            if (gpu)   { std::cerr << "  eigh gpu..." << std::endl;   detail::runEighGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -603,8 +624,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"solve", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  solve serial..." << std::endl; runSolveSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  solve omp..." << std::endl;    runSolveOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  solve cuda..." << std::endl;   detail::runSolveCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  solve gpu..." << std::endl;   detail::runSolveGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -615,8 +636,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"covariance", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  covariance serial..." << std::endl; runCovarianceSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  covariance omp..." << std::endl;    runCovarianceOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  covariance cuda..." << std::endl;   detail::runCovarianceCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_WITH_CUDA
+            if (gpu)   { std::cerr << "  covariance gpu..." << std::endl;   detail::runCovarianceGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }
@@ -627,8 +648,8 @@ void runAllCases(const std::vector<Index>& sizes,
             CaseResult r{"pointTransform", N, -1.0, -1.0, -1.0, -1.0};
             if (serial) { std::cerr << "  pointTransform serial..." << std::endl; runPointTransformSerial(r, N); std::cerr << "    " << r.time_serial_ms << " ms" << std::endl; }
             if (omp)    { std::cerr << "  pointTransform omp..." << std::endl;    runPointTransformOmp(r, N);    std::cerr << "    " << r.time_omp_ms << " ms" << std::endl; }
-            #ifdef PLAMATRIX_WITH_CUDA
-            if (cuda)   { std::cerr << "  pointTransform cuda..." << std::endl;   detail::runPointTransformCuda(r, N); std::cerr << "    " << r.time_cuda_ms << " ms" << std::endl; }
+#ifdef PLAMATRIX_BENCHMARK_WITH_GPU
+            if (gpu)   { std::cerr << "  pointTransform gpu..." << std::endl;   detail::runPointTransformGpu(r, N); std::cerr << "    " << r.time_gpu_ms << " ms" << std::endl; }
 #endif
             appendResultIfRan(report, std::move(r));
         }

@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Stub definitions for building without CUDA (PLAMATRIX_NO_CUDA).
+// Stub definitions for building without CUDA (PLAMATRIX_NO_CUDA / PLAMATRIX_WITH_METAL / PLAMATRIX_NO_GPU).
 //
 // CUDA storage/transfer primitives are emulated with CPU equivalents:
 //   - cudaMalloc  → malloc
@@ -13,7 +13,7 @@
 // algorithm definitions in .cu files are only built when PLAMATRIX_WITH_CUDA=ON.
 // ============================================================================
 
-#ifdef PLAMATRIX_NO_CUDA
+#if defined(PLAMATRIX_NO_CUDA) || defined(PLAMATRIX_WITH_METAL) || defined(PLAMATRIX_NO_GPU)
 
 #include <cstdlib>
 #include <cstring>
@@ -136,10 +136,11 @@ inline cudaError_t cudaGetLastError() { return cudaSuccess; }
 
 constexpr int cudaMemcpyHostToDevice = 0;
 constexpr int cudaMemcpyDeviceToHost = 0;
+constexpr int cudaMemcpyDeviceToDevice = 0;
 
 // Note: error-check macros (PLAMATRIX_CHECK_*) are defined in error_check.h.
 // This file only provides type/function stubs.
 
 #else
 // CUDA is available: this file is a no-op, real CUDA headers are used elsewhere.
-#endif // PLAMATRIX_NO_CUDA
+#endif // PLAMATRIX_NO_CUDA || PLAMATRIX_WITH_METAL || PLAMATRIX_NO_GPU

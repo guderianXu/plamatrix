@@ -1,7 +1,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include "plamatrix/core/parallel.h"
 #include "plamatrix/ops/gemm.h"
@@ -51,7 +53,7 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
     Index work_items = m * n * k;
     if (detail::shouldUseOpenMp(work_items))
     {
-        #pragma omp parallel for collapse(2)
+        PLAMATRIX_OMP_PARALLEL_FOR_COLLAPSE_2
         for (Index j = 0; j < n; ++j)
         {
             for (Index i = 0; i < m; ++i)

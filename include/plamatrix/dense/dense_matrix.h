@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "plamatrix/core/device_matrix.h"
+#include "plamatrix/core/gpu_runtime.h"
 
 namespace plamatrix
 {
@@ -97,8 +98,7 @@ public:
         }
         else
         {
-            PLAMATRIX_CHECK_CUDA(
-                cudaMemcpy(this->_data + offset, &value, sizeof(Scalar), cudaMemcpyHostToDevice));
+            detail::gpuCopyHostToDevice(this->_data + offset, &value, sizeof(Scalar));
         }
     }
 
@@ -116,8 +116,7 @@ public:
         else
         {
             Scalar host_val;
-            PLAMATRIX_CHECK_CUDA(
-                cudaMemcpy(&host_val, this->_data + offset, sizeof(Scalar), cudaMemcpyDeviceToHost));
+            detail::gpuCopyDeviceToHost(&host_val, this->_data + offset, sizeof(Scalar));
             return host_val;
         }
     }
@@ -139,8 +138,7 @@ public:
         {
             if (value == Scalar(0))
             {
-                PLAMATRIX_CHECK_CUDA(
-                    cudaMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar)));
+                detail::gpuMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar));
             }
             else
             {
@@ -159,9 +157,8 @@ public:
         {
             return result;
         }
-        PLAMATRIX_CHECK_CUDA(
-            cudaMemcpy(result.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
-                       cudaMemcpyDeviceToHost));
+        detail::gpuCopyDeviceToHost(result.data(), this->_data,
+                                    static_cast<std::size_t>(this->size()) * sizeof(Scalar));
         return result;
     }
 
@@ -187,9 +184,8 @@ public:
         {
             return;
         }
-        PLAMATRIX_CHECK_CUDA(
-            cudaMemcpyAsync(output.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
-                            cudaMemcpyDeviceToHost, stream));
+        detail::gpuCopyDeviceToHost(output.data(), this->_data,
+                                    static_cast<std::size_t>(this->size()) * sizeof(Scalar), stream);
     }
 
     /// Transfer a CPU matrix to GPU.
@@ -202,9 +198,8 @@ public:
         {
             return result;
         }
-        PLAMATRIX_CHECK_CUDA(
-            cudaMemcpy(result.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
-                       cudaMemcpyHostToDevice));
+        detail::gpuCopyHostToDevice(result.data(), this->_data,
+                                    static_cast<std::size_t>(this->size()) * sizeof(Scalar));
         return result;
     }
 
@@ -230,9 +225,8 @@ public:
         {
             return;
         }
-        PLAMATRIX_CHECK_CUDA(
-            cudaMemcpyAsync(output.data(), this->_data, static_cast<std::size_t>(this->size()) * sizeof(Scalar),
-                            cudaMemcpyHostToDevice, stream));
+        detail::gpuCopyHostToDevice(output.data(), this->_data,
+                                    static_cast<std::size_t>(this->size()) * sizeof(Scalar), stream);
     }
 
     /// Compute the transpose of this matrix.
@@ -281,8 +275,7 @@ private:
         }
         else
         {
-            PLAMATRIX_CHECK_CUDA(
-                cudaMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar)));
+            detail::gpuMemset(this->_data, 0, static_cast<std::size_t>(this->size()) * sizeof(Scalar));
         }
     }
 

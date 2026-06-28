@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdexcept>
 #include <tuple>
 
 #include "plamatrix/dense/dense_matrix.h"
@@ -57,5 +58,27 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
 /// @return  Column vector of eigenvalues (n × 1), sorted descending. On GPU.
 template <typename Scalar>
 DenseMatrix<Scalar, Device::GPU> eigh(const DenseMatrix<Scalar, Device::GPU>& A);
+
+#if defined(PLAMATRIX_NO_GPU)
+template <typename Scalar>
+std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
+svd(const DenseMatrix<Scalar, Device::GPU>&)
+{
+    throw std::runtime_error("svd: GPU decomposition requires a GPU backend");
+}
+
+template <typename Scalar>
+std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
+qr(const DenseMatrix<Scalar, Device::GPU>&)
+{
+    throw std::runtime_error("qr: GPU decomposition requires a GPU backend");
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::GPU> eigh(const DenseMatrix<Scalar, Device::GPU>&)
+{
+    throw std::runtime_error("eigh: GPU decomposition requires a GPU backend");
+}
+#endif
 
 } // namespace plamatrix

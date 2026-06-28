@@ -15,6 +15,7 @@ struct BenchmarkReport
     std::string cpu_model;
     int cpu_cores = 0;
     std::string gpu_model;
+    std::string gpu_backend;
     std::string gpu_driver;
     std::string cuda_version;
     std::string os_info;

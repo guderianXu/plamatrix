@@ -11,6 +11,11 @@
 #include <stdexcept>
 
 #include <sys/utsname.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+
+#include "plamatrix/core/gpu_backend.h"
 
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime.h>
@@ -28,8 +33,31 @@ void readCpuInfo(std::string& model, int& cores)
     std::ifstream cpuinfo("/proc/cpuinfo");
     if (!cpuinfo.is_open())
     {
+#ifdef __APPLE__
+        char brand[256] = {};
+        std::size_t brand_size = sizeof(brand);
+        if (sysctlbyname("machdep.cpu.brand_string", brand, &brand_size, nullptr, 0) == 0 && brand[0] != '\0')
+        {
+            model = brand;
+        }
+        else
+        {
+            model = "Unknown";
+        }
+        int ncpu = 0;
+        std::size_t ncpu_size = sizeof(ncpu);
+        if (sysctlbyname("hw.ncpu", &ncpu, &ncpu_size, nullptr, 0) == 0)
+        {
+            cores = ncpu;
+        }
+        else
+        {
+            cores = 0;
+        }
+#else
         model = "Unknown";
         cores = 0;
+#endif
         return;
     }
 
@@ -158,6 +186,7 @@ std::string fmtSpeedup(double baseline_ms, double accelerated_ms)
 void BenchmarkReport::captureEnvironment()
 {
     readCpuInfo(cpu_model, cpu_cores);
+    gpu_backend = gpuBackendName();
     readGpuInfo(gpu_model, gpu_driver, cuda_version);
 
     // OS info via uname
@@ -196,6 +225,7 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
     file << "|------|-------|\n";
     file << "| CPU | " << cpu_model << " |\n";
     file << "| CPU Cores | " << cpu_cores << " |\n";
+    file << "| GPU Backend | " << gpu_backend << " |\n";
     file << "| GPU | " << gpu_model << " |\n";
     file << "| GPU Driver | " << gpu_driver << " |\n";
     file << "| CUDA Version | " << cuda_version << " |\n";
@@ -228,14 +258,14 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
 
             bool has_serial = false;
             bool has_omp = false;
-            bool has_cuda = false;
+            bool has_gpu = false;
             for (const auto& r : results)
             {
                 if (r.name == case_name)
                 {
                     if (r.time_serial_ms >= 0.0) has_serial = true;
                     if (r.time_omp_ms >= 0.0) has_omp = true;
-                    if (r.time_cuda_ms >= 0.0) has_cuda = true;
+                    if (r.time_gpu_ms >= 0.0) has_gpu = true;
                 }
             }
 
@@ -243,17 +273,17 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
             file << "| Size |";
             if (has_serial) file << " CPU Serial (ms) |";
             if (has_omp) file << " CPU OMP (ms) |";
-            if (has_cuda) file << " CUDA (ms) | Transfer (ms) |";
+            if (has_gpu) file << " GPU " << gpu_backend << " (ms) | Transfer (ms) |";
             if (has_serial && has_omp) file << " OMP Speedup |";
-            if (has_serial && has_cuda) file << " CUDA Speedup |";
+            if (has_serial && has_gpu) file << " GPU Speedup |";
             file << "\n";
 
             file << "|------|";
             if (has_serial) file << "-----------------|";
             if (has_omp) file << "-------------|";
-            if (has_cuda) file << "-----------|--------------|";
+            if (has_gpu) file << "-----------|--------------|";
             if (has_serial && has_omp) file << "-------------|";
-            if (has_serial && has_cuda) file << "-------------|";
+            if (has_serial && has_gpu) file << "-------------|";
             file << "\n";
 
             for (const auto& r : results)
@@ -266,18 +296,18 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
                 file << "| " << r.size << " |";
                 if (has_serial) file << " " << fmtTime(r.time_serial_ms) << " |";
                 if (has_omp) file << " " << fmtTime(r.time_omp_ms) << " |";
-                if (has_cuda)
+                if (has_gpu)
                 {
-                    file << " " << fmtTime(r.time_cuda_ms) << " |";
+                    file << " " << fmtTime(r.time_gpu_ms) << " |";
                     file << " " << fmtTime(r.time_transfer_ms) << " |";
                 }
                 if (has_serial && has_omp)
                 {
                     file << " " << fmtSpeedup(r.time_serial_ms, r.time_omp_ms) << " |";
                 }
-                if (has_serial && has_cuda)
+                if (has_serial && has_gpu)
                 {
-                    file << " " << fmtSpeedup(r.time_serial_ms, r.time_cuda_ms) << " |";
+                    file << " " << fmtSpeedup(r.time_serial_ms, r.time_gpu_ms) << " |";
                 }
                 file << "\n";
             }

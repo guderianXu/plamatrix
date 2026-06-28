@@ -222,7 +222,7 @@ double measureGpuEvent(std::function<void(cudaStream_t)> fn, int warmup = 3, int
 // GPU benchmark implementations
 // ============================================================================
 
-void runGemmCuda(CaseResult& r, Index N)
+void runGemmGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
     auto B_cpu = makeRandom(N, N);
@@ -234,14 +234,14 @@ void runGemmCuda(CaseResult& r, Index N)
     GpuFloatMatrix C_gpu(N, N);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
+    r.time_gpu_ms = measureGpuEvent([&](cudaStream_t stream)
     {
         gemmAsync(A_gpu, B_gpu, C_gpu, stream);
         doNotOptimize(C_gpu.data());
     });
 }
 
-void runAddCuda(CaseResult& r, Index N)
+void runAddGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
     auto B_cpu = makeRandom(N, N);
@@ -253,14 +253,14 @@ void runAddCuda(CaseResult& r, Index N)
     GpuFloatMatrix C_gpu(N, N);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
+    r.time_gpu_ms = measureGpuEvent([&](cudaStream_t stream)
     {
         addAsync(A_gpu, B_gpu, C_gpu, stream);
         doNotOptimize(C_gpu.data());
     });
 }
 
-void runSubCuda(CaseResult& r, Index N)
+void runSubGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
     auto B_cpu = makeRandom(N, N);
@@ -272,14 +272,14 @@ void runSubCuda(CaseResult& r, Index N)
     GpuFloatMatrix C_gpu(N, N);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
+    r.time_gpu_ms = measureGpuEvent([&](cudaStream_t stream)
     {
         subAsync(A_gpu, B_gpu, C_gpu, stream);
         doNotOptimize(C_gpu.data());
     });
 }
 
-void runTransposeCuda(CaseResult& r, Index N)
+void runTransposeGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
 
@@ -288,7 +288,7 @@ void runTransposeCuda(CaseResult& r, Index N)
     auto A_gpu = A_cpu.toGpu();
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_gpu_ms = measureGpu([&]()
     {
         auto C = A_gpu.transpose();
         PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -296,7 +296,7 @@ void runTransposeCuda(CaseResult& r, Index N)
     });
 }
 
-void runSvdCuda(CaseResult& r, Index N)
+void runSvdGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
 
@@ -306,7 +306,7 @@ void runSvdCuda(CaseResult& r, Index N)
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
     // SVD is expensive — fewer trials
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_gpu_ms = measureGpu([&]()
     {
         auto [U, S, Vt] = svd(A_gpu);
         PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -314,7 +314,7 @@ void runSvdCuda(CaseResult& r, Index N)
     }, 1, 3);
 }
 
-void runQrCuda(CaseResult& r, Index N)
+void runQrGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
 
@@ -324,7 +324,7 @@ void runQrCuda(CaseResult& r, Index N)
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
     // QR is expensive — fewer trials
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_gpu_ms = measureGpu([&]()
     {
         auto [Q, R] = qr(A_gpu);
         PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -332,7 +332,7 @@ void runQrCuda(CaseResult& r, Index N)
     }, 1, 3);
 }
 
-void runEighCuda(CaseResult& r, Index N)
+void runEighGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandomSymmetric(N);
 
@@ -342,7 +342,7 @@ void runEighCuda(CaseResult& r, Index N)
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
     // Eigh is expensive — fewer trials
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_gpu_ms = measureGpu([&]()
     {
         auto eig = eigh(A_gpu);
         PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -350,7 +350,7 @@ void runEighCuda(CaseResult& r, Index N)
     }, 1, 3);
 }
 
-void runSolveCuda(CaseResult& r, Index N)
+void runSolveGpu(CaseResult& r, Index N)
 {
     auto A_cpu = makeRandom(N, N);
     for (Index i = 0; i < N; ++i)
@@ -365,7 +365,7 @@ void runSolveCuda(CaseResult& r, Index N)
     auto B_gpu = B_cpu.toGpu();
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpu([&]()
+    r.time_gpu_ms = measureGpu([&]()
     {
         auto X = solve<float, Device::GPU>(A_gpu, B_gpu);
         PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -373,7 +373,7 @@ void runSolveCuda(CaseResult& r, Index N)
     });
 }
 
-void runCovarianceCuda(CaseResult& r, Index N)
+void runCovarianceGpu(CaseResult& r, Index N)
 {
     auto pts_cpu = makeRandom(N, 3);
 
@@ -384,14 +384,14 @@ void runCovarianceCuda(CaseResult& r, Index N)
     GpuCovarianceWorkspace<float> workspace;
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
+    r.time_gpu_ms = measureGpuEvent([&](cudaStream_t stream)
     {
         covarianceMatrixAsync(pts_gpu, C_gpu, workspace, stream);
         doNotOptimize(C_gpu.data());
     });
 }
 
-void runPointTransformCuda(CaseResult& r, Index N)
+void runPointTransformGpu(CaseResult& r, Index N)
 {
     auto pts_cpu = makeRandom(N, 3);
 
@@ -425,7 +425,7 @@ void runPointTransformCuda(CaseResult& r, Index N)
     GpuFloatMatrix result(N, 3);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
 
-    r.time_cuda_ms = measureGpuEvent([&](cudaStream_t stream)
+    r.time_gpu_ms = measureGpuEvent([&](cudaStream_t stream)
     {
         transformPointsAsync(T_gpu, pts_gpu, result, stream);
         doNotOptimize(result.data());

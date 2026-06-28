@@ -11,7 +11,7 @@
 
 namespace {
 
-bool hasUsableCudaRuntime()
+bool hasUsableGpuRuntime()
 {
 #ifdef PLAMATRIX_WITH_CUDA
     int deviceCount = 0;
@@ -29,6 +29,8 @@ bool hasUsableCudaRuntime()
         return false;
     }
 
+    return true;
+#elif defined(PLAMATRIX_WITH_METAL)
     return true;
 #else
     return false;
@@ -151,18 +153,18 @@ int main(int argc, char **argv)
     const bool listMode = isGtestListMode(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
 
-    if (!listMode && !hasUsableCudaRuntime())
+    if (!listMode && !hasUsableGpuRuntime())
     {
         const std::string originalFilter = ::testing::GTEST_FLAG(filter);
         if (isSingleGpuOnlyFilter(originalFilter))
         {
-            std::cout << "[plamatrix_tests] CUDA runtime unavailable; skipping GPU test: "
+            std::cout << "[plamatrix_tests] GPU runtime unavailable; skipping GPU test: "
                       << originalFilter << std::endl;
             return 77;
         }
 
         ::testing::GTEST_FLAG(filter) = addNegativeFilters(originalFilter, gpuNegativeFilters());
-        std::cout << "[plamatrix_tests] CUDA runtime unavailable; filtering GPU tests: "
+        std::cout << "[plamatrix_tests] GPU runtime unavailable; filtering GPU tests: "
                   << ::testing::GTEST_FLAG(filter) << std::endl;
     }
 

@@ -53,16 +53,61 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     endif()
 endif()
 
-# ---- Detect CUDA ----
+# ---- GPU backend selection ----
+set(PLAMATRIX_GPU_BACKEND "AUTO" CACHE STRING "GPU backend: AUTO, CUDA, METAL, or NONE")
+set_property(CACHE PLAMATRIX_GPU_BACKEND PROPERTY STRINGS AUTO CUDA METAL NONE)
+string(TOUPPER "${PLAMATRIX_GPU_BACKEND}" PLAMATRIX_GPU_BACKEND)
+
+set(_PLAMATRIX_LEGACY_CUDA_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_WITH_CUDA)
+    set(_PLAMATRIX_LEGACY_CUDA_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_WITH_CUDA "Build with CUDA GPU acceleration" OFF)
+option(PLAMATRIX_WITH_METAL "Build with macOS Metal GPU acceleration" ON)
+
 find_package(CUDAToolkit QUIET)
 
-if(CUDAToolkit_FOUND)
-    set(PLAMATRIX_CUDA_DEFAULT ON)
-else()
-    set(PLAMATRIX_CUDA_DEFAULT OFF)
+if(_PLAMATRIX_LEGACY_CUDA_USER_DEFINED)
+    if(PLAMATRIX_WITH_CUDA)
+        set(PLAMATRIX_GPU_BACKEND "CUDA" CACHE STRING "GPU backend: AUTO, CUDA, METAL, or NONE" FORCE)
+    elseif(PLAMATRIX_GPU_BACKEND STREQUAL "AUTO")
+        set(_PLAMATRIX_DISABLE_AUTO_CUDA ON)
+    endif()
 endif()
 
-option(PLAMATRIX_WITH_CUDA "Build with CUDA GPU acceleration" ${PLAMATRIX_CUDA_DEFAULT})
+set(PLAMATRIX_WITH_CUDA OFF)
+set(PLAMATRIX_WITH_METAL_RESOLVED OFF)
+set(PLAMATRIX_NO_GPU OFF)
+
+if(PLAMATRIX_GPU_BACKEND STREQUAL "AUTO")
+    if(APPLE AND PLAMATRIX_WITH_METAL)
+        set(PLAMATRIX_WITH_METAL_RESOLVED ON)
+        set(PLAMATRIX_GPU_BACKEND_RESOLVED "METAL")
+    elseif(CUDAToolkit_FOUND AND NOT _PLAMATRIX_DISABLE_AUTO_CUDA)
+        set(PLAMATRIX_WITH_CUDA ON)
+        set(PLAMATRIX_GPU_BACKEND_RESOLVED "CUDA")
+    else()
+        set(PLAMATRIX_NO_GPU ON)
+        set(PLAMATRIX_GPU_BACKEND_RESOLVED "NONE")
+    endif()
+elseif(PLAMATRIX_GPU_BACKEND STREQUAL "CUDA")
+    if(NOT CUDAToolkit_FOUND)
+        message(FATAL_ERROR "PLAMATRIX_GPU_BACKEND=CUDA but CUDA Toolkit was not found.")
+    endif()
+    set(PLAMATRIX_WITH_CUDA ON)
+    set(PLAMATRIX_GPU_BACKEND_RESOLVED "CUDA")
+elseif(PLAMATRIX_GPU_BACKEND STREQUAL "METAL")
+    if(NOT APPLE)
+        message(FATAL_ERROR "PLAMATRIX_GPU_BACKEND=METAL is only supported on macOS.")
+    endif()
+    set(PLAMATRIX_WITH_METAL_RESOLVED ON)
+    set(PLAMATRIX_GPU_BACKEND_RESOLVED "METAL")
+elseif(PLAMATRIX_GPU_BACKEND STREQUAL "NONE")
+    set(PLAMATRIX_NO_GPU ON)
+    set(PLAMATRIX_GPU_BACKEND_RESOLVED "NONE")
+else()
+    message(FATAL_ERROR "Unknown PLAMATRIX_GPU_BACKEND=${PLAMATRIX_GPU_BACKEND}. Use AUTO, CUDA, METAL, or NONE.")
+endif()
 
 if(PLAMATRIX_WITH_CUDA)
     set(_PLAMATRIX_CMAKE_CUDA_ARCHITECTURES_USER_DEFINED OFF)
@@ -121,8 +166,33 @@ if(PLAMATRIX_WITH_CUDA)
     endif()
 endif()
 
-# ---- OpenMP (always required) ----
-find_package(OpenMP REQUIRED)
+if(PLAMATRIX_WITH_METAL_RESOLVED)
+    enable_language(OBJCXX)
+    find_library(PLAMATRIX_FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(PLAMATRIX_METAL_FRAMEWORK Metal REQUIRED)
+    find_library(PLAMATRIX_MPS_FRAMEWORK MetalPerformanceShaders REQUIRED)
+    find_library(PLAMATRIX_ACCELERATE_FRAMEWORK Accelerate REQUIRED)
+endif()
+
+# ---- OpenMP (optional) ----
+set(PLAMATRIX_WITH_OPENMP "AUTO" CACHE STRING "OpenMP support: AUTO, ON, or OFF")
+set_property(CACHE PLAMATRIX_WITH_OPENMP PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${PLAMATRIX_WITH_OPENMP}" PLAMATRIX_WITH_OPENMP)
+
+set(PLAMATRIX_OPENMP_ENABLED OFF)
+if(PLAMATRIX_WITH_OPENMP STREQUAL "ON")
+    find_package(OpenMP REQUIRED)
+    set(PLAMATRIX_OPENMP_ENABLED ON)
+elseif(PLAMATRIX_WITH_OPENMP STREQUAL "AUTO")
+    find_package(OpenMP QUIET)
+    if(OpenMP_CXX_FOUND)
+        set(PLAMATRIX_OPENMP_ENABLED ON)
+    else()
+        message(STATUS "OpenMP not found; CPU fallback loops will run serially")
+    endif()
+elseif(NOT PLAMATRIX_WITH_OPENMP STREQUAL "OFF")
+    message(FATAL_ERROR "Unknown PLAMATRIX_WITH_OPENMP=${PLAMATRIX_WITH_OPENMP}. Use AUTO, ON, or OFF.")
+endif()
 
 # ---- Optional CPU BLAS/LAPACK acceleration ----
 set(PLAMATRIX_LINALG_PROVIDER "fallback")
@@ -188,6 +258,11 @@ target_include_directories(plamatrix
 )
 
 # ---- Link libraries ----
+if(PLAMATRIX_OPENMP_ENABLED)
+    target_link_libraries(plamatrix PUBLIC OpenMP::OpenMP_CXX)
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_WITH_OPENMP=1)
+endif()
+
 if(PLAMATRIX_WITH_CUDA)
     target_link_libraries(plamatrix
         PUBLIC
@@ -195,15 +270,19 @@ if(PLAMATRIX_WITH_CUDA)
             CUDA::cusolver
             CUDA::cudart
             CUDA::cuda_driver
-            OpenMP::OpenMP_CXX
     )
     target_compile_definitions(plamatrix PUBLIC PLAMATRIX_WITH_CUDA=1)
-else()
+elseif(PLAMATRIX_WITH_METAL_RESOLVED)
     target_link_libraries(plamatrix
         PUBLIC
-            OpenMP::OpenMP_CXX
+            ${PLAMATRIX_FOUNDATION_FRAMEWORK}
+            ${PLAMATRIX_METAL_FRAMEWORK}
+            ${PLAMATRIX_MPS_FRAMEWORK}
+            ${PLAMATRIX_ACCELERATE_FRAMEWORK}
     )
-    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_CUDA=1)
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_WITH_METAL=1)
+else()
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_GPU=1 PLAMATRIX_NO_CUDA=1)
 endif()
 
 target_compile_definitions(plamatrix
@@ -269,10 +348,13 @@ install(FILES
 # ---- Status ----
 message(STATUS "")
 message(STATUS "PlaMatrix Configuration:")
+message(STATUS "  GPU backend:     ${PLAMATRIX_GPU_BACKEND_RESOLVED}")
 message(STATUS "  CUDA support:    ${PLAMATRIX_WITH_CUDA}")
 if(PLAMATRIX_WITH_CUDA)
     message(STATUS "  CUDA arch:       ${PLAMATRIX_CUDA_ARCHITECTURES}")
 endif()
+message(STATUS "  Metal support:   ${PLAMATRIX_WITH_METAL_RESOLVED}")
+message(STATUS "  OpenMP support:  ${PLAMATRIX_OPENMP_ENABLED}")
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
 message(STATUS "  CPU linalg:      ${PLAMATRIX_LINALG_PROVIDER}")

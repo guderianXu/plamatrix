@@ -1,20 +1,20 @@
 # PlaMatrix
 
-面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP) 和 CUDA GPU 加速。
+面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP) 和平台 GPU 后端：Linux/NVIDIA 使用 CUDA，macOS 使用 Metal/MPS。
 
 ## 特性
 
 - **密集矩阵**：矩阵乘法、逐元素加减、转置、CPU 标量运算
-- **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
-- **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)
+- **矩阵分解**：SVD、QR、对称特征值 (CPU 可选 LAPACK；CUDA 用 cuSOLVER；Metal 首版使用 CPU fallback 保持 GPU API)
+- **线性求解**：稠密求解器 (CPU LU；CUDA cuSOLVER；Metal float 使用 MPS LU，double fallback)
 - **稀疏矩阵**：COO / CSR 格式，COO→CSR 转换
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
-- **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
+- **统一基准测试**：一键运行串行 / OpenMP / 平台 GPU benchmark，自动生成 Markdown 性能报告
 
 ## 快速开始
 
-**新电脑从零搭建？** 先看 [编译指南](docs/build.md)，包含 CUDA 驱动安装、CMake 升级、Google Test 安装、CPU-only 构建等完整步骤。
+**新电脑从零搭建？** 先看 [编译指南](docs/build.md)，包含 macOS Metal、CUDA 驱动安装、CMake 升级、Google Test 安装、CPU-only 构建等完整步骤。
 
 ### 编译
 
@@ -26,13 +26,17 @@ cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
 cmake --build . -j$(nproc)
 ```
 
-**无 NVIDIA GPU？** 加 `-DPLAMATRIX_WITH_CUDA=OFF` 即可 CPU-only 编译。
+macOS 默认自动选择 Metal/MPS 后端，用户代码仍写 `DenseMatrix<float, Device::GPU>`。
+无 GPU 后端时可显式使用 `-DPLAMATRIX_GPU_BACKEND=NONE` 做 CPU-only / stub 构建。
 
 ### CMake 选项
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
+| `PLAMATRIX_GPU_BACKEND` | `AUTO` | GPU 后端：`AUTO`、`CUDA`、`METAL`、`NONE`。macOS `AUTO` 选择 Metal，其他平台优先 CUDA |
+| `PLAMATRIX_WITH_CUDA` | 自动检测 | 旧选项，兼容 CUDA 开关；推荐新项目使用 `PLAMATRIX_GPU_BACKEND` |
+| `PLAMATRIX_WITH_METAL` | `ON` | macOS `AUTO` 模式下允许选择 Metal/MPS |
+| `PLAMATRIX_WITH_OPENMP` | `AUTO` | OpenMP：`AUTO`、`ON`、`OFF` |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
 | `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
@@ -90,12 +94,16 @@ target_link_libraries(my_project plamatrix::plamatrix)
 # 完整对比 (CPU + GPU)
 ./benchmark/plamatrix_benchmark --mode all --size large --output report.md
 
+# 只跑当前平台 GPU 后端 (macOS 为 Metal，CUDA 构建为 CUDA)
+./benchmark/plamatrix_benchmark --mode gpu --size smoke --case transpose
+
 # 快速 smoke 或只跑指定 case
 ./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
 ```
 
-CUDA 模式下 GEMM/add/sub 的计算时间使用 CUDA event 计时，并复用输出矩阵；
-输入传输时间使用 pinned host buffer，仍单独记录。
+`--mode cuda` 仍作为 `--mode gpu` 的兼容别名保留。
+CUDA 后端的 GEMM/add/sub 使用 CUDA event 计时并复用输出矩阵；Metal 后端使用同步完成的 Metal/MPS 调用计时。
+输入传输时间单独记录，报告列会显示当前后端，例如 `GPU cuda (ms)` 或 `GPU metal (ms)`。
 
 | 档位 | 矩阵尺寸 |
 |------|----------|
@@ -116,7 +124,7 @@ CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
 
 ### 基本运算
 ```cpp
-auto C = gemm(A, B);     // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
+auto C = gemm(A, B);     // 矩阵乘法 (CUDA cuBLAS / Metal MPS / BLAS / CPU fallback)
 auto D = add(A, B);      // 逐元素加法
 auto E = A.transpose();  // 转置
 auto F = add(2.0f * A, B); // CPU 标量乘加
@@ -153,8 +161,8 @@ covarianceMatrixAsync(pts_gpu, cov_out, cov_workspace, stream);
 
 ### 设备传输
 ```cpp
-auto A_gpu = A_cpu.toGpu();  // CPU → GPU (触发 cudaMemcpy)
-auto A_cpu = A_gpu.toCpu();  // GPU → CPU (触发 cudaMemcpy)
+auto A_gpu = A_cpu.toGpu();  // CPU → GPU (CUDA 或 Metal 后端传输)
+auto A_cpu = A_gpu.toCpu();  // GPU → CPU
 auto pinned = DenseMatrix<float, Device::CPU>::pinned(A_cpu.rows(), A_cpu.cols());
 auto B_gpu = pinned.toGpuAsync(stream); // 异步传输，调用方负责同步 stream
 ```

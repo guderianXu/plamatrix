@@ -4,12 +4,12 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef PLAMATRIX_NO_CUDA
-#include "plamatrix/core/no_cuda_stubs.h"
-#else
+#ifdef PLAMATRIX_WITH_CUDA
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
+#else
+#include "plamatrix/core/no_cuda_stubs.h"
 #endif
 
 namespace plamatrix

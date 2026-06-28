@@ -140,7 +140,7 @@ TEST(PointCloud, covarianceMatrix_4Points_Cpu)
     EXPECT_NEAR(C(2, 1), expected_off, 1e-9);
 }
 
-#ifdef PLAMATRIX_WITH_CUDA
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_MediumCloud)
 {
     constexpr Index N = 4096;
@@ -365,7 +365,7 @@ TEST(PointCloud, transformPoints_Cpu)
     EXPECT_NEAR(transformed(1, 2), 6.0, 1e-9);
 }
 
-#ifdef PLAMATRIX_WITH_CUDA
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 TEST(PointCloud, transformPoints_GpuOutputReuseAndAsync)
 {
     DenseMatrix<float, Device::CPU> R(3, 3);

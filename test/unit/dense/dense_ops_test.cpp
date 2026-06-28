@@ -1,14 +1,30 @@
 #include <gtest/gtest.h>
 
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include <plamatrix/dense/dense_ops.h>
 
 using namespace plamatrix;
 
+namespace
+{
+
+void setTestThreads(int threads)
+{
+#ifdef PLAMATRIX_WITH_OPENMP
+    omp_set_num_threads(threads);
+#else
+    static_cast<void>(threads);
+#endif
+}
+
+} // namespace
+
 TEST(DenseOps, add_CpuSerial_TwoByTwo)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     DenseMatrix<float, Device::CPU> A(2, 2);
     DenseMatrix<float, Device::CPU> B(2, 2);
@@ -35,7 +51,7 @@ TEST(DenseOps, add_CpuSerial_TwoByTwo)
 
 TEST(DenseOps, sub_CpuSerial)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     DenseMatrix<float, Device::CPU> A(2, 2);
     DenseMatrix<float, Device::CPU> B(2, 2);
@@ -278,11 +294,55 @@ TEST(DenseOps, sub_EmptyGpuMatrices)
 }
 #endif
 
+#ifdef PLAMATRIX_WITH_METAL
+TEST(DenseOpsMetal, addSub_FloatMatchesCpu)
+{
+    DenseMatrix<float, Device::CPU> A(2, 2);
+    DenseMatrix<float, Device::CPU> B(2, 2);
+    A(0, 0) = 1.0f;
+    A(1, 0) = 2.0f;
+    A(0, 1) = 3.0f;
+    A(1, 1) = 4.0f;
+    B(0, 0) = 5.0f;
+    B(1, 0) = 6.0f;
+    B(0, 1) = 7.0f;
+    B(1, 1) = 8.0f;
+
+    auto A_gpu = A.toGpu();
+    auto B_gpu = B.toGpu();
+    auto C = add(A_gpu, B_gpu).toCpu();
+    auto D = sub(B_gpu, A_gpu).toCpu();
+
+    for (Index j = 0; j < 2; ++j)
+    {
+        for (Index i = 0; i < 2; ++i)
+        {
+            EXPECT_FLOAT_EQ(C(i, j), A(i, j) + B(i, j));
+            EXPECT_FLOAT_EQ(D(i, j), B(i, j) - A(i, j));
+        }
+    }
+}
+
+TEST(DenseOpsMetal, add_DoubleFallbackMatchesCpu)
+{
+    DenseMatrix<double, Device::CPU> A(2, 1);
+    DenseMatrix<double, Device::CPU> B(2, 1);
+    A(0, 0) = 1.25;
+    A(1, 0) = -2.5;
+    B(0, 0) = 3.75;
+    B(1, 0) = 4.5;
+
+    auto C = add(A.toGpu(), B.toGpu()).toCpu();
+    EXPECT_DOUBLE_EQ(C(0, 0), 5.0);
+    EXPECT_DOUBLE_EQ(C(1, 0), 2.0);
+}
+#endif
+
 // === Task 8: Transpose and Scalar Operations ===
 
 TEST(DenseOps, transpose_Cpu)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     // 2x3 matrix:
     // [1 3 5]
@@ -313,7 +373,7 @@ TEST(DenseOps, transpose_Cpu)
 
 TEST(DenseOps, scalarMultiply_Cpu)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     // 2x2 matrix:
     // [1 3]
@@ -334,7 +394,7 @@ TEST(DenseOps, scalarMultiply_Cpu)
 
 TEST(DenseOps, scalarMultiplyAdd_Cpu)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     // A = [1 3; 2 4], B = [0.5 0.5; 0.5 0.5]
     DenseMatrix<float, Device::CPU> A(2, 2);

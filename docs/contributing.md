@@ -40,8 +40,10 @@ git checkout main && git merge feat/<feature-name>
 
 ### 提交前检查
 
-- [ ] `cd build && cmake .. -DPLAMATRIX_BUILD_TESTS=ON && cmake --build . -j$(nproc)` 编译通过
-- [ ] `./test/plamatrix_tests` 全部测试通过
+- [ ] 默认后端构建：`cmake -S . -B build -DPLAMATRIX_BUILD_TESTS=ON && cmake --build build -j$(nproc)`
+- [ ] 无 GPU 后端构建：`cmake -S . -B build-none -DPLAMATRIX_GPU_BACKEND=NONE -DPLAMATRIX_BUILD_TESTS=ON && cmake --build build-none -j$(nproc)`
+- [ ] macOS GPU 改动额外验证：`cmake -S . -B build-metal -DPLAMATRIX_GPU_BACKEND=METAL -DPLAMATRIX_BUILD_TESTS=ON`
+- [ ] `ctest --test-dir build --output-on-failure` 或对应 build 目录全部测试通过
 - [ ] 无编译警告
 - [ ] 单文件不超过 400 行
 

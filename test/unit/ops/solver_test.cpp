@@ -40,8 +40,8 @@ TEST(Solver, solve_2x2_Cpu)
     EXPECT_NEAR(ax1, B(1, 0), 1e-9);
 }
 
-// Solver: solve_2x2_Gpu — solve a simple 2x2 linear system on GPU
-#ifdef PLAMATRIX_WITH_CUDA
+// Solver: solve_2x2_Gpu — solve a simple 2x2 linear system on the configured GPU backend
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 TEST(Solver, solve_2x2_Gpu)
 {
     DenseMatrix<double, Device::CPU> A_cpu(2, 2);
@@ -72,6 +72,68 @@ TEST(Solver, solve_2x2_Gpu)
     double ax1 = A_cpu(1, 0) * X(0, 0) + A_cpu(1, 1) * X(1, 0);
     EXPECT_NEAR(ax0, B_cpu(0, 0), 1e-6);
     EXPECT_NEAR(ax1, B_cpu(1, 0), 1e-6);
+}
+#endif
+
+#ifdef PLAMATRIX_WITH_METAL
+TEST(SolverMetal, solve_FloatMatchesCpu)
+{
+    DenseMatrix<float, Device::CPU> A_cpu(3, 3);
+    A_cpu.setValue(0, 0, 3.0f);
+    A_cpu.setValue(1, 0, 1.0f);
+    A_cpu.setValue(2, 0, 2.0f);
+    A_cpu.setValue(0, 1, 2.0f);
+    A_cpu.setValue(1, 1, 6.0f);
+    A_cpu.setValue(2, 1, 1.0f);
+    A_cpu.setValue(0, 2, 1.0f);
+    A_cpu.setValue(1, 2, 0.0f);
+    A_cpu.setValue(2, 2, 4.0f);
+
+    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    B_cpu.setValue(0, 0, 10.0f);
+    B_cpu.setValue(1, 0, 13.0f);
+    B_cpu.setValue(2, 0, 11.0f);
+    B_cpu.setValue(0, 1, 4.0f);
+    B_cpu.setValue(1, 1, 7.0f);
+    B_cpu.setValue(2, 1, 8.0f);
+
+    auto X_cpu = solve(A_cpu, B_cpu);
+    auto X_gpu = solve(A_cpu.toGpu(), B_cpu.toGpu()).toCpu();
+
+    for (Index col = 0; col < X_cpu.cols(); ++col)
+    {
+        for (Index row = 0; row < X_cpu.rows(); ++row)
+        {
+            EXPECT_NEAR(X_cpu(row, col), X_gpu(row, col), 1e-4f);
+        }
+    }
+}
+
+TEST(SolverMetal, solve_DoubleFallbackMatchesCpu)
+{
+    DenseMatrix<double, Device::CPU> A_cpu(3, 3);
+    A_cpu.setValue(0, 0, 5.0);
+    A_cpu.setValue(1, 0, 1.0);
+    A_cpu.setValue(2, 0, 0.0);
+    A_cpu.setValue(0, 1, 2.0);
+    A_cpu.setValue(1, 1, 4.0);
+    A_cpu.setValue(2, 1, 1.0);
+    A_cpu.setValue(0, 2, 1.0);
+    A_cpu.setValue(1, 2, 2.0);
+    A_cpu.setValue(2, 2, 3.0);
+
+    DenseMatrix<double, Device::CPU> B_cpu(3, 1);
+    B_cpu.setValue(0, 0, 9.0);
+    B_cpu.setValue(1, 0, 8.0);
+    B_cpu.setValue(2, 0, 7.0);
+
+    auto X_cpu = solve(A_cpu, B_cpu);
+    auto X_gpu = solve(A_cpu.toGpu(), B_cpu.toGpu()).toCpu();
+
+    for (Index row = 0; row < X_cpu.rows(); ++row)
+    {
+        EXPECT_NEAR(X_cpu(row, 0), X_gpu(row, 0), 1e-12);
+    }
 }
 #endif
 

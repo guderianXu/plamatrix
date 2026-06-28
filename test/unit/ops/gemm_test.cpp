@@ -2,17 +2,33 @@
 #include <cstdlib>
 
 #include <gtest/gtest.h>
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include <plamatrix/ops/gemm.h>
 
 using namespace plamatrix;
 
+namespace
+{
+
+void setTestThreads(int threads)
+{
+#ifdef PLAMATRIX_WITH_OPENMP
+    omp_set_num_threads(threads);
+#else
+    static_cast<void>(threads);
+#endif
+}
+
+} // namespace
+
 // GEMM: multiply_2x3_by_3x2_CpuSerial
 // A(2x3) * B(3x2) = C(2x2), single-threaded for deterministic output
 TEST(GEMM, multiply_2x3_by_3x2_CpuSerial)
 {
-    omp_set_num_threads(1);
+    setTestThreads(1);
 
     DenseMatrix<float, Device::CPU> A(2, 3);
     DenseMatrix<float, Device::CPU> B(3, 2);
@@ -45,8 +61,8 @@ TEST(GEMM, multiply_2x3_by_3x2_CpuSerial)
     EXPECT_FLOAT_EQ(C(1, 1), 136.0f);
 }
 
-// GEMM: multiply_2x3_by_3x2_Gpu — same calculation on GPU via cuBLAS
-#ifdef PLAMATRIX_WITH_CUDA
+// GEMM: multiply_2x3_by_3x2_Gpu — same calculation on the configured GPU backend
+#if defined(PLAMATRIX_WITH_CUDA) || defined(PLAMATRIX_WITH_METAL)
 TEST(GEMM, multiply_2x3_by_3x2_Gpu)
 {
     DenseMatrix<float, Device::CPU> A_cpu(2, 3);
@@ -185,6 +201,37 @@ TEST(GEMM, multiply_Larger_CpuVsGpuConsistency)
         {
             EXPECT_NEAR(C_cpu(i, j), C_gpu_to_cpu(i, j), tolerance)
                 << "Mismatch at (" << i << ", " << j << ")";
+        }
+    }
+}
+
+TEST(GEMM, multiply_DoubleGpuMatchesCpu)
+{
+    DenseMatrix<double, Device::CPU> A_cpu(3, 2);
+    DenseMatrix<double, Device::CPU> B_cpu(2, 3);
+
+    A_cpu.setValue(0, 0, 1.25);
+    A_cpu.setValue(1, 0, -2.0);
+    A_cpu.setValue(2, 0, 3.5);
+    A_cpu.setValue(0, 1, 4.0);
+    A_cpu.setValue(1, 1, 0.5);
+    A_cpu.setValue(2, 1, -1.5);
+
+    B_cpu.setValue(0, 0, -2.0);
+    B_cpu.setValue(1, 0, 1.0);
+    B_cpu.setValue(0, 1, 3.0);
+    B_cpu.setValue(1, 1, -4.0);
+    B_cpu.setValue(0, 2, 0.25);
+    B_cpu.setValue(1, 2, 2.5);
+
+    auto C_cpu = gemm(A_cpu, B_cpu);
+    auto C_gpu = gemm(A_cpu.toGpu(), B_cpu.toGpu()).toCpu();
+
+    for (Index j = 0; j < C_cpu.cols(); ++j)
+    {
+        for (Index i = 0; i < C_cpu.rows(); ++i)
+        {
+            EXPECT_NEAR(C_cpu(i, j), C_gpu(i, j), 1e-12);
         }
     }
 }

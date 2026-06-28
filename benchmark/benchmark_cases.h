@@ -18,7 +18,7 @@ struct CaseResult
     Index size = 0;
     double time_serial_ms = -1.0;
     double time_omp_ms = -1.0;
-    double time_cuda_ms = -1.0;
+    double time_gpu_ms = -1.0;
     double time_transfer_ms = -1.0;
 };
 
@@ -37,13 +37,13 @@ double measure(BenchmarkFn fn, int warmup = 3, int trials = 10);
 /// @param sizes    Matrix sizes to benchmark
 /// @param serial   Whether to run serial CPU benchmarks
 /// @param omp      Whether to run OpenMP CPU benchmarks
-/// @param cuda     Whether to run GPU benchmarks
+/// @param gpu      Whether to run GPU benchmarks
 /// @param report   Output report to populate with results
 /// @param case_filter  Optional case names to run; empty means all cases
 void runAllCases(const std::vector<Index>& sizes,
                  bool serial,
                  bool omp,
-                 bool cuda,
+                 bool gpu,
                  BenchmarkReport& report,
                  const std::vector<std::string>& case_filter = {});
 
@@ -52,21 +52,21 @@ void runAllCases(const std::vector<Index>& sizes,
 std::vector<std::string> getAllCaseNames();
 
 // ============================================================================
-// Implementation-detail GPU benchmark functions (defined in benchmark_cases.cu)
+// Implementation-detail GPU benchmark functions (defined by the selected GPU backend)
 // ============================================================================
 namespace detail
 {
 
-void runGemmCuda(CaseResult& r, Index N);
-void runAddCuda(CaseResult& r, Index N);
-void runSubCuda(CaseResult& r, Index N);
-void runTransposeCuda(CaseResult& r, Index N);
-void runSvdCuda(CaseResult& r, Index N);
-void runQrCuda(CaseResult& r, Index N);
-void runEighCuda(CaseResult& r, Index N);
-void runSolveCuda(CaseResult& r, Index N);
-void runCovarianceCuda(CaseResult& r, Index N);
-void runPointTransformCuda(CaseResult& r, Index N);
+void runGemmGpu(CaseResult& r, Index N);
+void runAddGpu(CaseResult& r, Index N);
+void runSubGpu(CaseResult& r, Index N);
+void runTransposeGpu(CaseResult& r, Index N);
+void runSvdGpu(CaseResult& r, Index N);
+void runQrGpu(CaseResult& r, Index N);
+void runEighGpu(CaseResult& r, Index N);
+void runSolveGpu(CaseResult& r, Index N);
+void runCovarianceGpu(CaseResult& r, Index N);
+void runPointTransformGpu(CaseResult& r, Index N);
 
 } // namespace detail
 

@@ -29,6 +29,7 @@
 // ============================================================================
 
 #include "plamatrix/core/types.h"
+#include "plamatrix/core/gpu_backend.h"
 #include "plamatrix/core/error_check.h"
 #include "plamatrix/core/allocator.h"
 #include "plamatrix/core/device_matrix.h"

@@ -13,13 +13,14 @@
 #include <malloc.h>
 #endif
 
-#ifdef PLAMATRIX_NO_CUDA
-#include "plamatrix/core/no_cuda_stubs.h"
-#else
+#ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime.h>
+#else
+#include "plamatrix/core/no_cuda_stubs.h"
 #endif
 
 #include "plamatrix/core/error_check.h"
+#include "plamatrix/core/gpu_runtime.h"
 
 namespace plamatrix
 {
@@ -72,9 +73,7 @@ public:
             }
         }
 
-        void* ptr = nullptr;
-        PLAMATRIX_CHECK_CUDA(cudaMalloc(&ptr, bytes));
-        return ptr;
+        return gpuAllocateBytes(bytes);
     }
 
     static void release(void* ptr, std::size_t bytes)
@@ -91,7 +90,7 @@ public:
             return;
         }
 
-        PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+        gpuFreeBytes(ptr, bytes);
     }
 
     static void releaseNoThrow(void* ptr, std::size_t bytes) noexcept
@@ -102,7 +101,7 @@ public:
         }
         catch (...)
         {
-            static_cast<void>(cudaFree(ptr));
+            gpuFreeBytesNoThrow(ptr, bytes);
         }
     }
 
@@ -120,7 +119,7 @@ public:
 
         for (void* ptr : blocks_to_free)
         {
-            PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+            gpuFreeBytes(ptr, 0);
         }
     }
 
@@ -271,7 +270,7 @@ struct GpuAllocator
     /// @throws std::runtime_error  if deallocation fails (e.g., double-free)
     static void deallocate(Scalar* ptr)
     {
-        PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+        detail::gpuFreeBytes(ptr, 0);
     }
 
     /// Deallocate device memory with element count. Uses the memory pool when enabled.
@@ -287,7 +286,7 @@ struct GpuAllocator
     {
         if (ptr)
         {
-            static_cast<void>(cudaFree(ptr));
+            detail::gpuFreeBytesNoThrow(ptr, 0);
         }
     }
 

@@ -10,7 +10,9 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#ifdef PLAMATRIX_WITH_OPENMP
 #include <omp.h>
+#endif
 
 #include <plamatrix/plamatrix.h>
 
@@ -22,7 +24,9 @@ protected:
     void SetUp() override
     {
         std::srand(42);
+#ifdef PLAMATRIX_WITH_OPENMP
         omp_set_num_threads(1);
+#endif
     }
 
     // 生成球形点云 — 各向同性，协方差矩阵接近单位矩阵的倍数

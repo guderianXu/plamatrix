@@ -1,7 +1,9 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(OpenMP)
+if(@PLAMATRIX_OPENMP_ENABLED@)
+    find_dependency(OpenMP)
+endif()
 if(@PLAMATRIX_WITH_CUDA@)
     find_dependency(CUDAToolkit)
 endif()
