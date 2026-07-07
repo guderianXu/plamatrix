@@ -31,6 +31,16 @@ TEST(CpuAllocator, allocate_RejectsByteSizeOverflow)
     EXPECT_THROW(CpuAllocator<float>::allocate(count), std::overflow_error);
 }
 
+#if defined(_WIN32)
+TEST(CpuAllocator, platformSelectsWin32AlignedAllocationOnWindows)
+{
+#if !defined(PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC)
+#error "Windows builds must use Win32 aligned allocation, including nvcc host compilation"
+#endif
+    SUCCEED();
+}
+#endif
+
 TEST(PinnedCpuAllocator, allocate_ReturnsNonNullAndCanReadWrite)
 {
     float* ptr = PinnedCpuAllocator<float>::allocate(3);

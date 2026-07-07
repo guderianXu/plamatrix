@@ -121,8 +121,8 @@ if(PLAMATRIX_WITH_CUDA)
     endif()
 endif()
 
-# ---- OpenMP (always required) ----
-find_package(OpenMP REQUIRED)
+# ---- OpenMP (always required for C++ CPU paths) ----
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 # ---- Optional CPU BLAS/LAPACK acceleration ----
 set(PLAMATRIX_LINALG_PROVIDER "fallback")

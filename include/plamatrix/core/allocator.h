@@ -9,8 +9,14 @@
 #include <unordered_map>
 #include <vector>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 #include <malloc.h>
+#endif
+
+#ifdef _WIN32
+#define PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC 1
+#else
+#define PLAMATRIX_CPU_ALLOCATOR_USES_POSIX_MEMALIGN 1
 #endif
 
 #ifdef PLAMATRIX_NO_CUDA
@@ -182,7 +188,7 @@ struct CpuAllocator
     {
         std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
         void* ptr = nullptr;
-#ifdef _MSC_VER
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
         ptr = _aligned_malloc(bytes, 32);
         if (ptr == nullptr)
         {
@@ -202,7 +208,7 @@ struct CpuAllocator
     /// @param ptr  Pointer to free (nullptr is safe)
     static void deallocate(Scalar* ptr)
     {
-#ifdef _MSC_VER
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
         _aligned_free(ptr);
 #else
         std::free(ptr);
@@ -211,7 +217,7 @@ struct CpuAllocator
 
     static void deallocateNoThrow(Scalar* ptr) noexcept
     {
-#ifdef _MSC_VER
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
         _aligned_free(ptr);
 #else
         std::free(ptr);
