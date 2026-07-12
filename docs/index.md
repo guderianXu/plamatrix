@@ -19,7 +19,7 @@ PlaMatrix 是一个面向点云处理的高性能矩阵运算库。它在 CPU �
 | [DenseMatrix API](api/dense-matrix.md) | 密集矩阵：构造、访问、填充、转置、设备传输 |
 | [稀疏矩阵 API](api/sparse-matrix.md) | COO / CSR 格式、构建与转换 |
 | [线性代数 API](api/linear-algebra.md) | 矩阵乘法 (gemm)、SVD、QR、特征值、线性求解 |
-| [点云运算 API](api/point-cloud.md) | 旋转矩阵、刚体变换、点变换、协方差 |
+| [三维向量与点云运算 API](api/point-cloud.md) | Vec3 算术、旋转矩阵、刚体变换、点变换、协方差 |
 | [代码架构](architecture.md) | 内部实现详解：算法、数据流、内存管理、CUDA kernel |
 | [贡献指南](contributing.md) | 编码规范、TDD 流程、PR 清单 |
 

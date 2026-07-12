@@ -240,6 +240,9 @@ sudo cmake --install build --prefix /usr/local
 └── lib/cmake/plamatrix/ # CMake 包配置
 ```
 
+`include/plamatrix/ops/vector.h` 随安装一同导出。`Vec3` 及其算术是 header-only API，CPU-only 和 CUDA
+构建使用同一份接口，不需要额外链接设备运行库。
+
 其他项目通过 `find_package(plamatrix)` 即可引用。
 
 ---

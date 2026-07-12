@@ -4,7 +4,7 @@
 // 编译: g++ -std=c++17 -O2 -Iinclude -fopenmp docs/examples/basic-operations.cpp
 //       -Lbuild -lplamatrix -o basic-operations
 //
-// 演示: 矩阵构造、填充、加减、标量运算、转置、GEMM、CPU/GPU 传输
+// 演示: Vec3、矩阵构造、填充、加减、标量运算、转置、GEMM、CPU/GPU 传输
 // ============================================================================
 
 #include <chrono>
@@ -18,6 +18,11 @@ int main()
 {
     constexpr Index N = 1024;
     std::cout << "=== PlaMatrix 基本运算示例 (N=" << N << ") ===\n" << std::endl;
+
+    const Vec3<double> direction{0.0, 3.0, 4.0};
+    const Vec3<double> unit_direction = normalized(direction);
+    std::cout << "Vec3 unit direction: (" << unit_direction.x << ", "
+              << unit_direction.y << ", " << unit_direction.z << ")" << std::endl;
 
     // ---- 1. 构造 + 填充 ----
     std::cout << "1. 创建两个 " << N << "x" << N << " 矩阵..." << std::endl;

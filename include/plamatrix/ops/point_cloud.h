@@ -6,16 +6,10 @@
 #include <vector>
 
 #include "plamatrix/dense/dense_matrix.h"
+#include "plamatrix/ops/vector.h"
 
 namespace plamatrix
 {
-
-/// 3D vector (stack-allocated parameter type).
-template <typename Scalar>
-struct Vec3
-{
-    Scalar x, y, z;
-};
 
 /// Build a 3x3 rotation matrix from axis-angle using the Rodrigues formula.
 /// @tparam Scalar  Element type (float or double)

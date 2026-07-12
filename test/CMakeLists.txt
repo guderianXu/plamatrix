@@ -28,3 +28,13 @@ gtest_discover_tests(plamatrix_tests
     DISCOVERY_MODE PRE_TEST
     PROPERTIES SKIP_RETURN_CODE 77
 )
+
+add_executable(plamatrix_vector_tests
+    unit/ops/vector_test.cpp
+)
+target_link_libraries(plamatrix_vector_tests PRIVATE plamatrix GTest::gtest_main)
+
+gtest_discover_tests(plamatrix_vector_tests
+    TEST_PREFIX plamatrix.
+    DISCOVERY_MODE PRE_TEST
+)

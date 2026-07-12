@@ -4,8 +4,43 @@
 
 ```cpp
 template <typename Scalar>
-struct Vec3 { Scalar x, y, z; };
+struct Vec3
+{
+    Scalar x{};
+    Scalar y{};
+    Scalar z{};
+
+    Vec3();
+    Vec3(Scalar x, Scalar y, Scalar z);
+    explicit Vec3(const std::array<Scalar, 3>& values);
+    std::array<Scalar, 3> toArray() const;
+};
 ```
+
+`Vec3` 定义于 `<plamatrix/ops/vector.h>`，并由 `<plamatrix/plamatrix.h>` 和
+`<plamatrix/ops/point_cloud.h>` 继续暴露。现有 `Vec3<float>{x, y, z}` 花括号写法保持兼容。
+
+## 三维向量运算
+
+```cpp
+Vec3<double> a(std::array<double, 3>{1.0, 2.0, 3.0});
+Vec3<double> b{4.0, 5.0, 6.0};
+
+auto sum = a + b;
+auto difference = a - b;
+auto scaled = 2.0 * a;
+double projection = dot(a, b);
+auto normal = cross(a, b);
+double length = norm(normal);
+auto unit = normalized(normal, 1.0e-12);
+bool valid = isFinite(unit);
+auto values = unit.toArray();
+```
+
+- `squaredNorm()` 避免不需要的平方根。
+- `normalized(value, epsilon)` 在长度不大于 `epsilon` 时返回原向量，不虚构默认方向。
+- `isFinite()` 对三个分量逐一拒绝 NaN 和正负无穷。
+- 所有运算都是 header-only 标量运算，不分配 `DenseMatrix`，也不触发 CPU/GPU 数据传输。
 
 ## 旋转矩阵
 

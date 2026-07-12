@@ -8,6 +8,7 @@
 - **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
 - **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)
 - **稀疏矩阵**：COO / CSR 格式，COO→CSR 转换
+- **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
@@ -138,6 +139,11 @@ auto X = solve(A, b);               // 线性求解 Ax = b
 
 ### 点云运算
 ```cpp
+Vec3<double> a(std::array<double, 3>{1.0, 2.0, 3.0});
+Vec3<double> b{4.0, 5.0, 6.0};
+auto unit_normal = normalized(cross(a, b), 1.0e-12);
+bool valid = isFinite(unit_normal);
+
 auto R = rotationMatrix(axis, angle);    // Rodrigues 旋转矩阵
 auto T = rigidTransform(R, translation); // 4×4 刚体变换
 auto pts_t = transformPoints(T, points); // 批量点变换
@@ -175,7 +181,7 @@ GpuAllocator<float>::setMemoryPoolEnabled(false);
 - [DenseMatrix API](docs/api/dense-matrix.md)
 - [稀疏矩阵 API](docs/api/sparse-matrix.md)
 - [线性代数 API](docs/api/linear-algebra.md)
-- [点云运算 API](docs/api/point-cloud.md)
+- [三维向量与点云运算 API](docs/api/point-cloud.md)
 - [贡献指南](docs/contributing.md)
 
 ## 项目结构

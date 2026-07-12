@@ -24,6 +24,7 @@ include/plamatrix/plamatrix.h          # 总入口
     ├── gemm.h            矩阵乘法 (CPU BLAS/fallback / cuBLAS)
     ├── decomposition.h   SVD / QR / Eigh
     ├── solver.h          线性求解
+    ├── vector.h          Vec3 小向量表示与算术
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
 
 src/                            实现文件
@@ -337,6 +338,12 @@ cusolverDnSgetrs(handle, CUBLAS_OP_N, n, nrhs, A_work, lda, d_pivot, B_work, ldb
 ---
 
 ## 7. 点云运算
+
+### 7.0 小向量数学 (`vector.h`)
+
+`Vec3<Scalar>` 是与 CPU/GPU 后端无关的 header-only 三维向量类型，负责单个坐标、方向和法线的轻量运算。
+它支持与 `std::array<Scalar, 3>` 显式转换、分量算术、点积、叉积、平方范数、范数、带阈值归一化和有限性检查。
+批量点云仍使用列优先 `DenseMatrix<Scalar, Device>`；`Vec3` 不承担动态存储或设备内存管理。
 
 ### 7.1 Rodrigues 旋转矩阵 (`point_cloud_cpu.cpp`)
 
