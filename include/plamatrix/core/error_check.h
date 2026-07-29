@@ -10,6 +10,7 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
+#include <cusparse.h>
 #endif
 
 namespace plamatrix
@@ -22,9 +23,11 @@ inline void cudaCheck(cudaError_t err, const char* file, int line, const char* e
 {
     if (err != cudaSuccess)
     {
+        const char* const error_string = cudaGetErrorString(err);
+        static_cast<void>(cudaGetLastError());
         std::ostringstream oss;
         oss << "CUDA error at " << file << ":" << line
-            << " (" << expr << "): " << cudaGetErrorString(err);
+            << " (" << expr << "): " << error_string;
         throw std::runtime_error(oss.str());
     }
 }
@@ -70,6 +73,30 @@ inline const char* cusolverStatusString(cusolverStatus_t stat)
     }
 }
 
+inline const char* cusparseStatusString(cusparseStatus_t stat)
+{
+#if defined(CUSPARSE_VERSION) && CUSPARSE_VERSION >= 10300
+    if (const char* const message = cusparseGetErrorString(stat))
+    {
+        return message;
+    }
+#endif
+    switch (stat)
+    {
+    case CUSPARSE_STATUS_SUCCESS:                   return "CUSPARSE_STATUS_SUCCESS";
+    case CUSPARSE_STATUS_NOT_INITIALIZED:           return "CUSPARSE_STATUS_NOT_INITIALIZED";
+    case CUSPARSE_STATUS_ALLOC_FAILED:              return "CUSPARSE_STATUS_ALLOC_FAILED";
+    case CUSPARSE_STATUS_INVALID_VALUE:             return "CUSPARSE_STATUS_INVALID_VALUE";
+    case CUSPARSE_STATUS_ARCH_MISMATCH:             return "CUSPARSE_STATUS_ARCH_MISMATCH";
+    case CUSPARSE_STATUS_MAPPING_ERROR:             return "CUSPARSE_STATUS_MAPPING_ERROR";
+    case CUSPARSE_STATUS_EXECUTION_FAILED:          return "CUSPARSE_STATUS_EXECUTION_FAILED";
+    case CUSPARSE_STATUS_INTERNAL_ERROR:            return "CUSPARSE_STATUS_INTERNAL_ERROR";
+    case CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED: return "CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+    case CUSPARSE_STATUS_ZERO_PIVOT:                return "CUSPARSE_STATUS_ZERO_PIVOT";
+    default:                                        return "UNKNOWN_CUSPARSE_STATUS";
+    }
+}
+
 } // namespace detail
 
 /// Check cuBLAS API error. Throws std::runtime_error with file/line/expression details on failure.
@@ -98,9 +125,23 @@ inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, con
     }
 }
 
+/// Check cuSPARSE API error. Throws std::runtime_error with file/line/expression details on failure.
+inline void cusparseCheck(cusparseStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSPARSE_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSPARSE error at " << file << ":" << line
+            << " (" << expr << "): " << detail::cusparseStatusString(stat)
+            << " (" << static_cast<int>(stat) << ")";
+        throw std::runtime_error(oss.str());
+    }
+}
+
 #define PLAMATRIX_CHECK_CUDA(call)    plamatrix::cudaCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSPARSE(call) plamatrix::cusparseCheck((call), __FILE__, __LINE__, #call)
 
 #else  // !PLAMATRIX_WITH_CUDA — checked stub fallbacks
 
@@ -140,9 +181,23 @@ inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, con
     }
 }
 
+/// Report unavailable cuSPARSE backend errors in CPU-only builds.
+inline void cusparseCheck(cusparseStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSPARSE_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSPARSE stub error at " << file << ":" << line
+            << " (" << expr << "): backend unavailable, status "
+            << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
 #define PLAMATRIX_CHECK_CUDA(call)    plamatrix::cudaCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::cublasCheck((call), __FILE__, __LINE__, #call)
 #define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::cusolverCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSPARSE(call) plamatrix::cusparseCheck((call), __FILE__, __LINE__, #call)
 
 #endif // PLAMATRIX_WITH_CUDA
 

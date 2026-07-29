@@ -24,6 +24,17 @@ DenseMatrix<float, Device::CPU> A(100, 200);  // 100行 200列，全零
 DenseMatrix<double, Device::GPU> B(50, 50);   // GPU 50×50 double矩阵
 ```
 
+`DenseMatrix()` 是有效的空对象。行列必须非负，`rows * cols` 发生 `Index` 溢出时构造失败。
+
+CUDA 构建还提供未初始化、按 stream 排序的 GPU 分配：
+
+```cpp
+auto output = DenseMatrix<float, Device::GPU>::uninitializedAsync(rows, cols, stream);
+```
+
+该入口只适用于 `Device::GPU`，元素初值未指定。分配、后续使用和释放都必须遵守传入
+stream 的顺序；CPU-only 构建会抛出明确的 `PLAMATRIX_WITH_CUDA=ON` 错误。
+
 ## 元素访问
 
 ```cpp
@@ -114,6 +125,7 @@ GpuAllocator<float>::setMemoryPoolEnabled(false);
 
 内存池按字节数缓存空闲 block，`releaseMemoryPool()` 会释放当前缓存。
 异步 kernel 或异步传输仍要求调用方保证相关矩阵在 stream 完成前保持有效。
+`uninitializedAsync()` 创建的 stream-ordered 分配不进入普通 GPU memory pool。
 
 ## GPU 异步计算和输出复用
 
@@ -138,6 +150,24 @@ PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 `gemmAsync`、`addAsync`、`subAsync` 只提交 GPU 工作，不主动同步；
 调用方负责保证输入/输出矩阵在对应 stream 完成前保持有效。
 
+部分 allocating async API（例如 `sumAsync`、`argMinAsync`、`exclusiveScanAsync` 和
+`gatherRowsAsync` 的返回值重载）使用 `uninitializedAsync()`。这类返回矩阵必须一直存活到
+stream 完成，并在 stream 销毁前显式释放：
+
+```cpp
+auto result = sumAsync(input, ReductionAxis::All, workspace, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+// 此时可消费 result；在销毁 stream 前入队释放。
+result.closeAsyncAllocation();
+workspace.closeAsyncAllocation();
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+```
+
+`closeAsyncAllocation()` 在保留的创建 stream 上调用 `cudaFreeAsync`。成功后矩阵变为
+`0 x 0`，重复关闭空矩阵是 no-op；对普通非空 GPU 矩阵调用会抛出 `std::logic_error`。
+若需要观察释放错误，应显式调用该方法；析构只提供 `noexcept` 后备释放，因此保留的
+stream 必须至少存活到显式关闭或析构入队完成。
+
 ## 基类方法
 
 ```cpp
@@ -158,6 +188,11 @@ DenseMatrix<float, Device::CPU> A(100, 100);
 DenseMatrix<float, Device::CPU> B(std::move(A));  // A 变为空
 // A.data() == nullptr   (移动后源矩阵置空)
 ```
+
+移动构造和移动赋值都会转移数据指针、pinned/普通 host 分配类型，以及 GPU 普通/
+stream-ordered 分配类型和创建 stream。移动赋值先释放目标对象原有存储，再接管源对象；
+源对象统一置为 `0 x 0`、`data() == nullptr`，不再保留 stream provenance。因而对尚有
+异步工作使用的目标矩阵做移动赋值，同样要求调用方先完成相关 stream 生命周期管理。
 
 ## 完整示例
 

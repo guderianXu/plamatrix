@@ -8,6 +8,10 @@
 #include <random>
 #include <vector>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 #include <omp.h>
 
 #include "plamatrix/core/allocator.h"
@@ -112,7 +116,12 @@ private:
 template <typename T>
 void doNotOptimize(T const& value)
 {
+#ifdef _MSC_VER
+    static_cast<void>(value);
+    _ReadWriteBarrier();
+#else
     asm volatile("" : : "r,m"(value) : "memory");
+#endif
 }
 
 bool shouldRunCase(const std::vector<std::string>& case_filter, const char* name)
@@ -632,6 +641,9 @@ void runAllCases(const std::vector<Index>& sizes,
 #endif
             appendResultIfRan(report, std::move(r));
         }
+
+        detail::runRelease1Cases(N, serial, omp, cuda, report, case_filter);
+        detail::runRelease3Cases(N, serial, omp, cuda, report, case_filter);
     }
 }
 
@@ -648,7 +660,16 @@ std::vector<std::string> getAllCaseNames()
         "eigh",
         "solve",
         "covariance",
-        "pointTransform"
+        "pointTransform",
+        "elementwise",
+        "reduction",
+        "compact",
+        "eigh3x3_batch",
+        "coo_to_csr",
+        "spmv",
+        "spmm",
+        "cg",
+        "pcg"
     };
 }
 

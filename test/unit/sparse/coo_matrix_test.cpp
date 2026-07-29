@@ -83,7 +83,9 @@ TEST(COOMatrix, toCsr_Gpu)
     mat.add(1, 1, 2.0f);
     mat.add(2, 2, 3.0f);
     mat.add(0, 2, 4.0f);
+    mat.add(0, 2, -1.0f);
 
+#ifdef PLAMATRIX_WITH_CUDA
     auto csr = mat.toCsr();
 
     EXPECT_EQ(csr.rows(), 3);
@@ -106,10 +108,10 @@ TEST(COOMatrix, toCsr_Gpu)
     PLAMATRIX_CHECK_CUDA(cudaMemcpy(host_row_offsets.data(), csr.rowOffsets(), 4 * sizeof(Index),
                                     cudaMemcpyDeviceToHost));
 
-    // Sorted: (0,0)=1.0, (0,2)=4.0, (1,1)=2.0, (2,2)=3.0
+    // Sorted and duplicate-combined: (0,0)=1.0, (0,2)=3.0, (1,1)=2.0, (2,2)=3.0
     EXPECT_FLOAT_EQ(host_values[0], 1.0f);
     EXPECT_EQ(host_col_indices[0], 0);
-    EXPECT_FLOAT_EQ(host_values[1], 4.0f);
+    EXPECT_FLOAT_EQ(host_values[1], 3.0f);
     EXPECT_EQ(host_col_indices[1], 2);
     EXPECT_FLOAT_EQ(host_values[2], 2.0f);
     EXPECT_EQ(host_col_indices[2], 1);
@@ -120,4 +122,7 @@ TEST(COOMatrix, toCsr_Gpu)
     EXPECT_EQ(host_row_offsets[1], 2);  // row 0 has 2 NZ
     EXPECT_EQ(host_row_offsets[2], 3);  // row 1 has 1 NZ
     EXPECT_EQ(host_row_offsets[3], 4);  // row 2 has 1 NZ
+#else
+    EXPECT_THROW(static_cast<void>(mat.toCsr()), std::runtime_error);
+#endif
 }

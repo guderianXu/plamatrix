@@ -16,20 +16,26 @@ include/plamatrix/plamatrix.h          # 总入口
 │   └── device_matrix.h  RAII 矩阵基类
 ├── dense/        密集矩阵
 │   ├── dense_matrix.h   DenseMatrix (列优先, move-only)
-│   └── dense_ops.h      逐元素加减、标量运算
+│   ├── dense_ops.h      基础逐元素加减
+│   └── elementwise.h    标量/逐元素乘除、abs/sqrt/clamp
 ├── sparse/       稀疏矩阵
 │   ├── coo_matrix.h     COO 格式 + toCsr()
 │   └── csr_matrix.h     CSR 格式 (三数组)
 └── ops/          运算层
     ├── gemm.h            矩阵乘法 (CPU BLAS/fallback / cuBLAS)
     ├── decomposition.h   SVD / QR / Eigh
+    ├── reduction.h       按轴 value/indexed reduction + workspace
+    ├── indexing.h        scan、gather/scatter、stable compact + workspace
+    ├── small_matrix.h    批量对称 3x3 特征分解 + workspace
     ├── solver.h          线性求解
     ├── vector.h          Vec3 小向量表示与算术
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
 
 src/                            实现文件
-├── dense/*.cu                  GPU kernel (fill, transpose, add, sub)
-├── ops/*.cu + *_cpu.cpp        GPU + CPU 运算实现
+├── dense/*.cu + *_cpu.cpp      密集矩阵 CPU/CUDA 运算
+├── ops/*_dispatch.cu           reduction/indexing/small-matrix GPU 调度
+├── ops/*_workspace.cu          grow-only workspace 与 stream/status 生命周期
+├── ops/*.cu + *_cpu.cpp        其他 GPU + CPU 运算实现
 └── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
 ```
 
@@ -95,10 +101,19 @@ template <typename Scalar>
 struct GpuAllocator {
     static Scalar* allocate(size_t count) { cudaMalloc(&ptr, ...); }
     static void deallocate(Scalar* ptr) { cudaFree(ptr); }
+    static Scalar* allocateAsync(size_t count, cudaStream_t stream);
+    static void deallocateAsync(Scalar* ptr, cudaStream_t stream);
 };
 ```
 
 CPU 分配器使用 32 字节对齐（`posix_memalign`），适配 AVX-256 向量化。GPU 分配器包装 `cudaMalloc`/`cudaFree`，无 CUDA 时通过桩回退到 `malloc`/`free`。
+
+此外还有三条互不混用的分配路径：
+
+- `PinnedCpuAllocator` 使用 `cudaHostAlloc/cudaFreeHost`，供真正异步的 host-device 传输
+- 可选进程内 GPU memory pool 只缓存普通 `cudaMalloc` block，按字节数复用
+- `allocateAsync/deallocateAsync` 直接使用 `cudaMallocAsync/cudaFreeAsync`，由 owner 保留创建
+  stream provenance，不进入普通 memory pool；CPU-only 构建明确拒绝该入口
 
 ### 2.5 矩阵基类 (`core/device_matrix.h`)
 
@@ -124,11 +139,17 @@ protected:
 ```
 
 **关键设计决策**：
-- **默认构造删除**：必须指定维度，避免未初始化状态
+- **空对象有效**：`DenseMatrix()` 为 `0 x 0`，零元素矩阵不分配存储
 - **禁止拷贝**：大矩阵拷贝昂贵且隐式，强制用户显式操作
-- **支持移动**：完整 move 构造/赋值，源矩阵置空
+- **支持移动**：move 构造/赋值转移指针、host/GPU allocation kind 和 async stream
+  provenance；源矩阵置为 `0 x 0`
 - **RAII**：析构自动释放，`release()` 置 nullptr 防止二次释放
 - **`if constexpr` 编译期分发**：CPU/GPU 代码路径在编译期确定，零运行时开销
+
+普通 GPU allocation 走同步释放或 memory pool；stream-ordered allocation 必须在其创建
+stream 上入队释放。`closeAsyncAllocation()` 是可报告错误的显式路径，成功后清空 owner；
+析构为 `noexcept` 后备路径。移动赋值会先释放目标原有 owner，再接管源 owner，因此调用方
+必须保证目标和源关联的异步工作、stream 都满足各自生命周期约束。
 
 ---
 
@@ -140,6 +161,7 @@ protected:
 
 **构造和初始化**：
 - 参数化构造后立即零初始化：CPU 用 `memset`，GPU 用 `cudaMemset`
+- `uninitializedAsync(rows, cols, stream)`：GPU-only 的 stream-ordered 未初始化分配
 - `fill()`：CPU 用 `fill_n`；GPU 零值用 `cudaMemset`，非零值启动自定义 kernel
 
 **元素访问**：
@@ -149,6 +171,7 @@ protected:
 **设备传输**：
 - `toGpu()`：`cudaMemcpyHostToDevice`，`static_assert(Dev == CPU)`
 - `toCpu()`：`cudaMemcpyDeviceToHost`，`static_assert(Dev == GPU)`
+- `copyToGpuAsync/copyToCpuAsync` 和 allocating async 重载只建立 stream ordering，不等待
 - 返回新矩阵（move），传输是一次性的、昂贵的、显式的
 
 **转置**：
@@ -166,7 +189,7 @@ protected:
 
 统一的 256 线程/block 保持 CUDA occupancy 最优化。transpose 使用 2D block 处理行/列索引映射。
 
-### 3.3 逐元素运算 (`dense/dense_ops.h` + `dense_ops.cu`)
+### 3.3 逐元素运算 (`dense/dense_ops.h`、`dense/elementwise.h`)
 
 CPU 路径对小矩阵使用串行循环，超过内部阈值后用 `#pragma omp parallel for` 对平坦数组做循环并行化：
 ```cpp
@@ -175,6 +198,82 @@ for (Index i = 0; i < n; ++i)
 ```
 
 GPU 路径使用自定义 kernel（见上表），256 线程/block，CEIL(n, 256) 个 block。
+
+`add/sub/hadamardMultiply/hadamardDivide` 先检查两个输入的 `rows/cols` 完全相同；输出复用
+重载也检查同形，内部没有 broadcast plan。标量 multiply/add/divide、abs、sqrt 和 clamp
+同样遍历列优先平坦存储。除 `scalarDivide` 拒绝零除数、clamp 拒绝逆区间外，CPU 和 CUDA
+都保留 IEEE 浮点行为：Hadamard 零除产生 infinity/NaN，负数 sqrt 产生 NaN，输入 NaN 不被
+静默替换。同步 GPU 包装器在返回前同步 stream，异步包装器只负责 launch 和即时 CUDA 错误。
+
+### 3.4 归约 (`ops/reduction*.{h,cpp,cu}`)
+
+调度层先把 `ReductionAxis` 转换成 lane plan：
+
+| Axis | lane 数 | lane 长度 | 输出 |
+|------|---------|-----------|------|
+| `All` | 1 | `rows*cols` | `1 x 1` |
+| `Rows` | `rows` | `cols` | `rows x 1` |
+| `Columns` | `cols` | `rows` | `1 x cols` |
+
+`All` 的 source offset 是列优先线性 offset；Rows/Columns 的 indexed reduction 返回被归约
+维度内的 offset。extreme reducer 将 NaN 视为传播值，并在相等值或多个 NaN 间保留最低
+offset。sum 允许空 lane 并写零；其他归约只在输出 lane 本身存在且长度为零时拒绝。
+
+CPU `float` sum/mean 使用 `double` accumulator。mean 先扫描 NaN/infinity 和最大有限绝对值；
+普通累加存在溢出或舍入风险时，切换到按 scale 归一化的补偿求和，再做除法和最终类型转换。
+CUDA `All` 使用 CUB reduction 加自定义 summary/store kernel，Rows/Columns 使用每 lane kernel，
+保留相同的特殊值和稳定 mean 规则。
+
+`ReductionWorkspace` 保存 CUB temporary storage，是 move-only、grow-only、非线程安全对象。
+普通 allocation 可在同步点通过 `reserveBytes()` 增长或解除 stream 绑定；异步 allocation 只能
+在创建 stream 上增长。不同 stream 复用必须先同步，再 reset 普通 allocation 或 close async
+allocation。归约没有设备业务 status，因此没有 `checkStatus()`；同步包装器只需同步 stream，
+异步调用方负责输出和 workspace 生命周期。
+
+allocating `*Async` reduction 输出使用 `DenseMatrix::uninitializedAsync`。value reduction 为一个
+stream-ordered owner，arg reduction 为 values/indices 两个 owner；它们必须在所属 stream
+销毁前分别关闭。workspace move assignment 为 `noexcept`，会释放目标 storage 并转移源的
+storage 和 stream provenance。
+
+### 3.5 索引与紧缩 (`ops/indexing*.{h,cpp,cu}`)
+
+CPU scan 直接沿平坦列优先数组累计，并在每次加法前检查正负 `Index` 溢出。GPU 使用 CUB
+exclusive sum，然后用 validation kernel 检查每个 source offset 处的加法；错误记录最低
+offset。gather 保持索引顺序和重复项。scatter 先验证完整 index vector，再决定 owner：CPU
+对 `(destination, source)` 排序，GPU 对每个 destination 原子选择最低 source row，因此结果
+确定且非法索引不会造成部分写入。
+
+stable compact 把非零 byte mask 交给 source-row counting iterator 和 CUB `DeviceSelect::Flagged`。
+异步 capacity 形式写 `R x C` values、`R x 1` source indices 和 `1 x 1` count，只有 count 指定
+的前缀有效。同步 exact wrapper 等待 count，再分配精确尺寸并用 device-to-device copy/2D copy
+移除 capacity pitch；这也是没有 allocating async exact wrapper 的原因。
+
+`IndexingWorkspace` 头部保存 `{overflow, out_of_range}` status batch，后面是对齐的 CUB
+temporary storage 和 scatter owner 数组。连续同-stream async 调用共享一个未消费 batch，后续
+成功调用不会清掉先前错误；每类记录最低 source offset，同时存在时 overflow 优先。
+`checkStatus()` 要求 stream 已完成，复制并消费 batch，然后返回或抛异常。未消费 batch 禁止
+同步 reset 和 async close。同步 API 内部完成 synchronize/check；异步 API 由调用方执行。
+
+workspace 的 storage/stream/status 都由 move 构造转移。move assignment 是 `noexcept`，会释放
+目标 storage（并丢弃目标未消费 status）后接管源状态；因此覆盖目标前必须显式消费目标状态。
+
+### 3.6 批量对称 3x3 特征分解 (`ops/small_matrix*.{h,cpp,cu}`)
+
+输入每行为 `[xx,xy,xz,yy,yz,zz]`，输出为升序 `N x 3` eigenvalues 和按
+`[v0x,v0y,v0z,v1x,...,v2z]` 打包的 `N x 9` eigenvectors。CPU 在分配输出前检查完整输入
+为 `N x 6` 且全有限；GPU 在 launch 前检查形状，非有限值由设备端按行检测。
+
+CPU/GPU 都使用固定 8 sweep cyclic Jacobi，每 sweep 依次旋转 `(0,1)`、`(0,2)`、`(1,2)`。
+旋转角先按 `max(abs(app),abs(aqq),abs(apq))` 缩放，降低极值溢出风险。特征值 stable sort 后，
+相差不超过 `256*epsilon*max(1,abs(a),abs(b))` 的组视为重复特征空间；实现把固定坐标轴投影
+到该空间，执行两遍正交化，构造确定性基。最终向量归一化并规范符号：最大绝对分量非负，
+并列选择最低 component index。
+
+GPU kernel 对 nonfinite 或 basis failure 行写零，并分别记录最低失败 row。workspace status 中
+nonfinite 优先；同步包装器等待并检查，异步包装器要求调用方同步后 `checkStatus()`。
+`SymmetricEigh3x3Workspace` 的增长、stream 绑定和未消费 status 规则与 indexing workspace
+一致，但 move assignment 有意允许抛异常：若目标仍有未消费 status，则保持源和目标不变；
+消费后才释放目标并转移源 storage/status/stream provenance。
 
 ---
 
@@ -375,26 +474,33 @@ GPU：使用两遍 CUDA reduction。第一遍按 block 归约坐标和并计算�
 
 ## 8. 稀疏矩阵
 
-### 8.1 COOMatrix (`sparse/coo_matrix.h`)
+### 8.1 COO → CSR
 
-内部存储三个 `std::vector`：`_row_indices`、`_col_indices`、`_values`。`add()` 简单 push_back —— CPU only，不做去重或排序。
+CPU 与 CUDA 转换都按 `(row, column)` 排序并合并重复坐标；重复值按输入顺序求和。
+CPU 重载接受 `std::vector`，CUDA 同步重载接受 device 列向量。完全异步的
+`cooToCsrAsync()` 要求调用方预分配精确合并后 nnz 的输出，完成 stream 后调用
+`SparseOpsWorkspace::checkStatus()`；检查成功同时把输出标记为可信 CSR。
 
-### 8.2 COO → CSR 转换 (`toCsr()`)
+### 8.2 CSR 存储与传输
 
-1. **排序三元组**：创建索引排列 `0..nnz-1`，按 `(row, col)` 排序
-2. **计数非零元**：每行非零元个数 → `row_counts`
-3. **前缀和**：`offsets[0]=0`，`offsets[r+1]=offsets[r]+row_counts[r]` → `row_offsets`
-4. **散射**：按排列顺序写 `values` 和 `col_indices`，用行游标 `pos[row]`
-5. **GPU 传输**：散射在 CPU 完成，结果通过 `cudaMemcpy` 传至 GPU
+`CSRMatrix` 独立拥有 values、column indices 和 row offsets。同步 `toCpu()/toGpu()`
+完成后可立即使用；异步 copy 记录 producer stream，未同步时禁止跨 stream 消费或
+覆盖。可变数组指针一旦逸出，固定迭代异步求解所需的结构可信标记会失效，自适应
+CG/PCG 会重新验证结构。
 
-### 8.3 CSRMatrix (`sparse/csr_matrix.h`)
+### 8.3 稀疏乘法
 
-独立管理三个数组（不从 DeviceMatrix 继承数据存储）：
-- `_values`：nnz 个 Scalar
-- `_col_indices`：nnz 个 Index
-- `_row_offsets`：rows+1 个 Index
+CPU `spmv/spmm` 使用排序 CSR；CUDA 路径通过 cuSPARSE 执行，并由
+`SparseOpsWorkspace` 复用 descriptor 和临时存储。异步调用绑定一个 stream，必须在
+同步并 `closeAsyncAllocation()` 后才能切换 stream 或销毁非默认 stream。
 
-每个数组独立分配和释放。析构函数调用 `releaseArrays()` 逐数组检查 nullptr 后释放。Move 语义转移三个指针的所有权。
+### 8.4 CG 与 PCG
+
+`cg()` 和 `pcg()` 接受 SPD CSR、列向量 RHS、调用方持有的初始解和
+`IterativeSolverOptions`。CPU 与 CUDA 均报告初始/最终残差、迭代数和收敛状态；
+Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口执行主机收敛检查，
+`cgFixedIterationsAsync()/pcgFixedIterationsAsync()` 则提交固定轮数并通过显式 finalize
+读取报告。
 
 ---
 
@@ -428,6 +534,10 @@ cublasHandle_t getCublasHandle() {
 | `gemm.cu` | 显式实例化 | `gemm<float/double, GPU, stream>` |
 | `decomposition_cpu.cpp` | 显式实例化 | `svd/qr/eigh<float/double, CPU>` |
 | `decomposition.cu` | 显式特化 | `svd/qr/eigh<float/double, GPU>` |
+| `elementwise_cpu.cpp/.cu` | 显式实例化 | elementwise × `{float,double}` × CPU/GPU |
+| `reduction_cpu.cpp/.cu` | 显式实例化 | value/indexed reduction × `{float,double}` |
+| `indexing_cpu.cpp/.cu` | 显式实例化 | row indexing/compact × `{float,double}`；scan 使用 `Index` |
+| `small_matrix_cpu.cpp/.cu` | 显式实例化 | batched symmetric 3x3 × `{float,double}` |
 | `solver_cpu.cpp` | 显式实例化 | `solve<float/double, CPU>` |
 | `solver.cu` | 显式特化 | `solve<float/double, GPU>` |
 | `csr_matrix.cpp` | 显式实例化 | `CSRMatrix/COOMatrix` × `{float,double}` × `{CPU,GPU}` |
@@ -443,7 +553,14 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 - `CMakeLists.txt` 不启用 CUDA 语言，不链接 CUDA 库
 - `no_cuda_stubs.h` 提供 CUDA 类型和存储/传输 API 的桩定义
 - `Device::GPU` 矩阵存储可编译，但 `.cu` 中的 GPU 算法不参与编译
+- 普通 GPU allocation/transfer 桩仍用于公共类型测试；stream-ordered
+  `DenseMatrix::uninitializedAsync` 和 allocator async API 明确抛出不可用错误
 - cuBLAS/cuSOLVER 调用不参与编译（`.cu` 文件不编译）
+- elementwise、reduction、indexing 和 batched 3x3 的 GPU 重载保留 inline runtime stubs，
+  错误会标明操作名和 `PLAMATRIX_WITH_CUDA=ON`
+- 三类 workspace 的 reserve/checkStatus 在 CPU-only 构建中抛出明确错误；
+  `closeAsyncAllocation()` 对空 stub workspace 为 no-op。`ReductionWorkspace` 本身没有
+  `checkStatus()`
 - GPU benchmark 函数通过 `#ifdef PLAMATRIX_WITH_CUDA` 保护；CPU-only 构建会拒绝 `--mode cuda`
 - 业务代码在 CPU-only 构建下应使用 `Device::CPU` 运算路径
 - CPU-only 测试仍会运行核心矩阵、分解、稀疏和 no-CUDA 行为回归；GPU 专属用例按构建配置跳过

@@ -3,14 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
+#ifndef _WIN32
 #include <sys/utsname.h>
+#endif
 
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime.h>
@@ -22,9 +26,15 @@ namespace plamatrix
 namespace
 {
 
-/// Read /proc/cpuinfo and extract the model name and core count.
+/// Read the CPU model and logical core count.
 void readCpuInfo(std::string& model, int& cores)
 {
+#ifdef _WIN32
+    const char* processor = std::getenv("PROCESSOR_IDENTIFIER");
+    model = processor != nullptr ? processor : "Unknown";
+    cores = static_cast<int>(std::thread::hardware_concurrency());
+    return;
+#else
     std::ifstream cpuinfo("/proc/cpuinfo");
     if (!cpuinfo.is_open())
     {
@@ -66,6 +76,7 @@ void readCpuInfo(std::string& model, int& cores)
     {
         model = "Unknown";
     }
+#endif
 }
 
 /// Read GPU device properties via CUDA API.
@@ -160,6 +171,9 @@ void BenchmarkReport::captureEnvironment()
     readCpuInfo(cpu_model, cpu_cores);
     readGpuInfo(gpu_model, gpu_driver, cuda_version);
 
+#ifdef _WIN32
+    os_info = "Windows";
+#else
     // OS info via uname
     struct utsname buf;
     if (uname(&buf) == 0)
@@ -172,6 +186,7 @@ void BenchmarkReport::captureEnvironment()
     {
         os_info = "Unknown";
     }
+#endif
 }
 
 void BenchmarkReport::writeMarkdown(const std::string& path) const
@@ -229,6 +244,7 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
             bool has_serial = false;
             bool has_omp = false;
             bool has_cuda = false;
+            bool has_cuda_breakdown = false;
             for (const auto& r : results)
             {
                 if (r.name == case_name)
@@ -236,6 +252,11 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
                     if (r.time_serial_ms >= 0.0) has_serial = true;
                     if (r.time_omp_ms >= 0.0) has_omp = true;
                     if (r.time_cuda_ms >= 0.0) has_cuda = true;
+                    if (r.time_cuda_cold_allocation_ms >= 0.0
+                        || r.time_cuda_warm_workspace_ms >= 0.0)
+                    {
+                        has_cuda_breakdown = true;
+                    }
                 }
             }
 
@@ -243,7 +264,15 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
             file << "| Size |";
             if (has_serial) file << " CPU Serial (ms) |";
             if (has_omp) file << " CPU OMP (ms) |";
-            if (has_cuda) file << " CUDA (ms) | Transfer (ms) |";
+            if (has_cuda_breakdown)
+            {
+                file << " CUDA Cold Allocation (ms) | CUDA Warm Workspace (ms) |"
+                     << " CUDA Kernel Only (ms) | Transfer (ms) |";
+            }
+            else if (has_cuda)
+            {
+                file << " CUDA (ms) | Transfer (ms) |";
+            }
             if (has_serial && has_omp) file << " OMP Speedup |";
             if (has_serial && has_cuda) file << " CUDA Speedup |";
             file << "\n";
@@ -251,7 +280,12 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
             file << "|------|";
             if (has_serial) file << "-----------------|";
             if (has_omp) file << "-------------|";
-            if (has_cuda) file << "-----------|--------------|";
+            if (has_cuda_breakdown)
+            {
+                file << "---------------------------|--------------------------|"
+                     << "-----------------------|---------------|";
+            }
+            else if (has_cuda) file << "-----------|--------------|";
             if (has_serial && has_omp) file << "-------------|";
             if (has_serial && has_cuda) file << "-------------|";
             file << "\n";
@@ -266,7 +300,14 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
                 file << "| " << r.size << " |";
                 if (has_serial) file << " " << fmtTime(r.time_serial_ms) << " |";
                 if (has_omp) file << " " << fmtTime(r.time_omp_ms) << " |";
-                if (has_cuda)
+                if (has_cuda_breakdown)
+                {
+                    file << " " << fmtTime(r.time_cuda_cold_allocation_ms) << " |";
+                    file << " " << fmtTime(r.time_cuda_warm_workspace_ms) << " |";
+                    file << " " << fmtTime(r.time_cuda_ms) << " |";
+                    file << " " << fmtTime(r.time_transfer_ms) << " |";
+                }
+                else if (has_cuda)
                 {
                     file << " " << fmtTime(r.time_cuda_ms) << " |";
                     file << " " << fmtTime(r.time_transfer_ms) << " |";

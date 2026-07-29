@@ -4,10 +4,12 @@
 
 ## 特性
 
-- **密集矩阵**：矩阵乘法、逐元素加减、转置、CPU 标量运算
+- **密集矩阵**：矩阵乘法、逐元素加减乘除、标量变换、绝对值、平方根、截断和转置
+- **归约与索引**：`sum/mean/min/max/argMin/argMax`、exclusive scan、按行 gather/scatter/compact
 - **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
-- **线性求解**：稠密求解器 (LU 分解 + cuSOLVER getrf/getrs)
-- **稀疏矩阵**：COO / CSR 格式，COO→CSR 转换
+- **批量小矩阵**：CPU/CUDA 对称 3x3 特征分解，稳定的 8-sweep Jacobi 和重复特征空间基
+- **线性求解**：稠密 LU/cuSOLVER，以及 CPU/CUDA CSR 上的 CG 和 Jacobi-PCG
+- **稀疏矩阵**：确定性 COO→CSR、CPU/CUDA 传输、cuSPARSE SpMV/SpMM 和可复用 workspace
 - **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
@@ -93,10 +95,15 @@ target_link_libraries(my_project plamatrix::plamatrix)
 
 # 快速 smoke 或只跑指定 case
 ./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
+
+# 稀疏转换、乘法和迭代求解专项
+./benchmark/plamatrix_benchmark --mode all --size smoke \
+  --case coo_to_csr,spmv,spmm,cg,pcg
 ```
 
-CUDA 模式下 GEMM/add/sub 的计算时间使用 CUDA event 计时，并复用输出矩阵；
-输入传输时间使用 pinned host buffer，仍单独记录。
+CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
+CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含主机收敛检查，因而
+`kernel_only_ms` 对这两行表示完整 GPU 求解时间。
 
 | 档位 | 矩阵尺寸 |
 |------|----------|
@@ -119,6 +126,8 @@ CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
 ```cpp
 auto C = gemm(A, B);     // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
 auto D = add(A, B);      // 逐元素加法
+auto H = hadamardMultiply(A, B); // 逐元素乘法；A/B 必须完全同形，不做广播
+auto M = mean(A, ReductionAxis::Columns); // 按行归约，得到 1 x A.cols()
 auto E = A.transpose();  // 转置
 auto F = add(2.0f * A, B); // CPU 标量乘加
 
@@ -135,7 +144,22 @@ auto [U, S, Vt] = svd(A);           // 奇异值分解
 auto [Q, R] = qr(A);                // QR 分解
 auto eig = eigh(A);                 // 对称特征值
 auto X = solve(A, b);               // 线性求解 Ax = b
+
+// 每行 [xx, xy, xz, yy, yz, zz]，返回 N x 3 特征值和 N x 9 特征向量
+auto eig3 = symmetricEigh3x3Batched(compact_symmetric_matrices);
 ```
+
+### 索引与紧缩
+```cpp
+auto offsets = exclusiveScan(counts);       // 按列优先线性顺序扫描
+auto picked = gatherRows(points, indices);  // 保留 indices 顺序和重复项
+scatterRows(values, indices, output);       // 重复目标由最低源行获胜
+auto compacted = compactRows(points, mask); // 非零 mask，稳定返回精确行数
+```
+
+GPU 同步重载会等待给定 stream 并报告设备端错误。异步 indexing 和批量 3x3 特征分解使用
+调用方持有的 workspace；等待 stream 后必须调用对应 `checkStatus()`。归约异步接口没有
+`checkStatus()`，但同样要求输入、输出和 workspace 在 stream 完成前保持有效。
 
 ### 点云运算
 ```cpp
@@ -164,6 +188,10 @@ auto A_cpu = A_gpu.toCpu();  // GPU → CPU (触发 cudaMemcpy)
 auto pinned = DenseMatrix<float, Device::CPU>::pinned(A_cpu.rows(), A_cpu.cols());
 auto B_gpu = pinned.toGpuAsync(stream); // 异步传输，调用方负责同步 stream
 ```
+
+会分配返回值的部分异步归约和索引 API 使用 stream-ordered GPU 内存。此类矩阵保留创建
+stream 的所有权信息；stream 完成后应在销毁 stream 前调用 `closeAsyncAllocation()`。
+移动矩阵会转移该规则，移动后的源对象变为 `0 x 0`。
 
 高频 GPU 临时矩阵可显式开启内存池，减少同尺寸 `DenseMatrix<Device::GPU>` 反复分配成本：
 

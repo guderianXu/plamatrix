@@ -1,100 +1,94 @@
 # 稀疏矩阵 API
 
-PlaMatrix 支持 COO (坐标格式) 和 CSR (压缩稀疏行) 两种稀疏矩阵格式，适用于点云 BA 优化和图优化场景。
+PlaMatrix 提供 CPU/CUDA CSR 构建、传输、乘法和 SPD 迭代求解。公开入口位于
+`plamatrix/sparse/sparse_ops.h` 与 `plamatrix/sparse/iterative_solver.h`。
 
-## COOMatrix
-
-三元组格式，适合逐步构建稀疏矩阵。
-
-```cpp
-template <typename Scalar, Device Dev>
-class COOMatrix : public DeviceMatrix<Scalar, Dev>;
-```
-
-### 基本操作
+## COO 转 CSR
 
 ```cpp
-COOMatrix<float, Device::CPU> coo(4, 4);  // 4×4 稀疏矩阵
-coo.add(0, 0, 3.14f);   // 行0 列0 值3.14
-coo.add(1, 2, 2.71f);   // 行1 列2 值2.71
-coo.add(3, 3, 1.0f);    // 行3 列3 值1.0
-
-Index n = coo.nnz();     // 非零元个数 → 3
+std::vector<Index> rows{0, 0, 1, 1};
+std::vector<Index> cols{0, 1, 0, 1};
+std::vector<float> values{4, -1, -1, 4};
+auto csr = cooToCsr(2, 2, rows, cols, values);
 ```
 
-- `add(row, col, value)` — 在 host 侧添加一个三元组，CPU/GPU 模板实例都先存入内部 vector
-- `nnz()` — 返回非零元个数
+输出按行、列排序。重复坐标会合并，值按原始输入顺序累加。越界坐标、长度不一致
+或无法表示的尺寸会抛出明确异常。
 
-### COO → CSR 转换
+CUDA 同步重载接收三个 GPU 列向量。需要完全异步时，预分配准确 nnz 的 GPU CSR：
 
 ```cpp
-auto csr = coo.toCsr();  // CPU: 按(row,col)排序后构建CSR
-                         // GPU: host 侧排序构建后复制到 GPU CSR
+SparseOpsWorkspace workspace;
+CSRMatrix<float, Device::GPU> output(rows_count, cols_count, combined_nnz);
+cooToCsrAsync(rows_count, cols_count, row_gpu, col_gpu, value_gpu,
+              output, workspace, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+workspace.checkStatus("COO conversion");
 ```
 
-## CSRMatrix
+`checkStatus()` 不只是读取设备错误，也完成输出结构的可信状态。检查前不得在另一
+stream 消费输出；同一个普通 GPU 存储也不能被两个未完成 stream 重叠写入。
 
-压缩稀疏行格式，当前提供 CSR 数据结构和 COO→CSR 转换。
+## CSR 传输与生命周期
+
+同步 `toGpu()/toCpu()` 返回可立即使用的矩阵。异步 `copyToGpuAsync()`、
+`copyToCpuAsync()` 和 `toGpuAsync()` 要求 pinned host 存储，并记录 producer stream。
+必须先同步 producer stream，之后才能跨 stream 读取、覆盖或释放。
+
+调用非 const `values()/colIndices()/rowOffsets()` 会使结构可信状态失效，因为外部别名
+可以继续修改存储。自适应 CG/PCG 会重新验证；固定迭代异步接口要求可信结构。
+
+## SpMV 与 SpMM
 
 ```cpp
-template <typename Scalar, Device Dev>
-class CSRMatrix : public DeviceMatrix<Scalar, Dev>;
+DenseMatrix<float, Device::CPU> x(2, 1);
+DenseMatrix<float, Device::CPU> y(2, 1);
+spmv(csr, x, y);
+
+DenseMatrix<float, Device::CPU> block(2, 8);
+auto product = spmm(csr, block);
 ```
 
-### 内部结构
-
-```
-row_offsets:  [0, 2, 2, 3, 4]     // 每行起始偏移 (size = rows+1)
-col_indices:  [0, 2, 1, 3]        // 列索引 (size = nnz)
-values:       [1.0, 2.0, 3.0, 4.0] // 非零值 (size = nnz)
-```
-
-### 访问器
+GPU 热循环应复用输出和 `SparseOpsWorkspace`：
 
 ```cpp
-Scalar* values();              // 非零值数组
-Index* colIndices();           // 列索引数组
-Index* rowOffsets();           // 行偏移数组 (长度 rows+1)
-Index nnz() const;             // 非零元个数
+SparseOpsWorkspace workspace;
+spmvAsync(csr_gpu, x_gpu, y_gpu, workspace, stream);
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+workspace.closeAsyncAllocation();
+PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
 ```
 
-## 稀疏求解器状态
+输入和输出不能使用同一数据指针。矩阵、输入、输出、workspace 和 stream 必须存活到
+异步操作完成。
 
-当前公开 `solve()` API 只支持 `DenseMatrix`。`CSRMatrix` 可用于存储和传递稀疏结构，但稀疏线性求解器尚未作为公开 API 提供。
-
-## 完整示例：三对角矩阵
+## CG 与 Jacobi-PCG
 
 ```cpp
-#include <plamatrix/plamatrix.h>
-using namespace plamatrix;
-
-Index n = 100;
-COOMatrix<float, Device::CPU> coo(n, n);
-DenseMatrix<float, Device::CPU> A_dense(n, n);
-
-// 构建三对角矩阵 (对角占优)
-for (int i = 0; i < n; ++i)
-{
-    coo.add(i, i, 2.0f);          // 主对角
-    if (i > 0)     coo.add(i, i-1, -1.0f);  // 下对角
-    if (i < n-1)   coo.add(i, i+1, -1.0f);  // 上对角
-
-    A_dense(i, i) = 2.0f;
-    if (i > 0)     A_dense(i, i-1) = -1.0f;
-    if (i < n-1)   A_dense(i, i+1) = -1.0f;
-}
-
-// 转换为 CSR
-auto csr = coo.toCsr();
-
-// 构建右端项
-DenseMatrix<float, Device::CPU> b(n, 1);
-b.fill(1.0f);
-
-// 当前可检查 CSR 结构；稀疏 solve 尚未公开
-Index nnz = csr.nnz();
-const Index* offsets = csr.rowOffsets();
-
-// 如需求解，可先构造 DenseMatrix 并调用稠密 solve
-auto x = solve<float, Device::CPU>(A_dense, b);
+DenseMatrix<float, Device::CPU> solution(csr.rows(), 1);
+solution.fill(0.0f);
+IterativeSolverOptions options;
+options.maxIterations = 500;
+options.relativeTolerance = 1.0e-6;
+options.requireConvergence = true;
+const auto report = pcg(csr, rhs, solution, options);
 ```
+
+矩阵必须为 SPD。`pcg()` 默认启用 Jacobi 预条件，并拒绝缺失、非正或接近零的对角元。
+`solution` 同时是初始猜测和输出。报告包含 `converged`、`iterations`、
+`initialResidual` 和 `finalResidual`。
+
+CUDA 自适应接口额外接收可复用的 `IterativeSolverWorkspace<Scalar>` 和 stream。
+固定轮数 pipeline 可使用 `cgFixedIterationsAsync()` 或 `pcgFixedIterationsAsync()`，
+随后调用 `finalizeIterativeSolverReport()`。workspace 绑定首次使用的 stream；切换或销毁
+非默认 stream 前，先同步、`closeAsyncAllocation()`，再同步一次完成有序释放。
+
+## 基准回归
+
+```bash
+plamatrix_benchmark --mode all --size smoke \
+  --case coo_to_csr,spmv,spmm,cg,pcg
+```
+
+稀疏 CUDA 行分别记录冷分配、热 workspace、计算/求解和传输时间。自适应 CG/PCG
+包含主机收敛检查，因此其计算列表示完整 GPU 求解总时间。

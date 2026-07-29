@@ -5,6 +5,10 @@
 #include <random>
 #include <vector>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 #include <cuda_runtime.h>
 
 #include "plamatrix/dense/dense_matrix.h"
@@ -34,7 +38,12 @@ namespace
 template <typename T>
 void doNotOptimize(T const& value)
 {
+#ifdef _MSC_VER
+    static_cast<void>(value);
+    _ReadWriteBarrier();
+#else
     asm volatile("" : : "r,m"(value) : "memory");
+#endif
 }
 
 /// Fill a CPU matrix with uniform random values in [0, 1).

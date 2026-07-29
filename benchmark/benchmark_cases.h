@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -20,6 +21,10 @@ struct CaseResult
     double time_omp_ms = -1.0;
     double time_cuda_ms = -1.0;
     double time_transfer_ms = -1.0;
+    double time_cuda_cold_allocation_ms = -1.0;
+    double time_cuda_warm_workspace_ms = -1.0;
+    std::size_t workspace_bytes_before = 0;
+    std::size_t workspace_bytes_after = 0;
 };
 
 // Forward declaration
@@ -52,7 +57,7 @@ void runAllCases(const std::vector<Index>& sizes,
 std::vector<std::string> getAllCaseNames();
 
 // ============================================================================
-// Implementation-detail GPU benchmark functions (defined in benchmark_cases.cu)
+// Implementation-detail benchmark functions (defined in benchmark case sources)
 // ============================================================================
 namespace detail
 {
@@ -67,6 +72,36 @@ void runEighCuda(CaseResult& r, Index N);
 void runSolveCuda(CaseResult& r, Index N);
 void runCovarianceCuda(CaseResult& r, Index N);
 void runPointTransformCuda(CaseResult& r, Index N);
+
+void runElementwiseCpu(CaseResult& r, Index N, bool serial, bool omp);
+void runReductionCpu(CaseResult& r, Index N, bool serial, bool omp);
+void runCompactCpu(CaseResult& r, Index N, bool serial, bool omp);
+void runEigh3x3BatchCpu(CaseResult& r, Index N, bool serial, bool omp);
+
+void runRelease1Cases(Index size,
+                      bool serial,
+                      bool omp,
+                      bool cuda,
+                      BenchmarkReport& report,
+                      const std::vector<std::string>& case_filter);
+
+void runElementwiseCuda(CaseResult& r, Index N);
+void runReductionCuda(CaseResult& r, Index N);
+void runCompactCuda(CaseResult& r, Index N);
+void runEigh3x3BatchCuda(CaseResult& r, Index N);
+
+void runRelease3Cases(Index size,
+                      bool serial,
+                      bool omp,
+                      bool cuda,
+                      BenchmarkReport& report,
+                      const std::vector<std::string>& case_filter);
+
+void runCooToCsrCuda(CaseResult& r, Index N);
+void runSpmvCuda(CaseResult& r, Index N);
+void runSpmmCuda(CaseResult& r, Index N);
+void runCgCuda(CaseResult& r, Index N);
+void runPcgCuda(CaseResult& r, Index N);
 
 } // namespace detail
 

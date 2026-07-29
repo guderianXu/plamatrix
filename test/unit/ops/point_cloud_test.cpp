@@ -9,8 +9,9 @@ using namespace plamatrix;
 // PointCloud: rotationMatrix_ZAxis_90deg_Cpu — rotate (1,0,0) by 90 degrees around Z → (0,1,0)
 TEST(PointCloud, rotationMatrix_ZAxis_90deg_Cpu)
 {
+    constexpr double pi = 3.14159265358979323846;
     Vec3<double> axis = {0.0, 0.0, 1.0};
-    double angle = M_PI / 2.0;
+    double angle = pi / 2.0;
 
     auto R = rotationMatrix<double, Device::CPU>(axis, angle);
 

@@ -101,7 +101,7 @@ if(PLAMATRIX_WITH_CUDA)
             endif()
         endforeach()
     endif()
-    foreach(_target CUDA::cusolver CUDA::cublas CUDA::cudart)
+    foreach(_target CUDA::cusolver CUDA::cusparse CUDA::cublas CUDA::cudart)
         if(TARGET ${_target})
             foreach(_prop IMPORTED_LOCATION IMPORTED_LOCATION_RELEASE)
                 get_target_property(_loc ${_target} ${_prop})
@@ -193,6 +193,7 @@ if(PLAMATRIX_WITH_CUDA)
         PUBLIC
             CUDA::cublas
             CUDA::cusolver
+            CUDA::cusparse
             CUDA::cudart
             CUDA::cuda_driver
             OpenMP::OpenMP_CXX
