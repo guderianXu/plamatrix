@@ -273,6 +273,75 @@ struct GpuAllocator
         return static_cast<Scalar*>(detail::GpuMemoryPool::acquire(bytes));
     }
 
+    /// Allocate device memory in stream order without initializing it.
+    /// The caller must keep the allocation and stream alive until deallocation is enqueued.
+    /// @param count   Number of elements to allocate
+    /// @param stream  CUDA stream that orders the allocation
+    /// @throws std::runtime_error if CUDA is disabled or cudaMallocAsync fails
+    static Scalar* allocateAsync(std::size_t count, cudaStream_t stream)
+    {
+        const std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+#ifdef PLAMATRIX_WITH_CUDA
+        if (bytes == 0)
+        {
+            return nullptr;
+        }
+        void* ptr = nullptr;
+        PLAMATRIX_CHECK_CUDA(cudaMallocAsync(&ptr, bytes, stream));
+        return static_cast<Scalar*>(ptr);
+#else
+        static_cast<void>(bytes);
+        static_cast<void>(stream);
+        throw std::runtime_error(
+            "GpuAllocator::allocateAsync requires PLAMATRIX_WITH_CUDA=ON");
+#endif
+    }
+
+    /// Enqueue checked release of stream-ordered memory without using the ordinary memory pool.
+    /// The stream must remain valid through this call. nullptr is a no-op.
+    /// @param ptr     Pointer returned by allocateAsync
+    /// @param stream  CUDA stream that owns the allocation ordering
+    /// @throws std::runtime_error if CUDA is disabled or cudaFreeAsync fails
+    static void deallocateAsync(Scalar* ptr, cudaStream_t stream)
+    {
+        if (ptr == nullptr)
+        {
+            return;
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        PLAMATRIX_CHECK_CUDA(cudaFreeAsync(ptr, stream));
+#else
+        static_cast<void>(stream);
+        throw std::runtime_error(
+            "GpuAllocator::deallocateAsync requires PLAMATRIX_WITH_CUDA=ON");
+#endif
+    }
+
+    /// Enqueue release of stream-ordered memory for noexcept owner destruction.
+    /// Errors are swallowed. Call deallocateAsync when release errors must be reported.
+    /// The stream must remain valid through this call.
+    /// @param ptr     Pointer returned by allocateAsync
+    /// @param stream  CUDA stream that owns the allocation ordering
+    static void deallocateAsyncNoThrow(Scalar* ptr, cudaStream_t stream) noexcept
+    {
+        if (ptr == nullptr)
+        {
+            return;
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        try
+        {
+            deallocateAsync(ptr, stream);
+        }
+        catch (...)
+        {
+        }
+#else
+        static_cast<void>(stream);
+        deallocateNoThrow(ptr);
+#endif
+    }
+
     /// Deallocate device memory. nullptr is safe (no-op via cudaFree).
     /// @throws std::runtime_error  if deallocation fails (e.g., double-free)
     static void deallocate(Scalar* ptr)

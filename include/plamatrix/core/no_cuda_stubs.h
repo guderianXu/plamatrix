@@ -40,6 +40,11 @@ using cusolverDnHandle_t = void*;
 inline cusolverStatus_t cusolverDnCreate(cusolverDnHandle_t*) { return CUSOLVER_STATUS_SUCCESS; }
 inline cusolverStatus_t cusolverDnDestroy(cusolverDnHandle_t) { return CUSOLVER_STATUS_SUCCESS; }
 
+// ---- Stub cuSPARSE types ----
+using cusparseStatus_t = int;
+constexpr cusparseStatus_t CUSPARSE_STATUS_SUCCESS = 0;
+constexpr cusparseStatus_t CUSPARSE_STATUS_INVALID_VALUE = 3;
+
 // ---- Stub CUDA runtime API — uses CPU memory ----
 inline cudaError_t cudaMalloc(void** ptr, std::size_t size)
 {

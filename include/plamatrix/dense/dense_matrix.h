@@ -42,6 +42,48 @@ public:
         return DenseMatrix(rows, cols, detail::HostAllocationKind::Pinned);
     }
 
+    /// Construct a GPU matrix with ordinary, uninitialized storage.
+    /// Unlike uninitializedAsync(), the allocation is not tied to a CUDA stream and may outlive
+    /// streams that use it. Callers must overwrite every element before reading it.
+    static DenseMatrix uninitialized(Index rows, Index cols)
+    {
+        static_assert(Dev == Device::GPU,
+                      "uninitialized() is only available for GPU matrices");
+        return DenseMatrix(rows, cols, UninitializedGpuAllocationTag{});
+    }
+
+    /// Construct a GPU matrix with stream-ordered, uninitialized storage.
+    /// The returned matrix owns its allocation. Its stream must remain valid until the owner calls
+    /// closeAsyncAllocation() or is destroyed, when release is enqueued on that stream. Moving the
+    /// matrix transfers this rule. Call closeAsyncAllocation() before destroying the stream when
+    /// cudaFreeAsync errors must be reported; destruction is a noexcept fallback.
+    /// @param rows    Number of rows
+    /// @param cols    Number of columns
+    /// @param stream  CUDA stream that orders allocation and subsequent use
+    /// @return GPU matrix whose elements have unspecified values
+    /// @throws std::runtime_error if CUDA support is disabled or async allocation fails
+    static DenseMatrix uninitializedAsync(Index rows, Index cols, cudaStream_t stream = nullptr)
+    {
+        static_assert(Dev == Device::GPU,
+                      "uninitializedAsync() is only available for GPU matrices");
+#ifdef PLAMATRIX_NO_CUDA
+        static_cast<void>(Base::checkedElementCount(rows, cols));
+        static_cast<void>(stream);
+        throw std::runtime_error(
+            "DenseMatrix::uninitializedAsync requires PLAMATRIX_WITH_CUDA=ON");
+#else
+        return DenseMatrix(rows, cols, detail::AsyncGpuAllocationTag{}, stream);
+#endif
+    }
+
+    /// Explicitly enqueue checked release for stream-ordered GPU storage.
+    /// On success, or when already empty, the matrix becomes 0x0. Ordinary non-empty matrices are
+    /// rejected. The retained stream must remain valid through this call.
+    void closeAsyncAllocation()
+    {
+        Base::closeAsyncAllocation();
+    }
+
     /// Move constructor (defaulted).
     /// @param other  Source matrix
     DenseMatrix(DenseMatrix&& other) noexcept = default;
@@ -263,10 +305,24 @@ public:
     }
 
 private:
+    struct UninitializedGpuAllocationTag
+    {
+    };
+
+    DenseMatrix(Index rows, Index cols, UninitializedGpuAllocationTag)
+        : DeviceMatrix<Scalar, Dev>(rows, cols)
+    {
+    }
+
     DenseMatrix(Index rows, Index cols, detail::HostAllocationKind host_allocation_kind)
         : DeviceMatrix<Scalar, Dev>(rows, cols, host_allocation_kind)
     {
         zeroInitialize();
+    }
+
+    DenseMatrix(Index rows, Index cols, detail::AsyncGpuAllocationTag tag, cudaStream_t stream)
+        : DeviceMatrix<Scalar, Dev>(rows, cols, tag, stream)
+    {
     }
 
     void zeroInitialize()

@@ -1,6 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <limits>
+#include <string>
+#include <utility>
+
 #include <plamatrix/dense/dense_matrix.h>
+
+#include "support/cuda_test_utils.h"
 
 using namespace plamatrix;
 
@@ -44,6 +50,17 @@ TEST(DenseMatrix, construction_RejectsNegativeDimensions)
     EXPECT_THROW((DenseMatrix<float, Device::GPU>(3, -1)), std::invalid_argument);
 }
 
+TEST(DenseMatrix, uninitializedAsync_RejectsInvalidDimensionsBeforeAllocation)
+{
+    EXPECT_THROW(
+        (DenseMatrix<float, Device::GPU>::uninitializedAsync(-1, 3)),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (DenseMatrix<float, Device::GPU>::uninitializedAsync(
+            std::numeric_limits<Index>::max(), 2)),
+        std::overflow_error);
+}
+
 TEST(DenseMatrix, construction_ZeroSizedCpuMatrixIsEmpty)
 {
     DenseMatrix<float, Device::CPU> mat(0, 3);
@@ -61,6 +78,101 @@ TEST(DenseMatrix, construction_ZeroSizedCpuMatrixIsEmpty)
 }
 
 #ifdef PLAMATRIX_WITH_CUDA
+TEST(DenseMatrix, uninitialized_UsesOrdinaryLifetimeAcrossStreamDestruction)
+{
+    DenseMatrix<float, Device::GPU> matrix;
+    {
+        cudaStream_t stream = nullptr;
+        PLAMATRIX_CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+        matrix = DenseMatrix<float, Device::GPU>::uninitialized(3, 4);
+        PLAMATRIX_CHECK_CUDA(cudaMemsetAsync(
+            matrix.data(), 0, 12 * sizeof(float), stream));
+        PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+        PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+    }
+
+    EXPECT_EQ(matrix.rows(), 3);
+    EXPECT_EQ(matrix.cols(), 4);
+    EXPECT_NE(matrix.data(), nullptr);
+    EXPECT_NO_THROW(matrix.toCpu());
+}
+
+TEST(DenseMatrix, uninitializedAsync_UsesExplicitStreamAndPreservesDimensions)
+{
+    test::CudaStreamGuard stream;
+
+    auto matrix = DenseMatrix<float, Device::GPU>::uninitializedAsync(3, 4, stream.get());
+    EXPECT_EQ(matrix.rows(), 3);
+    EXPECT_EQ(matrix.cols(), 4);
+    EXPECT_EQ(matrix.size(), 12);
+    EXPECT_NE(matrix.data(), nullptr);
+
+    PLAMATRIX_CHECK_CUDA(cudaMemsetAsync(matrix.data(), 0, 12 * sizeof(float), stream.get()));
+    EXPECT_NO_THROW(matrix.closeAsyncAllocation());
+    EXPECT_EQ(matrix.rows(), 0);
+    EXPECT_EQ(matrix.cols(), 0);
+    EXPECT_EQ(matrix.data(), nullptr);
+
+    EXPECT_NO_THROW(matrix.closeAsyncAllocation());
+    stream.synchronize();
+}
+
+TEST(DenseMatrix, uninitializedAsync_MoveConstructorRetainsCloseProvenance)
+{
+    test::CudaStreamGuard stream;
+
+    auto matrix = DenseMatrix<float, Device::GPU>::uninitializedAsync(2, 3, stream.get());
+    float* original_ptr = matrix.data();
+    DenseMatrix<float, Device::GPU> moved(std::move(matrix));
+
+    EXPECT_EQ(moved.data(), original_ptr);
+    EXPECT_EQ(moved.rows(), 2);
+    EXPECT_EQ(moved.cols(), 3);
+    EXPECT_EQ(matrix.data(), nullptr);
+    EXPECT_EQ(matrix.rows(), 0);
+    EXPECT_EQ(matrix.cols(), 0);
+
+    EXPECT_NO_THROW(moved.closeAsyncAllocation());
+    EXPECT_EQ(moved.data(), nullptr);
+    EXPECT_EQ(moved.rows(), 0);
+    EXPECT_EQ(moved.cols(), 0);
+
+    stream.synchronize();
+}
+
+TEST(DenseMatrix, uninitializedAsync_MoveAssignmentRetainsCloseProvenance)
+{
+    test::CudaStreamGuard stream;
+
+    auto source = DenseMatrix<float, Device::GPU>::uninitializedAsync(2, 3, stream.get());
+    DenseMatrix<float, Device::GPU> moved;
+    moved = std::move(source);
+
+    EXPECT_EQ(source.data(), nullptr);
+    EXPECT_NO_THROW(moved.closeAsyncAllocation());
+    EXPECT_EQ(moved.data(), nullptr);
+
+    stream.synchronize();
+}
+
+TEST(DenseMatrix, closeAsyncAllocationRejectsOrdinaryAllocationWithClearLogicError)
+{
+    DenseMatrix<float, Device::GPU> matrix(2, 3);
+
+    try
+    {
+        matrix.closeAsyncAllocation();
+        FAIL() << "closeAsyncAllocation should reject ordinary GPU allocation";
+    }
+    catch (const std::logic_error& error)
+    {
+        EXPECT_NE(std::string(error.what()).find("stream-ordered GPU allocation"),
+                  std::string::npos);
+    }
+
+    EXPECT_NE(matrix.data(), nullptr);
+}
+
 TEST(DenseMatrix, transfer_ZeroSizedGpuRoundTrip)
 {
     DenseMatrix<float, Device::CPU> cpu(0, 3);
@@ -96,14 +208,12 @@ TEST(DenseMatrix, transferAsync_RoundTripsOnExplicitStream)
     cpu(0, 1) = 3.0f;
     cpu(1, 1) = 4.0f;
 
-    cudaStream_t stream = nullptr;
-    PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
+    test::CudaStreamGuard stream;
 
-    auto gpu = cpu.toGpuAsync(stream);
+    auto gpu = cpu.toGpuAsync(stream.get());
     auto back = DenseMatrix<float, Device::CPU>::pinned(2, 2);
-    gpu.copyToCpuAsync(back, stream);
-    PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
-    PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
+    gpu.copyToCpuAsync(back, stream.get());
+    stream.synchronize();
 
     EXPECT_TRUE(back.isPinnedHost());
     EXPECT_FLOAT_EQ(back(0, 0), 1.0f);
@@ -136,6 +246,34 @@ TEST(DenseMatrix, fill_NonZeroGpuIntMatrix)
             EXPECT_EQ(cpu(row, col), 7);
         }
     }
+}
+#else
+TEST(DenseMatrix, uninitializedAsync_ThrowsClearErrorWithoutCuda)
+{
+    try
+    {
+        static_cast<void>(DenseMatrix<float, Device::GPU>::uninitializedAsync(2, 3));
+        FAIL() << "uninitializedAsync should reject CPU-only builds";
+    }
+    catch (const std::runtime_error& error)
+    {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("uninitializedAsync"), std::string::npos);
+        EXPECT_NE(message.find("PLAMATRIX_WITH_CUDA=ON"), std::string::npos);
+    }
+}
+
+TEST(DenseMatrixNoCuda, closeAsyncAllocationContractIsExplicit)
+{
+    DenseMatrix<float, Device::GPU> ordinary(2, 3);
+    EXPECT_THROW(ordinary.closeAsyncAllocation(), std::logic_error);
+    EXPECT_NE(ordinary.data(), nullptr);
+
+    DenseMatrix<float, Device::GPU> empty(0, 3);
+    EXPECT_NO_THROW(empty.closeAsyncAllocation());
+    EXPECT_EQ(empty.rows(), 0);
+    EXPECT_EQ(empty.cols(), 0);
+    EXPECT_EQ(empty.data(), nullptr);
 }
 #endif
 

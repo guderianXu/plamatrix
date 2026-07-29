@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <string>
 
 #include <plamatrix/core/allocator.h>
+
+#include "support/cuda_test_utils.h"
 
 using namespace plamatrix;
 
@@ -89,24 +92,79 @@ TEST(GpuAllocator, allocate_RejectsByteSizeOverflow)
     EXPECT_THROW(GpuAllocator<float>::allocate(count), std::overflow_error);
 }
 
+TEST(GpuAllocator, allocateAsync_RejectsByteSizeOverflow)
+{
+    const std::size_t count = std::numeric_limits<std::size_t>::max() / sizeof(float) + 1;
+    EXPECT_THROW(GpuAllocator<float>::allocateAsync(count, nullptr), std::overflow_error);
+}
+
 #ifdef PLAMATRIX_WITH_CUDA
+TEST(GpuAllocator, deallocateAsync_EnqueuesCheckedReleaseOnExplicitStream)
+{
+    test::CudaStreamGuard stream;
+    test::AsyncGpuPointerGuard<float> ptr(128, stream.get());
+
+    ASSERT_NE(ptr.get(), nullptr);
+    PLAMATRIX_CHECK_CUDA(cudaMemsetAsync(ptr.get(), 0, 128 * sizeof(float), stream.get()));
+    EXPECT_NO_THROW(ptr.close());
+
+    stream.synchronize();
+}
+
 TEST(GpuAllocator, memoryPool_ReusesReturnedBlockWhenEnabled)
 {
-    GpuAllocator<float>::setMemoryPoolEnabled(true);
-    GpuAllocator<float>::releaseMemoryPool();
+    const bool previous_enabled = GpuAllocator<float>::isMemoryPoolEnabled();
 
-    float* first = GpuAllocator<float>::allocate(128);
-    GpuAllocator<float>::deallocate(first, 128);
+    {
+        test::GpuMemoryPoolGuard<float> memory_pool(true);
 
-    EXPECT_EQ(GpuAllocator<float>::cachedBlockCount(), 1);
-    EXPECT_EQ(GpuAllocator<float>::cachedBytes(), 128 * sizeof(float));
+        float* first = GpuAllocator<float>::allocate(128);
+        GpuAllocator<float>::deallocate(first, 128);
 
-    float* second = GpuAllocator<float>::allocate(128);
-    EXPECT_EQ(second, first);
+        EXPECT_EQ(GpuAllocator<float>::cachedBlockCount(), 1);
+        EXPECT_EQ(GpuAllocator<float>::cachedBytes(), 128 * sizeof(float));
+
+        float* second = GpuAllocator<float>::allocate(128);
+        EXPECT_EQ(second, first);
+        EXPECT_EQ(GpuAllocator<float>::cachedBlockCount(), 0);
+
+        GpuAllocator<float>::deallocate(second, 128);
+    }
+
+    EXPECT_EQ(GpuAllocator<float>::isMemoryPoolEnabled(), previous_enabled);
     EXPECT_EQ(GpuAllocator<float>::cachedBlockCount(), 0);
+}
+#else
+TEST(AllocatorNoCuda, allocateAsync_ThrowsClearErrorWithoutCuda)
+{
+    try
+    {
+        static_cast<void>(GpuAllocator<float>::allocateAsync(16, nullptr));
+        FAIL() << "allocateAsync should reject CPU-only builds";
+    }
+    catch (const std::runtime_error& error)
+    {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("GpuAllocator::allocateAsync"), std::string::npos);
+        EXPECT_NE(message.find("PLAMATRIX_WITH_CUDA=ON"), std::string::npos);
+    }
+}
 
-    GpuAllocator<float>::deallocate(second, 128);
-    GpuAllocator<float>::releaseMemoryPool();
-    GpuAllocator<float>::setMemoryPoolEnabled(false);
+TEST(AllocatorNoCuda, deallocateAsync_RejectsNonNullPointerAndAcceptsNull)
+{
+    EXPECT_NO_THROW(GpuAllocator<float>::deallocateAsync(nullptr, nullptr));
+
+    float value = 0.0f;
+    try
+    {
+        GpuAllocator<float>::deallocateAsync(&value, nullptr);
+        FAIL() << "deallocateAsync should reject CPU-only builds";
+    }
+    catch (const std::runtime_error& error)
+    {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("GpuAllocator::deallocateAsync"), std::string::npos);
+        EXPECT_NE(message.find("PLAMATRIX_WITH_CUDA=ON"), std::string::npos);
+    }
 }
 #endif
