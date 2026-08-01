@@ -1,12 +1,149 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 #include "plamatrix/dense/dense_matrix.h"
 
 namespace plamatrix
 {
+
+/**
+ * @brief Solve a fixed-size linear system with partial pivoting.
+ *
+ * The matrix is row-major and all workspace remains on the stack.
+ * Returns false for non-finite input or a relatively singular system.
+ */
+template <typename Scalar, std::size_t N>
+bool solveSmallLinearSystem(
+    std::array<Scalar, N * N> matrix,
+    std::array<Scalar, N> rhs,
+    std::array<Scalar, N> *solution,
+    Scalar relative_singular_tolerance =
+        std::numeric_limits<Scalar>::epsilon() * Scalar(16 * N))
+{
+    static_assert(N > 0, "solveSmallLinearSystem requires N > 0");
+    static_assert(std::is_floating_point_v<Scalar>,
+                  "solveSmallLinearSystem requires a floating-point scalar");
+    if (!solution ||
+        !std::isfinite(relative_singular_tolerance) ||
+        relative_singular_tolerance < Scalar(0))
+    {
+        return false;
+    }
+
+    for (const Scalar value : matrix)
+    {
+        if (!std::isfinite(value))
+        {
+            return false;
+        }
+    }
+    for (const Scalar value : rhs)
+    {
+        if (!std::isfinite(value))
+        {
+            return false;
+        }
+    }
+    // BA normal equations can mix rotation, translation, and intrinsics
+    // with very different scales. Row equilibration avoids false singularity.
+    for (std::size_t row = 0; row < N; ++row)
+    {
+        Scalar row_scale = Scalar(0);
+        for (std::size_t column = 0; column < N; ++column)
+        {
+            row_scale = std::max(
+                row_scale,
+                std::abs(matrix[row * N + column]));
+        }
+        if (!(row_scale > Scalar(0)) || !std::isfinite(row_scale))
+        {
+            return false;
+        }
+        for (std::size_t column = 0; column < N; ++column)
+        {
+            matrix[row * N + column] /= row_scale;
+        }
+        rhs[row] /= row_scale;
+        if (!std::isfinite(rhs[row]))
+        {
+            return false;
+        }
+    }
+    const Scalar singular_threshold = relative_singular_tolerance;
+
+    for (std::size_t column = 0; column < N; ++column)
+    {
+        std::size_t pivot_row = column;
+        Scalar pivot_magnitude =
+            std::abs(matrix[column * N + column]);
+        for (std::size_t row = column + 1; row < N; ++row)
+        {
+            const Scalar candidate =
+                std::abs(matrix[row * N + column]);
+            if (candidate > pivot_magnitude)
+            {
+                pivot_magnitude = candidate;
+                pivot_row = row;
+            }
+        }
+        if (!(pivot_magnitude > singular_threshold))
+        {
+            return false;
+        }
+
+        if (pivot_row != column)
+        {
+            for (std::size_t entry = column; entry < N; ++entry)
+            {
+                std::swap(matrix[column * N + entry],
+                          matrix[pivot_row * N + entry]);
+            }
+            std::swap(rhs[column], rhs[pivot_row]);
+        }
+
+        const Scalar pivot = matrix[column * N + column];
+        for (std::size_t row = column + 1; row < N; ++row)
+        {
+            const Scalar factor = matrix[row * N + column] / pivot;
+            matrix[row * N + column] = Scalar(0);
+            for (std::size_t entry = column + 1; entry < N; ++entry)
+            {
+                matrix[row * N + entry] -=
+                    factor * matrix[column * N + entry];
+            }
+            rhs[row] -= factor * rhs[column];
+        }
+    }
+
+    solution->fill(Scalar(0));
+    for (std::size_t offset = 0; offset < N; ++offset)
+    {
+        const std::size_t row = N - 1 - offset;
+        Scalar value = rhs[row];
+        for (std::size_t column = row + 1; column < N; ++column)
+        {
+            value -= matrix[row * N + column] * (*solution)[column];
+        }
+        const Scalar diagonal = matrix[row * N + row];
+        if (!(std::abs(diagonal) > singular_threshold))
+        {
+            return false;
+        }
+        (*solution)[row] = value / diagonal;
+        if (!std::isfinite((*solution)[row]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 /// Result of a batched symmetric 3x3 eigendecomposition.
 /// Each row of eigenvalues contains the three eigenvalues in ascending order.

@@ -41,6 +41,7 @@
 #include "plamatrix/ops/reduction.h"
 #include "plamatrix/ops/small_matrix.h"
 #include "plamatrix/ops/solver.h"
+#include "plamatrix/ops/statistics.h"
 #include "plamatrix/ops/vector.h"
 #include "plamatrix/ops/point_cloud.h"
 #include "plamatrix/sparse/coo_matrix.h"

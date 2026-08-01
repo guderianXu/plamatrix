@@ -26,7 +26,8 @@ include/plamatrix/plamatrix.h          # 总入口
     ├── decomposition.h   SVD / QR / Eigh
     ├── reduction.h       按轴 value/indexed reduction + workspace
     ├── indexing.h        scan、gather/scatter、stable compact + workspace
-    ├── small_matrix.h    批量对称 3x3 特征分解 + workspace
+    ├── small_matrix.h    固定阶小系统求解、批量对称 3x3 特征分解 + workspace
+    ├── statistics.h      忽略非有限样本的稳健中位数
     ├── solver.h          线性求解
     ├── vector.h          Vec3 小向量表示与算术
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
@@ -274,6 +275,15 @@ nonfinite 优先；同步包装器等待并检查，异步包装器要求调用�
 `SymmetricEigh3x3Workspace` 的增长、stream 绑定和未消费 status 规则与 indexing workspace
 一致，但 move assignment 有意允许抛异常：若目标仍有未消费 status，则保持源和目标不变；
 消费后才释放目标并转移源 storage/status/stream provenance。
+
+同一头文件还提供栈上 `solveSmallLinearSystem<Scalar, N>`。求解前按行均衡，
+再执行部分主元高斯消元，适合 BA 等频繁求解且旋转/平移量纲差异明显的
+3x3/6x6 法方程；奇异、非有限输入或非有限解返回 `false`。
+
+### 3.7 稳健统计 (`ops/statistics.h`)
+
+`finiteMedian` 忽略 NaN 和正负无穷，使用 `nth_element` 原地选择中位数。
+偶数样本采用防溢出的均值计算；没有有限样本时返回 `std::nullopt`。
 
 ---
 

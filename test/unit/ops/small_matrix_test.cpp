@@ -245,6 +245,83 @@ TYPED_TEST(SmallMatrixTest, InvalidShapeThrowsInvalidArgument)
     EXPECT_THROW(symmetricEigh3x3Batched(empty_wrong_shape), std::invalid_argument);
 }
 
+TEST(SmallLinearSolverTest, SolvesThreeByThreeSystemWithPartialPivoting)
+{
+    const std::array<double, 9> matrix{{
+        0.0, 2.0, 1.0,
+        1.0, -2.0, -3.0,
+        2.0, 3.0, 1.0,
+    }};
+    const std::array<double, 3> rhs{{3.0, 0.0, 7.0}};
+    std::array<double, 3> solution{};
+
+    ASSERT_TRUE(plamatrix::solveSmallLinearSystem(matrix, rhs, &solution));
+    EXPECT_NEAR(solution[0], 1.0, 1e-12);
+    EXPECT_NEAR(solution[1], 2.0, 1e-12);
+    EXPECT_NEAR(solution[2], -1.0, 1e-12);
+}
+
+TEST(SmallLinearSolverTest, SolvesSixBySixDiagonalDominantSystem)
+{
+    std::array<double, 36> matrix{};
+    std::array<double, 6> expected{{1.0, -2.0, 3.0, -4.0, 5.0, -6.0}};
+    std::array<double, 6> rhs{};
+    for (size_t row = 0; row < 6; ++row)
+    {
+        for (size_t column = 0; column < 6; ++column)
+        {
+            matrix[row * 6 + column] =
+                row == column ? 10.0 + static_cast<double>(row) : 0.25;
+            rhs[row] += matrix[row * 6 + column] * expected[column];
+        }
+    }
+
+    std::array<double, 6> solution{};
+    ASSERT_TRUE(plamatrix::solveSmallLinearSystem(matrix, rhs, &solution));
+    for (size_t index = 0; index < solution.size(); ++index)
+    {
+        EXPECT_NEAR(solution[index], expected[index], 1e-11);
+    }
+}
+
+TEST(SmallLinearSolverTest, RejectsSingularAndNonFiniteSystems)
+{
+    const std::array<double, 9> singular{{
+        1.0, 2.0, 3.0,
+        2.0, 4.0, 6.0,
+        0.0, 1.0, 1.0,
+    }};
+    const std::array<double, 3> rhs{{1.0, 2.0, 1.0}};
+    std::array<double, 3> solution{};
+    EXPECT_FALSE(plamatrix::solveSmallLinearSystem(singular, rhs, &solution));
+
+    auto nonFinite = singular;
+    nonFinite[0] = std::numeric_limits<double>::infinity();
+    EXPECT_FALSE(plamatrix::solveSmallLinearSystem(nonFinite, rhs, &solution));
+}
+
+TEST(SmallLinearSolverTest, SolvesIllScaledDiagonalSystem)
+{
+    const std::array<double, 9> matrix{{
+        1.0e12, 0.0, 0.0,
+        0.0, 1.0e-3, 0.0,
+        0.0, 0.0, 4.0,
+    }};
+    const std::array<double, 3> rhs{{
+        2.0e12,
+        -3.0e-3,
+        20.0,
+    }};
+    std::array<double, 3> solution{};
+
+    ASSERT_TRUE(
+        plamatrix::solveSmallLinearSystem(
+            matrix, rhs, &solution));
+    EXPECT_NEAR(solution[0], 2.0, 1.0e-12);
+    EXPECT_NEAR(solution[1], -3.0, 1.0e-12);
+    EXPECT_NEAR(solution[2], 5.0, 1.0e-12);
+}
+
 TYPED_TEST(SmallMatrixTest, NonFiniteInputIsRejectedBeforeDecomposition)
 {
     using Scalar = TypeParam;
