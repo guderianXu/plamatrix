@@ -91,6 +91,7 @@ public:
     cl_command_queue createQueue() const;
 
     /// Build or retrieve a cached program. Cache identity includes key, source, and options.
+    /// The returned handle is borrowed from the process-wide cache and must not be released.
     cl_program program(
         const std::string& key,
         const std::string& source,

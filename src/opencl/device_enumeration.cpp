@@ -149,12 +149,25 @@ std::vector<DeviceCandidate> enumerateDeviceCandidates(
         {
             DeviceCandidate candidate;
             candidate.index = global_index++;
+            candidate.platform = platform;
             candidate.device = device;
             try
             {
                 candidate.name = deviceString(device, CL_DEVICE_NAME);
                 candidate.vendor = deviceString(device, CL_DEVICE_VENDOR);
                 candidate.version = deviceString(device, CL_DEVICE_VERSION);
+                try
+                {
+                    candidate.openClCVersion = deviceString(
+                        device, CL_DEVICE_OPENCL_C_VERSION);
+                }
+                catch (const std::exception& error)
+                {
+                    appendEnumerationDiagnostic(
+                        diagnostics,
+                        "OpenCL GPU " + std::to_string(candidate.index)
+                            + " language version query failed: " + error.what());
+                }
                 candidate.computeUnits = deviceValue<cl_uint>(
                     device, CL_DEVICE_MAX_COMPUTE_UNITS);
                 candidate.unifiedMemory = deviceValue<cl_bool>(

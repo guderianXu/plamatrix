@@ -42,7 +42,7 @@ cmake --build . -j$(nproc)
 |------|--------|------|
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
-| `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；SDK/loader 未找到且未显式要求时自动关闭 |
+| `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；OpenCL 1.2 SDK/loader 未找到且未显式要求时自动关闭 |
 | `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |

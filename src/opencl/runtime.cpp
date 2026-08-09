@@ -3,6 +3,7 @@
 #include "device_enumeration.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <exception>
@@ -49,6 +50,38 @@ EnvironmentValue environmentValue(const char* preferred, const char* legacy)
     return {};
 }
 
+bool supportsOpenClC12(const std::string& version)
+{
+    constexpr const char* prefix = "OpenCL C ";
+    if (version.rfind(prefix, 0) != 0)
+    {
+        return false;
+    }
+
+    const char* first = version.c_str() + std::char_traits<char>::length(prefix);
+    char* major_end = nullptr;
+    errno = 0;
+    const long major = std::strtol(first, &major_end, 10);
+    if (errno == ERANGE || major_end == first || !major_end || *major_end != '.')
+    {
+        return false;
+    }
+
+    char* minor_end = nullptr;
+    errno = 0;
+    const long minor = std::strtol(major_end + 1, &minor_end, 10);
+    if (errno == ERANGE || minor_end == major_end + 1 || major < 0 || minor < 0)
+    {
+        return false;
+    }
+    if (*minor_end != '\0'
+        && std::isspace(static_cast<unsigned char>(*minor_end)) == 0)
+    {
+        return false;
+    }
+    return major > 1 || (major == 1 && minor >= 2);
+}
+
 std::string programCacheKey(
     const std::string& caller_key,
     const std::string& source,
@@ -84,12 +117,15 @@ OpenClRuntime::OpenClRuntime()
     candidates.erase(
         std::remove_if(candidates.begin(), candidates.end(), [](const DeviceCandidate& candidate)
         {
-            return candidate.available == CL_FALSE || candidate.compilerAvailable == CL_FALSE;
+            return candidate.available == CL_FALSE
+                || candidate.compilerAvailable == CL_FALSE
+                || !supportsOpenClC12(candidate.openClCVersion);
         }),
         candidates.end());
     if (candidates.empty())
     {
-        std::string message = "OpenCL has no usable GPU device with an online compiler";
+        std::string message =
+            "OpenCL has no usable GPU device with an online compiler and OpenCL C 1.2 support";
         if (!enumeration_diagnostics.empty())
         {
             message += "; enumeration diagnostics: ";
@@ -169,16 +205,22 @@ OpenClRuntime::OpenClRuntime()
     {
         throw std::runtime_error("Selected OpenCL GPU index exceeds the public integer range");
     }
-    _device = candidates.front().device;
-    _deviceName = candidates.front().name;
-    _deviceIndex = static_cast<int>(candidates.front().index);
+    const DeviceCandidate& selected = candidates.front();
+    _device = selected.device;
+    _deviceName = selected.name;
+    _deviceIndex = static_cast<int>(selected.index);
 
     const std::string extensions = deviceString(_device, CL_DEVICE_EXTENSIONS);
     _supportsFp64 = extensions.find("cl_khr_fp64") != std::string::npos
         || extensions.find("cl_amd_fp64") != std::string::npos;
 
+    const cl_context_properties properties[] = {
+        CL_CONTEXT_PLATFORM,
+        reinterpret_cast<cl_context_properties>(selected.platform),
+        0};
     cl_int error = CL_SUCCESS;
-    cl_context context = clCreateContext(nullptr, 1, &_device, nullptr, nullptr, &error);
+    cl_context context = clCreateContext(
+        properties, 1, &_device, nullptr, nullptr, &error);
     if (error != CL_SUCCESS)
     {
         if (context)
@@ -244,29 +286,27 @@ cl_program OpenClRuntime::program(
         checkOpenCl(error, "clCreateProgramWithSource");
     }
 
-    std::string build_options = "-cl-std=CL1.2";
-    if (!options.empty())
-    {
-        build_options += " " + options;
-    }
-    error = clBuildProgram(result, 1, &_device, build_options.c_str(), nullptr, nullptr);
-    if (error != CL_SUCCESS)
-    {
-        std::size_t log_size = 0;
-        clGetProgramBuildInfo(result, _device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
-        std::string log(log_size, '\0');
-        if (log_size != 0)
-        {
-            clGetProgramBuildInfo(
-                result, _device, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
-        }
-        clReleaseProgram(result);
-        throw std::runtime_error(
-            "OpenCL clBuildProgram failed with error " + std::to_string(error) + ": " + log);
-    }
-
     try
     {
+        std::string build_options = "-cl-std=CL1.2";
+        if (!options.empty())
+        {
+            build_options += " " + options;
+        }
+        error = clBuildProgram(result, 1, &_device, build_options.c_str(), nullptr, nullptr);
+        if (error != CL_SUCCESS)
+        {
+            std::size_t log_size = 0;
+            clGetProgramBuildInfo(result, _device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
+            std::string log(log_size, '\0');
+            if (log_size != 0)
+            {
+                clGetProgramBuildInfo(
+                    result, _device, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
+            }
+            throw std::runtime_error(
+                "OpenCL clBuildProgram failed with error " + std::to_string(error) + ": " + log);
+        }
         _programs.emplace(cache_key, result);
     }
     catch (...)

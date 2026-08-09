@@ -129,12 +129,12 @@ endif()
 
 # ---- Optional OpenCL execution backend ----
 if(PLAMATRIX_WITH_OPENCL)
-    find_package(OpenCL QUIET)
+    find_package(OpenCL 1.2 QUIET)
     if(NOT OpenCL_FOUND)
         if(_PLAMATRIX_WITH_OPENCL_USER_DEFINED)
-            message(FATAL_ERROR "PLAMATRIX_WITH_OPENCL=ON requires an OpenCL SDK/loader")
+            message(FATAL_ERROR "PLAMATRIX_WITH_OPENCL=ON requires an OpenCL 1.2 SDK/loader")
         endif()
-        message(STATUS "PlaMatrix OpenCL disabled because an OpenCL SDK/loader was not found")
+        message(STATUS "PlaMatrix OpenCL disabled because an OpenCL 1.2 SDK/loader was not found")
         set(PLAMATRIX_WITH_OPENCL OFF CACHE BOOL
             "Build the OpenCL runtime and execution backend" FORCE)
     endif()

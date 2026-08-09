@@ -16,10 +16,12 @@ namespace detail
 struct DeviceCandidate
 {
     std::size_t index = 0;
+    cl_platform_id platform = nullptr;
     cl_device_id device = nullptr;
     std::string name;
     std::string vendor;
     std::string version;
+    std::string openClCVersion;
     cl_uint computeUnits = 0;
     cl_bool unifiedMemory = CL_TRUE;
     cl_bool available = CL_FALSE;
