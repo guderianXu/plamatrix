@@ -16,6 +16,12 @@ option(PLAMATRIX_USE_FLOAT  "Pre-compile float32 instantiations" ON)
 option(PLAMATRIX_USE_DOUBLE "Pre-compile float64 instantiations" ON)
 option(PLAMATRIX_WITH_SYSTEM_LINALG "Use system BLAS/LAPACK acceleration when available" ON)
 
+set(_PLAMATRIX_WITH_OPENCL_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_WITH_OPENCL)
+    set(_PLAMATRIX_WITH_OPENCL_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_WITH_OPENCL "Build the OpenCL runtime and execution backend" ON)
+
 set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_BUILD_TESTS)
     set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED ON)
@@ -121,6 +127,19 @@ if(PLAMATRIX_WITH_CUDA)
     endif()
 endif()
 
+# ---- Optional OpenCL execution backend ----
+if(PLAMATRIX_WITH_OPENCL)
+    find_package(OpenCL QUIET)
+    if(NOT OpenCL_FOUND)
+        if(_PLAMATRIX_WITH_OPENCL_USER_DEFINED)
+            message(FATAL_ERROR "PLAMATRIX_WITH_OPENCL=ON requires an OpenCL SDK/loader")
+        endif()
+        message(STATUS "PlaMatrix OpenCL disabled because an OpenCL SDK/loader was not found")
+        set(PLAMATRIX_WITH_OPENCL OFF CACHE BOOL
+            "Build the OpenCL runtime and execution backend" FORCE)
+    endif()
+endif()
+
 # ---- OpenMP (always required for C++ CPU paths) ----
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 
@@ -207,6 +226,17 @@ else()
     target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_CUDA=1)
 endif()
 
+if(PLAMATRIX_WITH_OPENCL)
+    target_link_libraries(plamatrix PUBLIC OpenCL::OpenCL)
+    target_compile_definitions(plamatrix
+        PUBLIC
+            PLAMATRIX_WITH_OPENCL=1
+            CL_TARGET_OPENCL_VERSION=120
+    )
+else()
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_OPENCL=1)
+endif()
+
 target_compile_definitions(plamatrix
     PUBLIC
         $<$<BOOL:${PLAMATRIX_USE_FLOAT}>:PLAMATRIX_USE_FLOAT=1>
@@ -274,6 +304,7 @@ message(STATUS "  CUDA support:    ${PLAMATRIX_WITH_CUDA}")
 if(PLAMATRIX_WITH_CUDA)
     message(STATUS "  CUDA arch:       ${PLAMATRIX_CUDA_ARCHITECTURES}")
 endif()
+message(STATUS "  OpenCL support:  ${PLAMATRIX_WITH_OPENCL}")
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
 message(STATUS "  CPU linalg:      ${PLAMATRIX_LINALG_PROVIDER}")

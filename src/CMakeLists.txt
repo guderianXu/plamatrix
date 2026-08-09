@@ -13,6 +13,18 @@ target_sources(plamatrix PRIVATE
     ops/point_cloud_cpu.cpp
 )
 
+# ---- OpenCL runtime sources ----
+if(PLAMATRIX_WITH_OPENCL)
+    target_sources(plamatrix PRIVATE
+        opencl/device_enumeration.cpp
+        opencl/runtime.cpp
+    )
+else()
+    target_sources(plamatrix PRIVATE
+        opencl/runtime_stub.cpp
+    )
+endif()
+
 # ---- GPU / CUDA sources (only when CUDA is enabled) ----
 if(PLAMATRIX_WITH_CUDA)
     target_sources(plamatrix PRIVATE

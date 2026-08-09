@@ -28,6 +28,18 @@ gtest_discover_tests(plamatrix_tests
     PROPERTIES SKIP_RETURN_CODE 77
 )
 
+add_executable(plamatrix_opencl_tests
+    unit/opencl/opencl_runtime_test.cpp
+)
+target_link_libraries(plamatrix_opencl_tests PRIVATE plamatrix GTest::gtest_main)
+
+gtest_discover_tests(plamatrix_opencl_tests
+    TEST_PREFIX plamatrix.
+    DISCOVERY_MODE PRE_TEST
+)
+
+add_dependencies(plamatrix_tests plamatrix_opencl_tests)
+
 set(PLAMATRIX_SPARSE_TEST_SOURCES
     unit/sparse/csr_matrix_test.cpp
     unit/sparse/iterative_solver_test.cpp

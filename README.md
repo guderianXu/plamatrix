@@ -1,6 +1,7 @@
 # PlaMatrix
 
-面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP) 和 CUDA GPU 加速。
+面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP)、CUDA GPU 加速，以及可选的 OpenCL
+运行时与通用执行资源。
 
 ## 特性
 
@@ -13,7 +14,11 @@
 - **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
+- **OpenCL 执行基础**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII 和 program cache
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
+
+> 当前 OpenCL 能力是供 PlaPoint 等上层库复用的 runtime/device/buffer/program execution foundation。
+> `DenseMatrix` 设备语义仍是 CPU/CUDA；GEMM、SVD、CSR 等矩阵算子尚未提供 OpenCL 后端。
 
 ## 快速开始
 
@@ -37,6 +42,7 @@ cmake --build . -j$(nproc)
 |------|--------|------|
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
+| `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；SDK/loader 未找到且未显式要求时自动关闭 |
 | `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |

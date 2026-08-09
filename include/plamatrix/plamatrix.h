@@ -32,6 +32,10 @@
 #include "plamatrix/core/error_check.h"
 #include "plamatrix/core/allocator.h"
 #include "plamatrix/core/device_matrix.h"
+#include "plamatrix/opencl/runtime.h"
+#ifdef PLAMATRIX_WITH_OPENCL
+#include "plamatrix/opencl/execution.h"
+#endif
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/dense/dense_ops.h"
 #include "plamatrix/dense/elementwise.h"
