@@ -32,6 +32,7 @@
 #include "plamatrix/core/error_check.h"
 #include "plamatrix/core/allocator.h"
 #include "plamatrix/core/device_matrix.h"
+#include "plamatrix/opencl/iterative_solver.h"
 #include "plamatrix/opencl/runtime.h"
 #ifdef PLAMATRIX_WITH_OPENCL
 #include "plamatrix/opencl/execution.h"

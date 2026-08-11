@@ -9,16 +9,17 @@
 - **归约与索引**：`sum/mean/min/max/argMin/argMax`、exclusive scan、按行 gather/scatter/compact
 - **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
 - **批量小矩阵**：CPU/CUDA 对称 3x3 特征分解，稳定的 8-sweep Jacobi 和重复特征空间基
-- **线性求解**：稠密 LU/cuSOLVER，以及 CPU/CUDA CSR 上的 CG 和 Jacobi-PCG
+- **线性求解**：稠密 LU/cuSOLVER，以及 CPU/CUDA CSR 和 CPU-owned CSR OpenCL 上的 CG/Jacobi-PCG
 - **稀疏矩阵**：确定性 COO→CSR、CPU/CUDA 传输、cuSPARSE SpMV/SpMM 和可复用 workspace
 - **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
-- **OpenCL 执行基础**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII 和 program cache
+- **OpenCL 执行与稀疏求解**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII、program cache，
+  以及一次上传 CPU-owned CSR 系统的 Jacobi-PCG
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
 
-> 当前 OpenCL 能力是供 PlaPoint 等上层库复用的 runtime/device/buffer/program execution foundation。
-> `DenseMatrix` 设备语义仍是 CPU/CUDA；GEMM、SVD、CSR 等矩阵算子尚未提供 OpenCL 后端。
+> `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL PCG 接受 CPU-owned CSR 和向量，
+> 在一次调用内上传并求解。GEMM、SVD 和通用 OpenCL 矩阵容器尚未提供。
 
 ## 快速开始
 

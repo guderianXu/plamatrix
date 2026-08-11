@@ -17,10 +17,12 @@ target_sources(plamatrix PRIVATE
 if(PLAMATRIX_WITH_OPENCL)
     target_sources(plamatrix PRIVATE
         opencl/device_enumeration.cpp
+        opencl/iterative_solver.cpp
         opencl/runtime.cpp
     )
 else()
     target_sources(plamatrix PRIVATE
+        opencl/iterative_solver_stub.cpp
         opencl/runtime_stub.cpp
     )
 endif()

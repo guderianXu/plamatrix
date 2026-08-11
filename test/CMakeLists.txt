@@ -29,6 +29,7 @@ gtest_discover_tests(plamatrix_tests
 )
 
 add_executable(plamatrix_opencl_tests
+    unit/opencl/iterative_solver_opencl_test.cpp
     unit/opencl/opencl_runtime_test.cpp
 )
 target_link_libraries(plamatrix_opencl_tests PRIVATE plamatrix GTest::gtest_main)
