@@ -374,6 +374,20 @@ IterativeSolverReport pcg(
 }
 
 template <typename Scalar>
+IterativeSolverReport blockPcg(
+    const CSRMatrix<Scalar, Device::GPU>&,
+    const DenseMatrix<Scalar, Device::GPU>&,
+    DenseMatrix<Scalar, Device::GPU>&,
+    const DenseMatrix<Scalar, Device::GPU>&,
+    Index,
+    IterativeSolverWorkspace<Scalar>&,
+    const IterativeSolverOptions&,
+    cudaStream_t)
+{
+    throw std::runtime_error("CUDA block PCG requires PLAMATRIX_WITH_CUDA=ON");
+}
+
+template <typename Scalar>
 AsyncIterativeSolverState cgFixedIterationsAsync(
     const CSRMatrix<Scalar, Device::GPU>&,
     const DenseMatrix<Scalar, Device::GPU>&,
@@ -417,6 +431,11 @@ IterativeSolverReport finalizeIterativeSolverReport(
         const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
         DenseMatrix<Scalar, Device::GPU>&, IterativeSolverWorkspace<Scalar>&,       \
         const IterativeSolverOptions&, cudaStream_t);                              \
+    template IterativeSolverReport blockPcg<Scalar>(                               \
+        const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
+        DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
+        Index, IterativeSolverWorkspace<Scalar>&, const IterativeSolverOptions&,    \
+        cudaStream_t);                                                             \
     template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(             \
         const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
         DenseMatrix<Scalar, Device::GPU>&, int, IterativeSolverWorkspace<Scalar>&,  \

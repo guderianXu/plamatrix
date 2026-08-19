@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <type_traits>
@@ -71,6 +72,32 @@ template <typename Scalar>
 double solverTolerance()
 {
     return std::is_same_v<Scalar, float> ? 2.0e-4 : 1.0e-10;
+}
+
+template <typename Scalar>
+CSRMatrix<Scalar, Device::CPU> coupledBlockDiagonalSystem()
+{
+    return cooToCsr(
+        4,
+        4,
+        std::vector<Index>{0, 0, 1, 1, 2, 2, 3, 3},
+        std::vector<Index>{0, 1, 0, 1, 2, 3, 2, 3},
+        std::vector<Scalar>{
+            Scalar(4), Scalar(1), Scalar(1), Scalar(3),
+            Scalar(2), Scalar(0.5), Scalar(0.5), Scalar(1.5)});
+}
+
+template <typename Scalar>
+DenseMatrix<Scalar, Device::CPU> coupledBlockInverse()
+{
+    DenseMatrix<Scalar, Device::CPU> inverse(8, 1);
+    const std::vector<Scalar> values{
+        Scalar(3.0 / 11.0), Scalar(-1.0 / 11.0),
+        Scalar(-1.0 / 11.0), Scalar(4.0 / 11.0),
+        Scalar(1.5 / 2.75), Scalar(-0.5 / 2.75),
+        Scalar(-0.5 / 2.75), Scalar(2.0 / 2.75)};
+    std::copy(values.begin(), values.end(), inverse.data());
+    return inverse;
 }
 
 TYPED_TEST(IterativeSolverCpuTest, pcgSolvesDiagonalSystemInOneIteration)
@@ -362,6 +389,38 @@ TYPED_TEST(IterativeSolverGpuTest, adaptiveCgAndPcgMatchCpuAndReuseWorkspace)
     EXPECT_NO_THROW(workspace.closeAsyncAllocation());
     ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
     ASSERT_EQ(cudaStreamDestroy(stream), cudaSuccess);
+}
+
+TYPED_TEST(IterativeSolverGpuTest, blockPcgUsesCallerSuppliedInverseBlocks)
+{
+    const auto matrix_cpu = coupledBlockDiagonalSystem<TypeParam>();
+    DenseMatrix<TypeParam, Device::CPU> expected(4, 1);
+    expected(0, 0) = TypeParam(1);
+    expected(1, 0) = TypeParam(2);
+    expected(2, 0) = TypeParam(-1);
+    expected(3, 0) = TypeParam(3);
+    const auto rhs_cpu = spmv(matrix_cpu, expected);
+    const auto inverse_cpu = coupledBlockInverse<TypeParam>();
+    const auto matrix_gpu = matrix_cpu.toGpu();
+    const auto rhs_gpu = rhs_cpu.toGpu();
+    const auto inverse_gpu = inverse_cpu.toGpu();
+    DenseMatrix<TypeParam, Device::GPU> solution_gpu(4, 1);
+    solution_gpu.fill(TypeParam(0));
+    IterativeSolverWorkspace<TypeParam> workspace;
+    IterativeSolverOptions options;
+    options.relativeTolerance = std::is_same_v<TypeParam, float> ? 1.0e-5 : 1.0e-12;
+
+    const auto report = blockPcg(
+        matrix_gpu, rhs_gpu, solution_gpu, inverse_gpu, 2, workspace, options);
+
+    ASSERT_TRUE(report.converged);
+    EXPECT_EQ(report.iterations, 1);
+    const auto solution_cpu = solution_gpu.toCpu();
+    for (Index row = 0; row < expected.rows(); ++row)
+    {
+        EXPECT_NEAR(solution_cpu(row, 0), expected(row, 0), solverTolerance<TypeParam>());
+    }
+    EXPECT_NO_THROW(workspace.closeAsyncAllocation());
 }
 
 TYPED_TEST(IterativeSolverGpuTest, adaptiveReportsZeroIterationsAndNonConvergence)
@@ -769,6 +828,8 @@ TEST(IterativeSolverNoCuda, gpuSurfaceCompilesAndReportsUnavailableBackend)
 
     EXPECT_THROW(cg(matrix, rhs, solution, workspace), std::runtime_error);
     EXPECT_THROW(pcg(matrix, rhs, solution, workspace), std::runtime_error);
+    EXPECT_THROW(blockPcg(matrix, rhs, solution, solution, 1, workspace),
+                 std::runtime_error);
     EXPECT_THROW(cgFixedIterationsAsync(matrix, rhs, solution, 0, workspace),
                  std::runtime_error);
     EXPECT_THROW(pcgFixedIterationsAsync(matrix, rhs, solution, 0, workspace),

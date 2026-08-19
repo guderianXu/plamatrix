@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -32,6 +33,8 @@ void initialize(const CSRMatrix<Scalar, Device::GPU>& matrix,
                 DenseMatrix<Scalar, Device::GPU>& solution,
                 IterativeSolverWorkspace<Scalar>& workspace,
                 bool preconditioned,
+                const DenseMatrix<Scalar, Device::GPU>* inverse_blocks,
+                Index block_size,
                 cudaStream_t stream)
 {
     const Index size = matrix.rows();
@@ -53,7 +56,13 @@ void initialize(const CSRMatrix<Scalar, Device::GPU>& matrix,
     subtractKernel<<<gridSize(size), kBlockSize, 0, stream>>>(
         rhs.data(), matrix_direction.data(), residual.data(), size);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    if (preconditioned)
+    if (inverse_blocks != nullptr)
+    {
+        applyBlockJacobiKernel<<<gridSize(size), kBlockSize, 0, stream>>>(
+            inverse_blocks->data(), residual.data(), transformed.data(), size, block_size);
+        PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    }
+    else if (preconditioned)
     {
         jacobiKernel<<<gridSize(size), kBlockSize, 0, stream>>>(
             matrix.rowOffsets(), matrix.colIndices(), matrix.values(),
@@ -104,6 +113,8 @@ void submitStep(const CSRMatrix<Scalar, Device::GPU>& matrix,
 template <typename Scalar>
 void updateDirection(IterativeSolverWorkspace<Scalar>& workspace,
                      bool preconditioned,
+                     const DenseMatrix<Scalar, Device::GPU>* inverse_blocks,
+                     Index block_size,
                      cudaStream_t stream)
 {
     const int size = static_cast<int>(IterativeSolverWorkspaceAccess::size(workspace));
@@ -113,7 +124,13 @@ void updateDirection(IterativeSolverWorkspace<Scalar>& workspace,
     auto& transformed = IterativeSolverWorkspaceAccess::transformed(workspace);
     auto& direction = IterativeSolverWorkspaceAccess::direction(workspace);
     auto& scalars = IterativeSolverWorkspaceAccess::scalars(workspace);
-    if (preconditioned)
+    if (inverse_blocks != nullptr)
+    {
+        applyBlockJacobiKernel<<<gridSize(size), kBlockSize, 0, stream>>>(
+            inverse_blocks->data(), residual.data(), transformed.data(), size, block_size);
+        PLAMATRIX_CHECK_CUDA(cudaGetLastError());
+    }
+    else if (preconditioned)
     {
         applyJacobiKernel<<<gridSize(size), kBlockSize, 0, stream>>>(
             inverse.data(), residual.data(), transformed.data(), size);
@@ -161,7 +178,15 @@ AsyncIterativeSolverState fixedSolve(
     }
     validateSystem(matrix, rhs, solution, stream, true);
     auto state = IterativeSolverStateAccess::create(stream, iterations);
-    initialize(matrix, rhs, solution, workspace, preconditioned, stream);
+    initialize(
+        matrix,
+        rhs,
+        solution,
+        workspace,
+        preconditioned,
+        static_cast<const DenseMatrix<Scalar, Device::GPU>*>(nullptr),
+        0,
+        stream);
     if (matrix.rows() == 0)
     {
         PLAMATRIX_CHECK_CUDA(cudaMemsetAsync(
@@ -180,7 +205,12 @@ AsyncIterativeSolverState fixedSolve(
             submitStep(matrix, solution, workspace, stream);
             if (iteration + 1 < iterations)
             {
-                updateDirection(workspace, preconditioned, stream);
+                updateDirection(
+                    workspace,
+                    preconditioned,
+                    static_cast<const DenseMatrix<Scalar, Device::GPU>*>(nullptr),
+                    0,
+                    stream);
             }
         }
         residualSquared(workspace, stream);
@@ -203,6 +233,33 @@ AsyncIterativeSolverState fixedSolve(
 }
 
 template <typename Scalar>
+void validateBlockPreconditioner(
+    const CSRMatrix<Scalar, Device::GPU>& matrix,
+    const DenseMatrix<Scalar, Device::GPU>& rhs,
+    const DenseMatrix<Scalar, Device::GPU>& solution,
+    const DenseMatrix<Scalar, Device::GPU>& inverse_blocks,
+    Index block_size,
+    cudaStream_t stream)
+{
+    if (block_size <= 0 || matrix.rows() % block_size != 0
+        || (matrix.rows() > 0
+            && block_size > std::numeric_limits<Index>::max() / matrix.rows())
+        || inverse_blocks.rows() != matrix.rows() * block_size
+        || inverse_blocks.cols() != 1)
+    {
+        throw std::invalid_argument(
+            "CUDA block PCG requires complete row-major inverse diagonal blocks");
+    }
+    if (inverse_blocks.data() != nullptr
+        && (inverse_blocks.data() == rhs.data() || inverse_blocks.data() == solution.data()))
+    {
+        throw std::invalid_argument(
+            "CUDA block PCG inverse blocks must not alias rhs or solution");
+    }
+    checkStreamStorage("CUDA block PCG inverse blocks", inverse_blocks, stream);
+}
+
+template <typename Scalar>
 IterativeSolverReport adaptiveSolve(
     const CSRMatrix<Scalar, Device::GPU>& matrix,
     const DenseMatrix<Scalar, Device::GPU>& rhs,
@@ -210,11 +267,14 @@ IterativeSolverReport adaptiveSolve(
     IterativeSolverWorkspace<Scalar>& workspace,
     const IterativeSolverOptions& options,
     cudaStream_t stream,
-    bool preconditioned)
+    bool preconditioned,
+    const DenseMatrix<Scalar, Device::GPU>* inverse_blocks = nullptr,
+    Index block_size = 0)
 {
     validateOptions(options);
     validateSystem(matrix, rhs, solution, stream, false);
-    initialize(matrix, rhs, solution, workspace, preconditioned, stream);
+    initialize(
+        matrix, rhs, solution, workspace, preconditioned, inverse_blocks, block_size, stream);
     IterativeSolverReport report;
     if (matrix.rows() == 0)
     {
@@ -274,7 +334,8 @@ IterativeSolverReport adaptiveSolve(
         }
         if (iteration + 1 < options.maxIterations)
         {
-            updateDirection(workspace, preconditioned, stream);
+            updateDirection(
+                workspace, preconditioned, inverse_blocks, block_size, stream);
         }
     }
     if (!report.converged && options.requireConvergence)
@@ -320,6 +381,24 @@ IterativeSolverReport pcg(
     return adaptiveSolve(
         matrix, rhs, solution, workspace, options, stream,
         options.useJacobiPreconditioner);
+}
+
+template <typename Scalar>
+IterativeSolverReport blockPcg(
+    const CSRMatrix<Scalar, Device::GPU>& matrix,
+    const DenseMatrix<Scalar, Device::GPU>& rhs,
+    DenseMatrix<Scalar, Device::GPU>& solution,
+    const DenseMatrix<Scalar, Device::GPU>& inverse_blocks,
+    Index block_size,
+    IterativeSolverWorkspace<Scalar>& workspace,
+    const IterativeSolverOptions& options,
+    cudaStream_t stream)
+{
+    validateBlockPreconditioner(
+        matrix, rhs, solution, inverse_blocks, block_size, stream);
+    return adaptiveSolve(
+        matrix, rhs, solution, workspace, options, stream, true,
+        &inverse_blocks, block_size);
 }
 
 template <typename Scalar>
@@ -403,6 +482,11 @@ IterativeSolverReport finalizeIterativeSolverReport(
         const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
         DenseMatrix<Scalar, Device::GPU>&, IterativeSolverWorkspace<Scalar>&,        \
         const IterativeSolverOptions&, cudaStream_t);                               \
+    template IterativeSolverReport blockPcg<Scalar>(                                \
+        const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
+        DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,  \
+        Index, IterativeSolverWorkspace<Scalar>&, const IterativeSolverOptions&,     \
+        cudaStream_t);                                                              \
     template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(              \
         const CSRMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&, \
         DenseMatrix<Scalar, Device::GPU>&, int, IterativeSolverWorkspace<Scalar>&,   \

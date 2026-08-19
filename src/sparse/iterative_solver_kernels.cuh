@@ -142,6 +142,31 @@ __global__ void applyJacobiKernel(const Scalar* inverse, const Scalar* residual,
 }
 
 template <typename Scalar>
+__global__ void applyBlockJacobiKernel(const Scalar* inverse_blocks,
+                                       const Scalar* residual,
+                                       Scalar* transformed,
+                                       Index size,
+                                       Index block_size)
+{
+    const Index row = static_cast<Index>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (row >= size)
+    {
+        return;
+    }
+    const Index block = row / block_size;
+    const Index local_row = row - block * block_size;
+    const Index block_offset = block * block_size * block_size;
+    const Index residual_offset = block * block_size;
+    Scalar value = Scalar{0};
+    for (Index column = 0; column < block_size; ++column)
+    {
+        value += inverse_blocks[block_offset + local_row * block_size + column]
+               * residual[residual_offset + column];
+    }
+    transformed[row] = value;
+}
+
+template <typename Scalar>
 __global__ void alphaKernel(Scalar* scalars)
 {
     if (scalars[kBreakdown] != Scalar{0})

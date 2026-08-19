@@ -79,6 +79,8 @@ const auto report = pcg(csr, rhs, solution, options);
 `initialResidual` 和 `finalResidual`。
 
 CUDA 自适应接口额外接收可复用的 `IterativeSolverWorkspace<Scalar>` 和 stream。
+`blockPcg()` 接收连续 row-major 逆对角块和显式 `block_size`，在 CUDA/OpenCL 设备上执行块
+Jacobi 预条件；逆块向量尺寸必须为 `matrix.rows() * block_size`。
 固定轮数 pipeline 可使用 `cgFixedIterationsAsync()` 或 `pcgFixedIterationsAsync()`，
 随后调用 `finalizeIterativeSolverReport()`。workspace 绑定首次使用的 stream；切换或销毁
 非默认 stream 前，先同步、`closeAsyncAllocation()`，再同步一次完成有序释放。

@@ -2,6 +2,8 @@
 
 #include "plamatrix/opencl/execution.h"
 
+#include "iterative_solver_kernels.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -16,120 +18,8 @@ namespace opencl
 {
 namespace
 {
-constexpr const char* kSolverSource = R"CLC(
-#if defined(REAL_DOUBLE) || defined(ACCUM_DOUBLE)
-#if defined(cl_khr_fp64)
-#pragma OPENCL EXTENSION cl_khr_fp64 : enable
-#elif defined(cl_amd_fp64)
-#pragma OPENCL EXTENSION cl_amd_fp64 : enable
-#endif
-#endif
-#if defined(REAL_DOUBLE)
-typedef double real;
-#else
-typedef float real;
-#endif
-#if defined(REAL_DOUBLE) || defined(ACCUM_DOUBLE)
-typedef double accum;
-#else
-typedef float accum;
-#endif
-typedef long index_t;
+using iterative_solver_detail::kSolverSource;
 
-__kernel void spmv(
-    __global const index_t* rows, __global const index_t* columns,
-    __global const real* values, __global const real* x,
-    __global real* output, const index_t size)
-{
-    const index_t row = (index_t)get_global_id(0);
-    if (row >= size) return;
-    real sum = (real)0;
-    for (index_t entry = rows[row]; entry < rows[row + 1]; ++entry)
-        sum += values[entry] * x[columns[entry]];
-    output[row] = sum;
-}
-
-__kernel void initialize(
-    __global const real* rhs, __global const real* matrix_x,
-    __global const real* inverse_diagonal, __global real* residual,
-    __global real* transformed, __global real* direction, const index_t size)
-{
-    const index_t i = (index_t)get_global_id(0);
-    if (i >= size) return;
-    const real r = rhs[i] - matrix_x[i];
-    const real z = inverse_diagonal[i] * r;
-    residual[i] = r;
-    transformed[i] = z;
-    direction[i] = z;
-}
-
-__kernel void updateSolutionResidual(
-    __global real* solution, __global real* residual,
-    __global const real* direction, __global const real* matrix_direction,
-    const real alpha, const index_t size)
-{
-    const index_t i = (index_t)get_global_id(0);
-    if (i >= size) return;
-    solution[i] += alpha * direction[i];
-    residual[i] -= alpha * matrix_direction[i];
-}
-
-__kernel void applyPreconditioner(
-    __global const real* inverse_diagonal, __global const real* residual,
-    __global real* transformed, const index_t size)
-{
-    const index_t i = (index_t)get_global_id(0);
-    if (i < size) transformed[i] = inverse_diagonal[i] * residual[i];
-}
-
-__kernel void updateDirection(
-    __global real* direction, __global const real* transformed,
-    const real beta, const index_t size)
-{
-    const index_t i = (index_t)get_global_id(0);
-    if (i < size) direction[i] = transformed[i] + beta * direction[i];
-}
-
-__kernel void dotPartial(
-    __global const real* first, __global const real* second,
-    __global accum* partial, const index_t size, __local accum* scratch)
-{
-    const size_t local_id = get_local_id(0);
-    const size_t local_size = get_local_size(0);
-    const size_t index = get_group_id(0) * local_size * 2 + local_id;
-    accum sum = (accum)0;
-    if (index < (size_t)size) sum = (accum)first[index] * (accum)second[index];
-    if (index + local_size < (size_t)size)
-        sum += (accum)first[index + local_size] * (accum)second[index + local_size];
-    scratch[local_id] = sum;
-    barrier(CLK_LOCAL_MEM_FENCE);
-    for (size_t stride = local_size / 2; stride > 0; stride /= 2)
-    {
-        if (local_id < stride) scratch[local_id] += scratch[local_id + stride];
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    if (local_id == 0) partial[get_group_id(0)] = scratch[0];
-}
-
-__kernel void reducePartial(
-    __global const accum* input, __global accum* output,
-    const index_t size, __local accum* scratch)
-{
-    const size_t local_id = get_local_id(0);
-    const size_t local_size = get_local_size(0);
-    const size_t index = get_group_id(0) * local_size * 2 + local_id;
-    accum sum = index < (size_t)size ? input[index] : (accum)0;
-    if (index + local_size < (size_t)size) sum += input[index + local_size];
-    scratch[local_id] = sum;
-    barrier(CLK_LOCAL_MEM_FENCE);
-    for (size_t stride = local_size / 2; stride > 0; stride /= 2)
-    {
-        if (local_id < stride) scratch[local_id] += scratch[local_id + stride];
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    if (local_id == 0) output[get_group_id(0)] = scratch[0];
-}
-)CLC";
 void validateOptions(const IterativeSolverOptions& options)
 {
     if (options.maxIterations < 0 || !std::isfinite(options.relativeTolerance)
@@ -232,11 +122,45 @@ double dot(
 }
 
 template <typename Scalar>
+void validateBlockPreconditioner(
+    const CSRMatrix<Scalar, Device::CPU>& matrix,
+    const DenseMatrix<Scalar, Device::CPU>& rhs,
+    const DenseMatrix<Scalar, Device::CPU>& solution,
+    const DenseMatrix<Scalar, Device::CPU>& inverse_blocks,
+    Index block_size)
+{
+    if (block_size <= 0 || matrix.rows() % block_size != 0
+        || (matrix.rows() > 0
+            && block_size > std::numeric_limits<Index>::max() / matrix.rows())
+        || inverse_blocks.rows() != matrix.rows() * block_size
+        || inverse_blocks.cols() != 1)
+    {
+        throw std::invalid_argument(
+            "OpenCL block PCG requires complete row-major inverse diagonal blocks");
+    }
+    if (inverse_blocks.data() == rhs.data() || inverse_blocks.data() == solution.data())
+    {
+        throw std::invalid_argument(
+            "OpenCL block PCG inverse blocks must not alias rhs or solution");
+    }
+    for (Index index = 0; index < inverse_blocks.rows(); ++index)
+    {
+        if (!std::isfinite(inverse_blocks.data()[index]))
+        {
+            throw std::invalid_argument(
+                "OpenCL block PCG inverse blocks must contain finite values");
+        }
+    }
+}
+
+template <typename Scalar>
 IterativeSolverReport solve(
     const CSRMatrix<Scalar, Device::CPU>& matrix,
     const DenseMatrix<Scalar, Device::CPU>& rhs,
     DenseMatrix<Scalar, Device::CPU>& solution,
-    const IterativeSolverOptions& options)
+    const IterativeSolverOptions& options,
+    const DenseMatrix<Scalar, Device::CPU>* inverse_blocks,
+    Index block_size)
 {
     validateOptions(options);
     if (matrix.rows() <= 0 || matrix.rows() != matrix.cols()
@@ -248,6 +172,11 @@ IterativeSolverReport solve(
     for (Index row = 0; row < matrix.rows(); ++row)
         if (!std::isfinite(rhs.data()[row]) || !std::isfinite(solution.data()[row]))
             throw std::invalid_argument("OpenCL PCG vectors must contain finite values");
+    if (inverse_blocks != nullptr)
+    {
+        validateBlockPreconditioner(
+            matrix, rhs, solution, *inverse_blocks, block_size);
+    }
 
     auto& runtime = OpenClRuntime::instance();
     requireFp64<Scalar>(runtime);
@@ -256,14 +185,19 @@ IterativeSolverReport solve(
     const std::size_t local_size = localSize(runtime);
     const std::size_t partial_count = std::max<std::size_t>(1, groupsFor(count, local_size));
     const bool double_accumulation = std::is_same_v<Scalar, double> || runtime.supportsFp64();
-    const auto inverse_diagonal = inverseDiagonal(matrix, options.useJacobiPreconditioner);
+    const auto inverse_diagonal = inverse_blocks == nullptr
+        ? inverseDiagonal(matrix, options.useJacobiPreconditioner)
+        : std::vector<Scalar>{};
     const std::string build_options = std::is_same_v<Scalar, double>
         ? "-DREAL_DOUBLE=1" : (double_accumulation ? "-DACCUM_DOUBLE=1" : "");
-    cl_program program = runtime.program("plamatrix_opencl_pcg_v1", kSolverSource, build_options);
+    cl_program program = runtime.program("plamatrix_opencl_pcg_v2", kSolverSource, build_options);
     CompiledKernel spmv_kernel(program, "spmv");
     CompiledKernel initialize_kernel(program, "initialize");
+    CompiledKernel initialize_residual_kernel(program, "initializeResidual");
     CompiledKernel update_kernel(program, "updateSolutionResidual");
     CompiledKernel precondition_kernel(program, "applyPreconditioner");
+    CompiledKernel block_precondition_kernel(program, "applyBlockPreconditioner");
+    CompiledKernel copy_kernel(program, "copyVector");
     CompiledKernel direction_kernel(program, "updateDirection");
     CompiledKernel dot_kernel(program, "dotPartial");
     CompiledKernel reduce_kernel(program, "reducePartial");
@@ -280,8 +214,12 @@ IterativeSolverReport solve(
                             byteSize<Scalar>(count), const_cast<Scalar*>(rhs.data()));
     DeviceBuffer x(runtime.context(), CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                    byteSize<Scalar>(count), solution.data());
+    const Scalar* inverse_data = inverse_blocks != nullptr
+        ? inverse_blocks->data() : inverse_diagonal.data();
+    const std::size_t inverse_count = inverse_blocks != nullptr
+        ? static_cast<std::size_t>(inverse_blocks->rows()) : count;
     DeviceBuffer inverse(runtime.context(), CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                         byteSize<Scalar>(count), const_cast<Scalar*>(inverse_diagonal.data()));
+                         byteSize<Scalar>(inverse_count), const_cast<Scalar*>(inverse_data));
     DeviceBuffer residual(runtime.context(), CL_MEM_READ_WRITE, byteSize<Scalar>(count));
     DeviceBuffer transformed(runtime.context(), CL_MEM_READ_WRITE, byteSize<Scalar>(count));
     DeviceBuffer direction(runtime.context(), CL_MEM_READ_WRITE, byteSize<Scalar>(count));
@@ -298,16 +236,57 @@ IterativeSolverReport solve(
         kernelBufferArg(spmv_kernel, 4, output); kernelArg(spmv_kernel, 5, device_count);
         launch(queue.get(), spmv_kernel, count, local_size, "clEnqueueNDRangeKernel(spmv)");
     };
+    auto run_preconditioner = [&]()
+    {
+        if (inverse_blocks != nullptr)
+        {
+            kernelBufferArg(block_precondition_kernel, 0, inverse);
+            kernelBufferArg(block_precondition_kernel, 1, residual);
+            kernelBufferArg(block_precondition_kernel, 2, transformed);
+            kernelArg(block_precondition_kernel, 3, device_count);
+            kernelArg(block_precondition_kernel, 4, static_cast<cl_long>(block_size));
+            launch(queue.get(), block_precondition_kernel, count, local_size,
+                   "clEnqueueNDRangeKernel(block precondition)");
+        }
+        else
+        {
+            kernelBufferArg(precondition_kernel, 0, inverse);
+            kernelBufferArg(precondition_kernel, 1, residual);
+            kernelBufferArg(precondition_kernel, 2, transformed);
+            kernelArg(precondition_kernel, 3, device_count);
+            launch(queue.get(), precondition_kernel, count, local_size,
+                   "clEnqueueNDRangeKernel(precondition)");
+        }
+    };
 
     run_spmv(x, matrix_direction);
-    kernelBufferArg(initialize_kernel, 0, rhs_buffer);
-    kernelBufferArg(initialize_kernel, 1, matrix_direction);
-    kernelBufferArg(initialize_kernel, 2, inverse);
-    kernelBufferArg(initialize_kernel, 3, residual);
-    kernelBufferArg(initialize_kernel, 4, transformed);
-    kernelBufferArg(initialize_kernel, 5, direction);
-    kernelArg(initialize_kernel, 6, device_count);
-    launch(queue.get(), initialize_kernel, count, local_size, "clEnqueueNDRangeKernel(initialize)");
+    if (inverse_blocks != nullptr)
+    {
+        kernelBufferArg(initialize_residual_kernel, 0, rhs_buffer);
+        kernelBufferArg(initialize_residual_kernel, 1, matrix_direction);
+        kernelBufferArg(initialize_residual_kernel, 2, residual);
+        kernelArg(initialize_residual_kernel, 3, device_count);
+        launch(queue.get(), initialize_residual_kernel, count, local_size,
+               "clEnqueueNDRangeKernel(initialize residual)");
+        run_preconditioner();
+        kernelBufferArg(copy_kernel, 0, transformed);
+        kernelBufferArg(copy_kernel, 1, direction);
+        kernelArg(copy_kernel, 2, device_count);
+        launch(queue.get(), copy_kernel, count, local_size,
+               "clEnqueueNDRangeKernel(copy direction)");
+    }
+    else
+    {
+        kernelBufferArg(initialize_kernel, 0, rhs_buffer);
+        kernelBufferArg(initialize_kernel, 1, matrix_direction);
+        kernelBufferArg(initialize_kernel, 2, inverse);
+        kernelBufferArg(initialize_kernel, 3, residual);
+        kernelBufferArg(initialize_kernel, 4, transformed);
+        kernelBufferArg(initialize_kernel, 5, direction);
+        kernelArg(initialize_kernel, 6, device_count);
+        launch(queue.get(), initialize_kernel, count, local_size,
+               "clEnqueueNDRangeKernel(initialize)");
+    }
 
     IterativeSolverReport report;
     double residual_squared = dot<Scalar>(queue.get(), dot_kernel, reduce_kernel, residual, residual,
@@ -347,9 +326,7 @@ IterativeSolverReport solve(
         report.finalResidual = std::sqrt(residual_squared);
         report.converged = std::isfinite(report.finalResidual) && report.finalResidual <= tolerance;
         if (report.converged) break;
-        kernelBufferArg(precondition_kernel, 0, inverse); kernelBufferArg(precondition_kernel, 1, residual);
-        kernelBufferArg(precondition_kernel, 2, transformed); kernelArg(precondition_kernel, 3, device_count);
-        launch(queue.get(), precondition_kernel, count, local_size, "clEnqueueNDRangeKernel(precondition)");
+        run_preconditioner();
         const double next_rho = dot<Scalar>(queue.get(), dot_kernel, reduce_kernel, residual, transformed,
             partial_a, partial_b, matrix.rows(), local_size, double_accumulation);
         if (!std::isfinite(next_rho) || next_rho <= 0.0)
@@ -383,18 +360,39 @@ IterativeSolverReport pcg(
     DenseMatrix<Scalar, Device::CPU>& solution,
     const IterativeSolverOptions& options)
 {
-    return solve(matrix, rhs, solution, options);
+    return solve<Scalar>(matrix, rhs, solution, options, nullptr, 0);
+}
+
+template <typename Scalar>
+IterativeSolverReport blockPcg(
+    const CSRMatrix<Scalar, Device::CPU>& matrix,
+    const DenseMatrix<Scalar, Device::CPU>& rhs,
+    DenseMatrix<Scalar, Device::CPU>& solution,
+    const DenseMatrix<Scalar, Device::CPU>& inverse_blocks,
+    Index block_size,
+    const IterativeSolverOptions& options)
+{
+    return solve(
+        matrix, rhs, solution, options, &inverse_blocks, block_size);
 }
 
 #ifdef PLAMATRIX_USE_FLOAT
 template IterativeSolverReport pcg<float>(
     const CSRMatrix<float, Device::CPU>&, const DenseMatrix<float, Device::CPU>&,
     DenseMatrix<float, Device::CPU>&, const IterativeSolverOptions&);
+template IterativeSolverReport blockPcg<float>(
+    const CSRMatrix<float, Device::CPU>&, const DenseMatrix<float, Device::CPU>&,
+    DenseMatrix<float, Device::CPU>&, const DenseMatrix<float, Device::CPU>&,
+    Index, const IterativeSolverOptions&);
 #endif
 #ifdef PLAMATRIX_USE_DOUBLE
 template IterativeSolverReport pcg<double>(
     const CSRMatrix<double, Device::CPU>&, const DenseMatrix<double, Device::CPU>&,
     DenseMatrix<double, Device::CPU>&, const IterativeSolverOptions&);
+template IterativeSolverReport blockPcg<double>(
+    const CSRMatrix<double, Device::CPU>&, const DenseMatrix<double, Device::CPU>&,
+    DenseMatrix<double, Device::CPU>&, const DenseMatrix<double, Device::CPU>&,
+    Index, const IterativeSolverOptions&);
 #endif
 
 } // namespace opencl

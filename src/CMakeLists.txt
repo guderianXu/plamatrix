@@ -1,5 +1,9 @@
 # ---- CPU sources (always compiled) ----
 target_sources(plamatrix PRIVATE
+    optimization/block_normal_equations.cpp
+    optimization/block_schur.cpp
+    optimization/block_schur_accelerated.cpp
+    optimization/block_schur_device_assembly_stub.cpp
     sparse/csr_matrix.cpp
     sparse/iterative_solver_cpu.cpp
     sparse/sparse_ops_cpu.cpp
@@ -17,6 +21,7 @@ target_sources(plamatrix PRIVATE
 if(PLAMATRIX_WITH_OPENCL)
     target_sources(plamatrix PRIVATE
         opencl/device_enumeration.cpp
+        optimization/block_schur_device_assembly_opencl.cpp
         opencl/iterative_solver.cpp
         opencl/runtime.cpp
     )
@@ -31,6 +36,7 @@ endif()
 if(PLAMATRIX_WITH_CUDA)
     target_sources(plamatrix PRIVATE
         plamatrix.cu
+        optimization/block_schur_device_assembly.cu
         sparse/coo_to_csr.cu
         sparse/iterative_solver.cu
         sparse/iterative_solver_workspace.cu

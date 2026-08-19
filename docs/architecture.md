@@ -21,7 +21,7 @@ include/plamatrix/plamatrix.h          # 总入口
 ├── sparse/       稀疏矩阵
 │   ├── coo_matrix.h     COO 格式 + toCsr()
 │   └── csr_matrix.h     CSR 格式 (三数组)
-└── ops/          运算层
+├── ops/          运算层
     ├── gemm.h            矩阵乘法 (CPU BLAS/fallback / cuBLAS)
     ├── decomposition.h   SVD / QR / Eigh
     ├── reduction.h       按轴 value/indexed reduction + workspace
@@ -31,13 +31,18 @@ include/plamatrix/plamatrix.h          # 总入口
     ├── solver.h          线性求解
     ├── vector.h          Vec3 小向量表示与算术
     └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
+└── optimization/ 非线性最小二乘基础设施
+    ├── robust_loss.h          Huber 块损失与 IRLS 权重
+    ├── block_schur.h          二分块法方程与 Schur-PCG
+    └── levenberg_marquardt.h  LM 阻尼状态策略
 
 src/                            实现文件
 ├── dense/*.cu + *_cpu.cpp      密集矩阵 CPU/CUDA 运算
 ├── ops/*_dispatch.cu           reduction/indexing/small-matrix GPU 调度
 ├── ops/*_workspace.cu          grow-only workspace 与 stream/status 生命周期
 ├── ops/*.cu + *_cpu.cpp        其他 GPU + CPU 运算实现
-└── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
+├── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
+└── optimization/*              多 primary 块累计、CPU 矩阵自由、可复用 CSR 拓扑、设备数值装配及块 Jacobi Schur-PCG
 ```
 
 **核心设计原则**：
@@ -511,6 +516,9 @@ CPU `spmv/spmm` 使用排序 CSR；CUDA 路径通过 cuSPARSE 执行，并由
 Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口执行主机收敛检查，
 `cgFixedIterationsAsync()/pcgFixedIterationsAsync()` 则提交固定轮数并通过显式 finalize
 读取报告。
+
+CUDA/OpenCL `blockPcg()` 使用调用方提供的 row-major 逆对角块，适合块法方程和 Schur
+约化系统；普通 `pcg()` 的标量 Jacobi 行为保持不变。
 
 ---
 

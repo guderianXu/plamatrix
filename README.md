@@ -16,6 +16,9 @@
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
 - **OpenCL 执行与稀疏求解**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII、program cache，
   以及一次上传 CPU-owned CSR 系统的 Jacobi-PCG
+- **通用块优化**：Huber、二分块法方程、LM 阻尼、可复用 Schur CSR pattern，
+  多 primary 残差与直接交叉块，以及 CPU/CUDA/OpenCL 块 Jacobi-PCG；CUDA/OpenCL 在设备端装配
+  Schur 数值
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
 
 > `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL PCG 接受 CPU-owned CSR 和向量，
@@ -216,6 +219,7 @@ GpuAllocator<float>::setMemoryPoolEnabled(false);
 - [DenseMatrix API](docs/api/dense-matrix.md)
 - [稀疏矩阵 API](docs/api/sparse-matrix.md)
 - [线性代数 API](docs/api/linear-algebra.md)
+- [非线性优化 API](docs/api/optimization.md)
 - [三维向量与点云运算 API](docs/api/point-cloud.md)
 - [贡献指南](docs/contributing.md)
 

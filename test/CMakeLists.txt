@@ -119,6 +119,18 @@ gtest_discover_tests(plamatrix_small_matrix_tests
 
 add_dependencies(plamatrix_tests plamatrix_small_matrix_tests)
 
+add_executable(plamatrix_optimization_tests
+    unit/optimization/block_schur_test.cpp
+)
+target_link_libraries(plamatrix_optimization_tests PRIVATE plamatrix GTest::gtest_main)
+
+gtest_discover_tests(plamatrix_optimization_tests
+    TEST_PREFIX plamatrix.
+    DISCOVERY_MODE PRE_TEST
+)
+
+add_dependencies(plamatrix_tests plamatrix_optimization_tests)
+
 add_executable(plamatrix_statistics_tests
     unit/ops/statistics_test.cpp
 )

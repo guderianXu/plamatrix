@@ -127,6 +127,19 @@ IterativeSolverReport pcg(
     const IterativeSolverOptions& options = {},
     cudaStream_t stream = nullptr);
 
+/// Adaptively solve an SPD GPU system with caller-supplied inverse diagonal blocks.
+/// inverse_blocks stores row-major blocks as a contiguous (matrix.rows() * block_size) x 1 vector.
+template <typename Scalar>
+IterativeSolverReport blockPcg(
+    const CSRMatrix<Scalar, Device::GPU>& matrix,
+    const DenseMatrix<Scalar, Device::GPU>& rhs,
+    DenseMatrix<Scalar, Device::GPU>& solution,
+    const DenseMatrix<Scalar, Device::GPU>& inverse_blocks,
+    Index block_size,
+    IterativeSolverWorkspace<Scalar>& workspace,
+    const IterativeSolverOptions& options = {},
+    cudaStream_t stream = nullptr);
+
 /// Submit exactly iterations CG steps without host convergence checks.
 /// The matrix must have trusted CSR structure. Synchronous CPU-to-GPU transfer establishes trust.
 /// Async transfer requires validateStructure() on its copy stream before submission. Once mutable
