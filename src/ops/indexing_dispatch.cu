@@ -4,7 +4,7 @@
 
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_select.cuh>
-#include <cuda/iterator>
+#include <thrust/iterator/counting_iterator.h>
 
 #include "indexing_detail.h"
 
@@ -337,7 +337,7 @@ void launchCompactRows(
     requireShape("compactRows", selected_count, 1, 1, "selected_count");
 
     std::size_t temporary_bytes = 0;
-    const auto source_rows = cuda::counting_iterator<Index>(0);
+    const auto source_rows = thrust::counting_iterator<Index>(0);
     if (input.rows() != 0)
     {
         PLAMATRIX_CHECK_CUDA(cub::DeviceSelect::Flagged(

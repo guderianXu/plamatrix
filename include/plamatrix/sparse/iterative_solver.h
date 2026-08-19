@@ -67,7 +67,7 @@ private:
 /// after closeAsyncAllocation() before destroying a non-default stream.
 struct AsyncIterativeSolverState
 {
-    AsyncIterativeSolverState() noexcept = default;
+    AsyncIterativeSolverState() = default;
     ~AsyncIterativeSolverState() noexcept;
     AsyncIterativeSolverState(AsyncIterativeSolverState&& other) noexcept;
     AsyncIterativeSolverState& operator=(AsyncIterativeSolverState&& other) noexcept;

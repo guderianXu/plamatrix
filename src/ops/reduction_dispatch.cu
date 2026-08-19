@@ -6,7 +6,8 @@
 #include <string>
 
 #include <cub/device/device_reduce.cuh>
-#include <cuda/iterator>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 
 #include "reduction_detail.h"
 #include "reduction_kernels.cuh"
@@ -126,7 +127,7 @@ void launchCubMean(const DenseMatrix<Scalar, Device::GPU>& input,
                    ReductionWorkspace& workspace,
                    cudaStream_t stream)
 {
-    const auto summaries = cuda::make_transform_iterator(
+    const auto summaries = thrust::make_transform_iterator(
         input.data(), MakeMeanSummary<Scalar>{});
     const MeanSummaryReducer summary_reducer;
     const MeanSummary initial_summary{0.0, 0U};
@@ -136,7 +137,7 @@ void launchCubMean(const DenseMatrix<Scalar, Device::GPU>& input,
         static_cast<MeanSummary*>(nullptr), input.size(),
         summary_reducer, initial_summary, stream));
 
-    const auto normalized_query = cuda::make_transform_iterator(
+    const auto normalized_query = thrust::make_transform_iterator(
         input.data(), NormalizeForMean<Scalar>{nullptr});
     const CompensatedSumReducer sum_reducer;
     const CompensatedSum initial_sum{0.0, 0.0};
@@ -164,7 +165,7 @@ void launchCubMean(const DenseMatrix<Scalar, Device::GPU>& input,
     PLAMATRIX_CHECK_CUDA(cub::DeviceReduce::Reduce(
         workspace.data(), summary_temporary_bytes, summaries, summary, input.size(),
         summary_reducer, initial_summary, stream));
-    const auto normalized_input = cuda::make_transform_iterator(
+    const auto normalized_input = thrust::make_transform_iterator(
         input.data(), NormalizeForMean<Scalar>{summary});
     PLAMATRIX_CHECK_CUDA(cub::DeviceReduce::Reduce(
         workspace.data(), sum_temporary_bytes, normalized_input, normalized, input.size(),
@@ -182,8 +183,8 @@ void launchCubExtreme(const DenseMatrix<Scalar, Device::GPU>& input,
                       cudaStream_t stream)
 {
     using Pair = ExtremePair<Scalar>;
-    const auto pairs = cuda::make_transform_iterator(
-        cuda::counting_iterator<Index>(0), LoadExtremePair<Scalar>{input.data()});
+    const auto pairs = thrust::make_transform_iterator(
+        thrust::counting_iterator<Index>(0), LoadExtremePair<Scalar>{input.data()});
     const ExtremeReducer<FindMinimum, Scalar> reducer;
     const Pair initial{Scalar(0), Index(-1)};
     std::size_t temporary_bytes = 0;
@@ -256,7 +257,7 @@ void launchValueReduction(ValueOperation operation,
         if (operation == ValueOperation::Sum)
         {
             launchCubSum<Scalar>(
-                cuda::make_transform_iterator(input.data(), CastToDouble<Scalar>{}), input.size(),
+                thrust::make_transform_iterator(input.data(), CastToDouble<Scalar>{}), input.size(),
                 output, workspace, stream);
         }
         else if (operation == ValueOperation::Mean)
