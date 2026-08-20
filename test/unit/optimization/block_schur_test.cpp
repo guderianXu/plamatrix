@@ -241,6 +241,66 @@ TEST(BlockSchurTest, DenseCpuMatchesDenseDampedNormalEquation)
     expectAcceleratedPatternReuse(SchurComplementLinearBackend::DenseCpu);
 }
 
+TEST(BlockSchurTest, DenseCpuSolvesParallelSizeCoupledSystemDeterministically)
+{
+    constexpr Index block_count = 24;
+    constexpr Index block_size = 6;
+    BlockNormalEquations<double> equations(block_count, 0, block_size, 1);
+
+    std::array<double, block_size * block_size> identity{};
+    for (Index diagonal = 0; diagonal < block_size; ++diagonal)
+    {
+        identity[static_cast<std::size_t>(diagonal * block_size + diagonal)] = 1.0;
+    }
+    for (Index block = 0; block < block_count; ++block)
+    {
+        std::array<double, block_size> residual{};
+        for (Index component = 0; component < block_size; ++component)
+        {
+            residual[static_cast<std::size_t>(component)] =
+                0.01 * static_cast<double>(1 + block + component);
+        }
+        equations.addPrimaryResidualBlock(
+            block, identity.data(), residual.data(), block_size);
+    }
+
+    const std::array<double, block_size> left_jacobian{{1.0, 0.2, -0.1, 0.3, 0.05, -0.2}};
+    const std::array<double, block_size> right_jacobian{{-0.8, 0.1, 0.25, -0.2, 0.15, 0.3}};
+    for (Index block = 0; block + 1 < block_count; ++block)
+    {
+        const double residual = 0.02 * static_cast<double>(block + 1);
+        equations.addPrimaryResidualBlocks(
+            {block, block + 1},
+            {left_jacobian.data(), right_jacobian.data()},
+            &residual,
+            1);
+    }
+
+    SchurComplementSolverOptions<double> options;
+    options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+    options.relativeTolerance = 1e-12;
+    options.absoluteTolerance = 1e-14;
+    std::vector<double> first_primary;
+    std::vector<double> first_eliminated;
+    std::vector<double> second_primary;
+    std::vector<double> second_eliminated;
+    const auto first = solveDampedSchurComplement(
+        equations, 0.01, options, &first_primary, &first_eliminated);
+    const auto second = solveDampedSchurComplement(
+        equations, 0.01, options, &second_primary, &second_eliminated);
+
+    ASSERT_TRUE(first.converged) << first.message;
+    ASSERT_TRUE(second.converged) << second.message;
+    ASSERT_EQ(first_primary.size(), static_cast<std::size_t>(block_count * block_size));
+    EXPECT_TRUE(first_eliminated.empty());
+    EXPECT_EQ(first_primary, second_primary);
+    EXPECT_EQ(first_eliminated, second_eliminated);
+    for (double value : first_primary)
+    {
+        EXPECT_TRUE(std::isfinite(value));
+    }
+}
+
 TEST(BlockSchurTest, DeterministicMergeMatchesSerialAssembly)
 {
     auto serial = makeSyntheticEquations();

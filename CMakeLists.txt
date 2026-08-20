@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---- Options ----
 option(PLAMATRIX_USE_FLOAT  "Pre-compile float32 instantiations" ON)
 option(PLAMATRIX_USE_DOUBLE "Pre-compile float64 instantiations" ON)
-option(PLAMATRIX_WITH_SYSTEM_LINALG "Use system BLAS/LAPACK acceleration when available" ON)
+option(PLAMATRIX_WITH_SYSTEM_LINALG "Use optional system BLAS/LAPACK acceleration" OFF)
 
 set(_PLAMATRIX_WITH_OPENCL_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_WITH_OPENCL)
@@ -144,7 +144,7 @@ endif()
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 # ---- Optional CPU BLAS/LAPACK acceleration ----
-set(PLAMATRIX_LINALG_PROVIDER "fallback")
+set(PLAMATRIX_LINALG_PROVIDER "native")
 set(PLAMATRIX_LINALG_LIBRARIES "")
 set(PLAMATRIX_WITH_FOUND_SYSTEM_LINALG OFF)
 if(PLAMATRIX_WITH_SYSTEM_LINALG)
@@ -182,7 +182,7 @@ if(PLAMATRIX_WITH_SYSTEM_LINALG)
                     "${PLAMATRIX_BLAS_LIBRARY}"
                 )
             else()
-                message(STATUS "System BLAS/LAPACK not found; using PlaMatrix fallback linalg")
+                message(STATUS "System BLAS/LAPACK not found; using PlaMatrix native CPU linalg")
             endif()
         endif()
     endif()

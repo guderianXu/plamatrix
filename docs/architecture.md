@@ -22,7 +22,7 @@ include/plamatrix/plamatrix.h          # 总入口
 │   ├── coo_matrix.h     COO 格式 + toCsr()
 │   └── csr_matrix.h     CSR 格式 (三数组)
 ├── ops/          运算层
-    ├── gemm.h            矩阵乘法 (CPU BLAS/fallback / cuBLAS)
+    ├── gemm.h            矩阵乘法 (原生 CPU/可选 BLAS/cuBLAS)
     ├── decomposition.h   SVD / QR / Eigh
     ├── reduction.h       按轴 value/indexed reduction + workspace
     ├── indexing.h        scan、gather/scatter、stable compact + workspace
@@ -50,7 +50,7 @@ src/                            实现文件
 - 列优先 (column-major) 存储，兼容 cuBLAS Fortran 序
 - 显式设备管理：`toCpu()` / `toGpu()` 触发 `cudaMemcpy`
 - GPU 加速通过 cuBLAS / cuSOLVER 库 + 少量自定义 kernel
-- CPU 后端优先使用系统 BLAS/LAPACK；项目内 fallback 对较大工作量使用 OpenMP
+- CPU 后端默认使用自包含原生算法；GEMM 对较大工作量使用分块、SIMD 和 OpenMP，系统 BLAS/LAPACK 是显式可选加速后端
 
 ---
 
@@ -296,19 +296,22 @@ nonfinite 优先；同步包装器等待并检查，异步包装器要求调用�
 
 ### 4.1 CPU 实现 (`gemm_cpu.cpp`)
 
-可用时优先调用系统 BLAS `sgemm/dgemm`。未启用或未检测到 BLAS 时使用项目内 fallback：
+默认使用项目内原生内核；显式启用并检测到系统 BLAS 时可调用 `sgemm/dgemm`。原生内核按输出 tile 并行：
 
-三重循环，列优先访问模式：
+分块循环保持 A、C 的列内访问连续：
 ```cpp
-#pragma omp parallel for collapse(2)
-for (j = 0; j < n; ++j)           // C 的列
-    for (i = 0; i < m; ++i)       // C 的行
-        for (p = 0; p < k; ++p)   // 归约维度
-            C[i + j*m] += A[i + p*m] * B[p + j*k];
+#pragma omp parallel for
+for (tile = 0; tile < tile_count; ++tile)
+    for (p_block = 0; p_block < k; p_block += 64)
+        for (j = tile_j_begin; j < tile_j_end; ++j)
+            for (p = p_block; p < p_block_end; ++p)
+                #pragma omp simd
+                for (i = tile_i_begin; i < tile_i_end; ++i)
+                    C[i + j*m] += A[i + p*m] * B[p + j*k];
 ```
 
-- 较大工作量下用 `collapse(2)` 融合外层两个循环，所有 `(i,j)` 对被并行分配到线程
-- 每个线程维护局部累加器 `sum`，避免对 `C[i,j]` 的竞争写入
+- 输出使用 128×32 tile，归约维按 64 分块；不同 tile 没有竞争写入
+- 列内行循环连续且带 `omp simd`，便于编译器向量化
 - 列优先索引：`A[i + p*m]`，`B[p + j*k]`，`C[i + j*m]`
 
 ### 4.2 GPU 实现 (`gemm.cu`)
@@ -334,23 +337,23 @@ cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 
 ### 5.1 SVD
 
-#### CPU：LAPACK gesvd / 双边 Jacobi fallback (`decomposition_cpu.cpp`)
+#### CPU：原生双边 Jacobi / 可选 LAPACK gesvd (`decomposition_cpu.cpp`)
 
-当 `PLAMATRIX_WITH_SYSTEM_LINALG=ON` 且 CMake 检测到 LAPACK 时，CPU SVD 调用 `sgesvd/dgesvd`，返回完整 `U(m,m)`、紧凑 `S(min(m,n),1)` 和完整 `Vt(n,n)`。无 LAPACK 时使用项目内双边 Jacobi fallback：
+默认使用项目内双边 Jacobi；当显式设置 `PLAMATRIX_WITH_SYSTEM_LINALG=ON` 且检测到 LAPACK 时，可改用 `sgesvd/dgesvd`。两者都返回完整 `U(m,m)`、紧凑 `S(min(m,n),1)` 和完整 `Vt(n,n)`：
 
 **算法**：隐式双边 Jacobi（在 A 的列上直接工作，不显式构造 `A^T A`）：
 
 1. 初始化：`U = A`，`Vt = I`，`S = 0`
 2. Jacobi 扫描循环（最多 100 轮）：
    - 对每对列 `(j1, j2)` 计算 `a = ||col_j1||²`，`b = ||col_j2||²`，`c = col_j1 · col_j2`
-   - 收敛判断：`|c| / sqrt(a*b) < 1e-12` 则跳过
+   - 收敛判断：归一化列相关性 `|c| / sqrt(a*b)` 不超过 `8 * epsilon(Scalar)` 时跳过
    - 计算 Givens 旋转参数：`tau = (a-b)/(2c)`，`t = sign(tau)/(|tau|+sqrt(1+tau²))`，`cs = 1/sqrt(1+t²)`，`sn = cs*t`
    - 双边应用旋转到 U 的列和 Vt 的行
 3. 提取奇异值：`S[j] = ||U_col_j||`
 4. 归一化 U 的列
 5. 按奇异值降序排列
 
-**时间复杂度**：fallback 为 O(n⁴) 每轮扫描。基准测试中 N > 256 仍会跳过 CPU SVD，避免宽档位 benchmark 卡住；需要覆盖 CPU 分解时使用 `--size tiny` 或 `--size smoke`。
+**时间复杂度**：方阵每轮扫描为 O(n³)，总耗时取决于收敛轮数。宽档位 benchmark 会跳过大规模 CPU SVD；点云法向与 ICP 的 3×3 小矩阵是原生路径的主要目标。
 
 #### GPU：cuSOLVER gesvd (`decomposition.cu`)
 
@@ -389,20 +392,20 @@ cusolverDnSgesvd(handle, 'A', 'A', m, n, A_copy, lda, S, U, ldu, Vt, ldvt,
 
 ### 5.3 对称特征值 (Eigh)
 
-#### CPU：LAPACK syev / 经典 Jacobi fallback (`decomposition_cpu.cpp`)
+#### CPU：原生经典 Jacobi / 可选 LAPACK syev (`decomposition_cpu.cpp`)
 
-当系统 LAPACK 可用时，CPU Eigh 调用 `ssyev/dsyev` 只求特征值，并按库 API 约束检查矩阵维度。无 LAPACK 时使用项目内 Jacobi fallback：
+默认使用项目内 Jacobi 特征值算法；显式启用系统后端时可调用 `ssyev/dsyev`。两条路径都只求特征值并检查矩阵维度：
 
 直接在对称矩阵 A 上对角化：
-1. 扫描上三角元素对 `(p, q)`，跳过 `|a_pq| < 1e-12`
+1. 扫描上三角元素对 `(p, q)`，跳过小于 `8 * epsilon(Scalar) * maxAbs(A)` 的元素
 2. 计算 Jacobi 旋转：`tau = (a_qq - a_pp)/(2*a_pq)` → `t, c, s`
 3. 更新 `A(p,p)`, `A(q,q)`，清零 `A(p,q)` 和 `A(q,p)`
 4. 更新 p 行和 q 列的其他元素（跳过 p, q 位置），保持对称性
-5. 迭代直到 `max_off_diag < 1e-12` 或 100 轮
+5. 迭代到一轮中没有需要旋转的元素或达到 100 轮
 
 提取对角线作为特征值，选择排序降序排列。
 
-**时间复杂度**：fallback 为 O(n⁴) 每轮。同样在 N > 256 时跳过 CPU 基准测试。
+**时间复杂度**：方阵每轮为 O(n³)，总耗时取决于收敛轮数。同样在大尺寸 CPU 基准中跳过。
 
 #### GPU：cuSOLVER syevd (`decomposition.cu`)
 
@@ -519,6 +522,11 @@ Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口�
 
 CUDA/OpenCL `blockPcg()` 使用调用方提供的 row-major 逆对角块，适合块法方程和 Schur
 约化系统；普通 `pcg()` 的标量 Jacobi 行为保持不变。
+
+`DenseCpu` Schur 后端默认使用 PlaMatrix 原生 Cholesky。小系统走串行左看分解；128 阶以上
+使用 32 列分块和一个持久 OpenMP 并行区，面板三角求解与尾随下三角更新按行并行，内部点积
+使用 SIMD。这样保留确定性的 row-major 解算顺序，同时避免逐列反复创建线程。显式启用
+`PLAMATRIX_WITH_SYSTEM_LINALG` 的独立构建仍可把该步骤交给 LAPACK `potrf/potrs`。
 
 ---
 

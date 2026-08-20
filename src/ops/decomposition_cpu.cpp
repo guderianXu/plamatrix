@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -24,7 +25,7 @@ constexpr int maxJacobiSweeps = 100;
 template <typename Scalar>
 Scalar jacobiTolerance()
 {
-    return static_cast<Scalar>(1e-12);
+    return Scalar(8) * std::numeric_limits<Scalar>::epsilon();
 }
 
 /// Compute sign of value: returns 1.0 if val >= 0, -1.0 otherwise
@@ -160,7 +161,7 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
 
     for (int sweep = 0; sweep < maxJacobiSweeps; ++sweep)
     {
-        Scalar max_off_diag = Scalar(0);
+        Scalar max_correlation = Scalar(0);
 
         for (Index j1 = 0; j1 < n; ++j1)
         {
@@ -180,15 +181,15 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
                     c += u_i_j1 * u_i_j2;
                 }
 
-                max_off_diag = std::max(max_off_diag, std::abs(c));
-
                 // Skip if either column pair cannot produce a stable rotation.
                 Scalar scale = a * b;
-                if (scale <= epsilon * epsilon)
+                if (scale <= std::numeric_limits<Scalar>::min())
                 {
                     continue;
                 }
-                if (std::abs(c) / std::sqrt(scale) < epsilon)
+                const Scalar correlation = std::abs(c) / std::sqrt(scale);
+                max_correlation = std::max(max_correlation, correlation);
+                if (correlation <= epsilon)
                 {
                     continue;
                 }
@@ -221,7 +222,7 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
         }
 
         // Check convergence
-        if (max_off_diag < epsilon)
+        if (max_correlation <= epsilon)
         {
             break;
         }
@@ -497,35 +498,36 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
 
     // Copy A to working matrix
     DenseMatrix<Scalar, Device::CPU> A_work(n, n);
+    Scalar matrix_scale = Scalar(0);
     for (Index j = 0; j < n; ++j)
     {
         for (Index i = 0; i < n; ++i)
         {
             A_work(i, j) = A(i, j);
+            matrix_scale = std::max(matrix_scale, std::abs(A(i, j)));
         }
     }
 
-    Scalar epsilon = static_cast<Scalar>(1e-12);
+    const Scalar epsilon = jacobiTolerance<Scalar>();
+    const Scalar convergence_threshold = epsilon * matrix_scale;
     constexpr int maxSweeps = 100;
 
     for (int sweep = 0; sweep < maxSweeps; ++sweep)
     {
-        Scalar max_off = Scalar(0);
+        bool rotated = false;
 
         for (Index p = 0; p < n - 1; ++p)
         {
             for (Index q = p + 1; q < n; ++q)
             {
                 Scalar apq = A_work(p, q);
-                if (std::abs(apq) < epsilon)
+                Scalar app = A_work(p, p);
+                Scalar aqq = A_work(q, q);
+                if (std::abs(apq) <= convergence_threshold)
                 {
                     continue;
                 }
-
-                max_off = std::max(max_off, std::abs(apq));
-
-                Scalar app = A_work(p, p);
-                Scalar aqq = A_work(q, q);
+                rotated = true;
 
                 // Compute Jacobi rotation
                 Scalar tau_val = (aqq - app) / (Scalar(2) * apq);
@@ -557,7 +559,7 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
             }
         }
 
-        if (max_off < epsilon)
+        if (!rotated)
         {
             break;
         }

@@ -7,7 +7,7 @@
 
 - **密集矩阵**：矩阵乘法、逐元素加减乘除、标量变换、绝对值、平方根、截断和转置
 - **归约与索引**：`sum/mean/min/max/argMin/argMax`、exclusive scan、按行 gather/scatter/compact
-- **矩阵分解**：SVD、QR、对称特征值 (SVD/eigh 可选 LAPACK，QR CPU fallback，GPU cuSOLVER)
+- **矩阵分解**：原生 CPU SVD、QR、对称特征值，可选系统 LAPACK 加速，GPU 使用 cuSOLVER
 - **批量小矩阵**：CPU/CUDA 对称 3x3 特征分解，稳定的 8-sweep Jacobi 和重复特征空间基
 - **线性求解**：稠密 LU/cuSOLVER，以及 CPU/CUDA CSR 和 CPU-owned CSR OpenCL 上的 CG/Jacobi-PCG
 - **稀疏矩阵**：确定性 COO→CSR、CPU/CUDA 传输、cuSPARSE SpMV/SpMM 和可复用 workspace
@@ -47,7 +47,7 @@ cmake --build . -j$(nproc)
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
 | `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；OpenCL 1.2 SDK/loader 未找到且未显式要求时自动关闭 |
-| `PLAMATRIX_WITH_SYSTEM_LINALG` | `ON` | 通过 CMake 检测并使用系统 BLAS/LAPACK |
+| `PLAMATRIX_WITH_SYSTEM_LINALG` | `OFF` | 可选；通过 CMake 检测并使用系统 BLAS/LAPACK 加速 CPU GEMM/SVD/eigh |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |
 | `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 |
@@ -134,7 +134,7 @@ CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
 
 ### 基本运算
 ```cpp
-auto C = gemm(A, B);     // 矩阵乘法 (cuBLAS / BLAS / CPU fallback)
+auto C = gemm(A, B);     // 矩阵乘法 (原生 CPU / 可选 BLAS / cuBLAS)
 auto D = add(A, B);      // 逐元素加法
 auto H = hadamardMultiply(A, B); // 逐元素乘法；A/B 必须完全同形，不做广播
 auto M = mean(A, ReductionAxis::Columns); // 按行归约，得到 1 x A.cols()

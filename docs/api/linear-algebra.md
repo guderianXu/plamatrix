@@ -19,7 +19,7 @@ template <typename Scalar>
 void gemmAsync(A_gpu, B_gpu, C_gpu, cudaStream_t stream = nullptr);
 ```
 
-- **CPU**：可用时使用 BLAS；否则使用项目内三重循环，较大工作量走 OpenMP
+- **CPU**：默认使用项目内分块、SIMD、OpenMP tile 内核；显式启用系统后端时可使用 BLAS
 - **同步 GPU 接口**：`cublasSgemm` / `cublasDgemm`，支持指定 CUDA stream；
   返回前会同步该 stream，结果可立即传回 CPU 或继续参与默认 stream 运算
 - **输出复用**：`gemm(A_gpu, B_gpu, C_gpu, stream)` 写入已有输出矩阵，适合循环里避免反复分配
@@ -167,7 +167,7 @@ std::tuple<DenseMatrix<Scalar, Dev>,
            DenseMatrix<Scalar, Dev>> svd(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：可用时使用 LAPACK `gesvd`；否则使用项目内 Jacobi fallback
+- **CPU**：默认使用项目内、按标量精度收敛的 Jacobi SVD；显式启用 `PLAMATRIX_WITH_SYSTEM_LINALG` 时可使用 LAPACK `gesvd`
 - **GPU**：`cusolverDnSgesvd` (float) / `cusolverDnDgesvd` (double)，legacy cuSOLVER 路径要求 `rows >= cols`
 - 返回形状为 `U(m,m)`, `S(min(m,n),1)`, `Vt(n,n)`。
 
@@ -191,7 +191,7 @@ template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> eigh(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：可用时使用 LAPACK `syev`；否则使用项目内 Jacobi fallback
+- **CPU**：默认使用项目内、按矩阵尺度收敛的 Jacobi 特征值算法；显式启用 `PLAMATRIX_WITH_SYSTEM_LINALG` 时可使用 LAPACK `syev`
 - **GPU**：`cusolverDnSsyevd` (分治算法)
 
 ### 批量对称 3x3 特征分解
@@ -246,9 +246,9 @@ DenseMatrix<Scalar, Dev> solve(
 
 | 运算 | GPU 临界尺寸 | 说明 |
 |------|-------------|------|
-| gemm | 依 BLAS/CUDA 和矩阵尺寸而定 | CPU BLAS 在小矩阵上可能优于 CUDA |
+| gemm | 依 CPU/CUDA 和矩阵尺寸而定 | 原生 CPU 使用分块、SIMD 和 OpenMP；可选 BLAS 在部分尺寸更快 |
 | add/sub | ~4096 | 内存带宽受限，GPU 优势出现较晚 |
-| svd | 依 LAPACK/CUDA 和矩阵尺寸而定 | CPU LAPACK 在小矩阵上可能优于 CUDA |
+| svd | 依 CPU/CUDA 和矩阵尺寸而定 | 原生 CPU 适合点云常见小矩阵；大规模可选 LAPACK 或 CUDA |
 | solve | ~256 | GPU LU 分解远超 CPU 高斯消元 |
 
 *注：临界尺寸因硬件而异，请使用 `plamatrix_benchmark` 工具实际测量。*

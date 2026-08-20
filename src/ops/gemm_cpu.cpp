@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 
@@ -12,6 +13,78 @@
 
 namespace plamatrix
 {
+
+namespace
+{
+
+constexpr Index kRowBlockSize = 128;
+constexpr Index kColumnBlockSize = 32;
+constexpr Index kInnerBlockSize = 64;
+
+template <typename Scalar>
+void multiplyTile(const Scalar* A_data,
+                  const Scalar* B_data,
+                  Scalar* C_data,
+                  Index m,
+                  Index k,
+                  Index row_begin,
+                  Index row_end,
+                  Index column_begin,
+                  Index column_end)
+{
+    for (Index inner_begin = 0; inner_begin < k; inner_begin += kInnerBlockSize)
+    {
+        const Index inner_end = std::min(inner_begin + kInnerBlockSize, k);
+        for (Index column = column_begin; column < column_end; ++column)
+        {
+            Scalar* output = C_data + column * m;
+            const Scalar* right = B_data + column * k;
+            for (Index inner = inner_begin; inner < inner_end; ++inner)
+            {
+                const Scalar right_value = right[inner];
+                const Scalar* left = A_data + inner * m;
+                #pragma omp simd
+                for (Index row = row_begin; row < row_end; ++row)
+                {
+                    output[row] += left[row] * right_value;
+                }
+            }
+        }
+    }
+}
+
+template <typename Scalar>
+void nativeGemm(const Scalar* A_data,
+                const Scalar* B_data,
+                Scalar* C_data,
+                Index m,
+                Index n,
+                Index k)
+{
+    const Index row_block_count = (m + kRowBlockSize - 1) / kRowBlockSize;
+    const Index column_block_count = (n + kColumnBlockSize - 1) / kColumnBlockSize;
+    const Index tile_count = row_block_count * column_block_count;
+
+    if (detail::shouldUseOpenMp(m * n * k) && tile_count > 1)
+    {
+        #pragma omp parallel for
+        for (Index tile = 0; tile < tile_count; ++tile)
+        {
+            const Index column_block = tile / row_block_count;
+            const Index row_block = tile % row_block_count;
+            const Index row_begin = row_block * kRowBlockSize;
+            const Index column_begin = column_block * kColumnBlockSize;
+            multiplyTile(A_data, B_data, C_data, m, k,
+                         row_begin, std::min(row_begin + kRowBlockSize, m),
+                         column_begin, std::min(column_begin + kColumnBlockSize, n));
+        }
+        return;
+    }
+
+    multiplyTile(A_data, B_data, C_data, m, k, 0, m, 0, n);
+}
+
+} // anonymous namespace
 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
@@ -48,38 +121,7 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
 #ifdef PLAMATRIX_WITH_BLAS
     detail::fortranGemm(m_int, n_int, k_int, A_data, B_data, C_data);
 #else
-    Index work_items = m * n * k;
-    if (detail::shouldUseOpenMp(work_items))
-    {
-        #pragma omp parallel for collapse(2)
-        for (Index j = 0; j < n; ++j)
-        {
-            for (Index i = 0; i < m; ++i)
-            {
-                Scalar sum = Scalar(0);
-                for (Index p = 0; p < k; ++p)
-                {
-                    sum += A_data[i + p * m] * B_data[p + j * k];
-                }
-                C_data[i + j * m] = sum;
-            }
-        }
-    }
-    else
-    {
-        for (Index j = 0; j < n; ++j)
-        {
-            for (Index i = 0; i < m; ++i)
-            {
-                Scalar sum = Scalar(0);
-                for (Index p = 0; p < k; ++p)
-                {
-                    sum += A_data[i + p * m] * B_data[p + j * k];
-                }
-                C_data[i + j * m] = sum;
-            }
-        }
-    }
+    nativeGemm(A_data, B_data, C_data, m, n, k);
 #endif
 
     return C;

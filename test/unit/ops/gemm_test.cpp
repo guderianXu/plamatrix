@@ -45,6 +45,65 @@ TEST(GEMM, multiply_2x3_by_3x2_CpuSerial)
     EXPECT_FLOAT_EQ(C(1, 1), 136.0f);
 }
 
+TEST(GEMM, multiply_RectangularMatricesAcrossNativeTiles)
+{
+    constexpr Index rows = 137;
+    constexpr Index inner = 73;
+    constexpr Index columns = 35;
+    DenseMatrix<double, Device::CPU> A(rows, inner);
+    DenseMatrix<double, Device::CPU> B(inner, columns);
+
+    for (Index column = 0; column < inner; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            A(row, column) = static_cast<double>((row + 3 * column) % 17 - 8) / 9.0;
+        }
+    }
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < inner; ++row)
+        {
+            B(row, column) = static_cast<double>((2 * row + column) % 13 - 6) / 7.0;
+        }
+    }
+
+    auto C = gemm(A, B);
+    ASSERT_EQ(C.rows(), rows);
+    ASSERT_EQ(C.cols(), columns);
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            double expected = 0.0;
+            for (Index index = 0; index < inner; ++index)
+            {
+                expected += A(row, index) * B(index, column);
+            }
+            EXPECT_NEAR(C(row, column), expected, 1e-11)
+                << "Mismatch at (" << row << ", " << column << ")";
+        }
+    }
+}
+
+TEST(GEMM, multiply_EmptyInnerDimensionReturnsZeros)
+{
+    DenseMatrix<float, Device::CPU> A(7, 0);
+    DenseMatrix<float, Device::CPU> B(0, 5);
+
+    auto C = gemm(A, B);
+
+    ASSERT_EQ(C.rows(), 7);
+    ASSERT_EQ(C.cols(), 5);
+    for (Index column = 0; column < C.cols(); ++column)
+    {
+        for (Index row = 0; row < C.rows(); ++row)
+        {
+            EXPECT_FLOAT_EQ(C(row, column), 0.0F);
+        }
+    }
+}
+
 // GEMM: multiply_2x3_by_3x2_Gpu — same calculation on GPU via cuBLAS
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(GEMM, multiply_2x3_by_3x2_Gpu)
