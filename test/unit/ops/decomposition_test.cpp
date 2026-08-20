@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <plamatrix/ops/decomposition.h>
+#include <plamatrix/ops/gemm.h>
 #include <plamatrix/dense/dense_ops.h>
 
 using namespace plamatrix;
@@ -198,6 +199,34 @@ TEST(SVD, decompose_ZeroSizedCpu_Throws)
 
     EXPECT_THROW(svd(no_rows), std::runtime_error);
     EXPECT_THROW(svd(no_cols), std::runtime_error);
+}
+
+TEST(SVD, decompose_LargeRoundRobinCpu_ReconstructsDeterministically)
+{
+    constexpr Index rows = 80;
+    constexpr Index columns = 64;
+    DenseMatrix<double, Device::CPU> matrix(rows, columns);
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            matrix(row, column) = std::sin(0.13 * static_cast<double>(row + 1) *
+                                           static_cast<double>(column + 1)) +
+                                  (row == column ? 2.0 : 0.0);
+        }
+    }
+
+    const auto [u, singular_values, vt] = svd(matrix);
+    const auto reconstructed = reconstructFromSvd(u, singular_values, vt);
+    EXPECT_TRUE(isOrthogonal(u, 2e-9));
+    EXPECT_TRUE(isOrthogonal(vt, 2e-9));
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            EXPECT_NEAR(matrix(row, column), reconstructed(row, column), 2e-8);
+        }
+    }
 }
 
 TEST(SVD, decompose_ZeroMatrixCpu_ReturnsFiniteOrthonormalFactors)
@@ -400,6 +429,31 @@ TEST(QR, decompose_ZeroSizedCpu_Throws)
     EXPECT_THROW(qr(no_cols), std::runtime_error);
 }
 
+TEST(QR, decompose_LargeHouseholderCpu_Reconstructs)
+{
+    constexpr Index rows = 96;
+    constexpr Index columns = 40;
+    DenseMatrix<double, Device::CPU> matrix(rows, columns);
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            matrix(row, column) = std::cos(0.07 * static_cast<double>(row + 1) *
+                                           static_cast<double>(column + 2));
+        }
+    }
+    const auto [q, r] = qr(matrix);
+    EXPECT_TRUE(isOrthogonal(q, 2e-10));
+    const auto reconstructed = gemm(q, r);
+    for (Index column = 0; column < columns; ++column)
+    {
+        for (Index row = 0; row < rows; ++row)
+        {
+            EXPECT_NEAR(matrix(row, column), reconstructed(row, column), 2e-10);
+        }
+    }
+}
+
 // QR: decompose_3x2_Gpu — same matrix on GPU via cuSOLVER
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(QR, decompose_3x2_Gpu)
@@ -491,6 +545,29 @@ TEST(Eigh, nonSquareCpu_Throws)
     DenseMatrix<double, Device::CPU> A(2, 3);
 
     EXPECT_THROW(eigh(A), std::runtime_error);
+}
+
+TEST(Eigh, symmetricTridiagonalLargeMatchesClosedFormSpectrum)
+{
+    constexpr Index dimension = 64;
+    DenseMatrix<double, Device::CPU> matrix(dimension, dimension);
+    for (Index index = 0; index < dimension; ++index)
+    {
+        matrix(index, index) = 2.0;
+        if (index + 1 < dimension)
+        {
+            matrix(index, index + 1) = 1.0;
+            matrix(index + 1, index) = 1.0;
+        }
+    }
+    const auto eigenvalues = eigh(matrix);
+    const double pi = std::acos(-1.0);
+    for (Index index = 0; index < dimension; ++index)
+    {
+        const double expected = 2.0 + 2.0 * std::cos(
+            static_cast<double>(index + 1) * pi / static_cast<double>(dimension + 1));
+        EXPECT_NEAR(eigenvalues(index, 0), expected, 2e-11);
+    }
 }
 
 // Eigh: symmetric_2x2_Gpu — same matrix on GPU via cuSOLVER

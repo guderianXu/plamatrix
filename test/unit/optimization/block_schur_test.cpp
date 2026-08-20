@@ -1,8 +1,11 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
 #include <gtest/gtest.h>
+
+#include <omp.h>
 
 #include "plamatrix/optimization/block_schur.h"
 #include "plamatrix/optimization/levenberg_marquardt.h"
@@ -229,6 +232,34 @@ TEST(BlockSchurTest, MatchesDenseDampedNormalEquation)
     }
 }
 
+TEST(BlockSchurTest, DenseCpuReportsEveryRequestedNumericalPhase)
+{
+    const auto equations = makeSyntheticEquations();
+    SchurComplementSolverOptions<double> options;
+    options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+    options.relativeTolerance = 1e-12;
+    options.absoluteTolerance = 1e-14;
+
+    std::vector<double> primary_step;
+    std::vector<double> eliminated_step;
+    const auto report = solveDampedSchurComplement(
+        equations, 0.1, options, &primary_step, &eliminated_step);
+
+    ASSERT_TRUE(report.converged) << report.message;
+    EXPECT_GE(report.smallBlockInverseSeconds, 0.0);
+    EXPECT_GE(report.schurAccumulationSeconds, 0.0);
+    EXPECT_GE(report.csrConversionSeconds, 0.0);
+    EXPECT_GE(report.choleskyFactorizationSeconds, 0.0);
+    EXPECT_GE(report.triangularSolveSeconds, 0.0);
+    EXPECT_GE(report.residualCheckSeconds, 0.0);
+    EXPECT_GE(report.backSubstitutionSeconds, 0.0);
+    EXPECT_GE(report.schurAssemblySeconds,
+              report.schurAccumulationSeconds + report.csrConversionSeconds);
+    EXPECT_GE(report.linearSolveSeconds,
+              report.choleskyFactorizationSeconds + report.triangularSolveSeconds +
+                  report.residualCheckSeconds);
+}
+
 TEST(BlockSchurTest, MultiPrimaryResidualMatchesDenseDampedNormalEquation)
 {
     expectMultiPrimaryReference(SchurComplementLinearBackend::Cpu);
@@ -299,6 +330,78 @@ TEST(BlockSchurTest, DenseCpuSolvesParallelSizeCoupledSystemDeterministically)
     {
         EXPECT_TRUE(std::isfinite(value));
     }
+}
+
+TEST(BlockSchurTest, DenseCpuEliminatedAssemblyIsBitwiseStableAcrossThreadCounts)
+{
+    constexpr Index primary_count = 36;
+    constexpr Index eliminated_count = 240;
+    constexpr Index primary_size = 9;
+    constexpr Index eliminated_size = 3;
+    BlockNormalEquations<double> equations(
+        primary_count, eliminated_count, primary_size, eliminated_size);
+    std::array<double, primary_size * primary_size> identity{};
+    for (Index diagonal = 0; diagonal < primary_size; ++diagonal)
+    {
+        identity[static_cast<std::size_t>(diagonal * primary_size + diagonal)] = 1.0;
+    }
+    std::array<double, primary_size> zero{};
+    for (Index primary = 0; primary < primary_count; ++primary)
+    {
+        equations.addPrimaryResidualBlock(
+            primary, identity.data(), zero.data(), primary_size, 0.25);
+    }
+    for (Index eliminated = 0; eliminated < eliminated_count; ++eliminated)
+    {
+        for (Index observation = 0; observation < 4; ++observation)
+        {
+            const Index primary = (eliminated * 7 + observation * 5) % primary_count;
+            std::array<double, 2 * primary_size> primary_jacobian{};
+            std::array<double, 2 * eliminated_size> eliminated_jacobian{};
+            for (Index index = 0; index < 2 * primary_size; ++index)
+            {
+                primary_jacobian[static_cast<std::size_t>(index)] =
+                    0.01 * static_cast<double>(1 + (index + eliminated + observation) % 13);
+            }
+            for (Index index = 0; index < 2 * eliminated_size; ++index)
+            {
+                eliminated_jacobian[static_cast<std::size_t>(index)] =
+                    0.02 * static_cast<double>(1 + (index + eliminated + 2 * observation) % 7);
+            }
+            const std::array<double, 2> residual{{
+                0.001 * static_cast<double>(eliminated + 1),
+                -0.002 * static_cast<double>(observation + 1)}};
+            equations.addResidualBlock(
+                primary,
+                eliminated,
+                primary_jacobian.data(),
+                eliminated_jacobian.data(),
+                residual.data(),
+                2);
+        }
+    }
+
+    SchurComplementSolverOptions<double> options;
+    options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+    options.relativeTolerance = 1e-11;
+    options.absoluteTolerance = 1e-13;
+    std::vector<double> serial_primary;
+    std::vector<double> serial_eliminated;
+    std::vector<double> parallel_primary;
+    std::vector<double> parallel_eliminated;
+    const int original_threads = omp_get_max_threads();
+    omp_set_num_threads(1);
+    const auto serial = solveDampedSchurComplement(
+        equations, 0.1, options, &serial_primary, &serial_eliminated);
+    omp_set_num_threads(std::min(8, original_threads));
+    const auto parallel = solveDampedSchurComplement(
+        equations, 0.1, options, &parallel_primary, &parallel_eliminated);
+    omp_set_num_threads(original_threads);
+
+    ASSERT_TRUE(serial.converged) << serial.message;
+    ASSERT_TRUE(parallel.converged) << parallel.message;
+    EXPECT_EQ(serial_primary, parallel_primary);
+    EXPECT_EQ(serial_eliminated, parallel_eliminated);
 }
 
 TEST(BlockSchurTest, DeterministicMergeMatchesSerialAssembly)

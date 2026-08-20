@@ -1,15 +1,16 @@
 #include <algorithm>
+#include <array>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
+#include <vector>
 
 #include <omp.h>
 
 #include "plamatrix/core/parallel.h"
 #include "plamatrix/ops/gemm.h"
 
-#ifdef PLAMATRIX_WITH_BLAS
-#include "fortran_linalg.h"
-#endif
+#include "gemm_microkernel.h"
 
 namespace plamatrix
 {
@@ -17,38 +18,46 @@ namespace plamatrix
 namespace
 {
 
-constexpr Index kRowBlockSize = 128;
-constexpr Index kColumnBlockSize = 32;
-constexpr Index kInnerBlockSize = 64;
+inline int chooseGemmThreadCount(Index work, Index tile_count)
+{
+    constexpr Index work_per_thread = Index(2) * 1024 * 1024;
+    const int available = std::max(1, omp_get_max_threads());
+    const int useful = std::max(1, static_cast<int>(
+        (work + work_per_thread - 1) / work_per_thread));
+    return std::min({available, useful, std::max(1, static_cast<int>(tile_count)), 16});
+}
 
 template <typename Scalar>
-void multiplyTile(const Scalar* A_data,
-                  const Scalar* B_data,
-                  Scalar* C_data,
-                  Index m,
-                  Index k,
-                  Index row_begin,
-                  Index row_end,
-                  Index column_begin,
-                  Index column_end)
+void packedScalarMicrokernel(const Scalar* left,
+                             const Scalar* packed_right,
+                             Scalar* output,
+                             Index rows,
+                             Index inner_size,
+                             Index columns,
+                             Index row_begin,
+                             Index row_end,
+                             Index column_begin,
+                             Index column_end)
 {
-    for (Index inner_begin = 0; inner_begin < k; inner_begin += kInnerBlockSize)
+    for (Index row = row_begin; row < row_end; ++row)
     {
-        const Index inner_end = std::min(inner_begin + kInnerBlockSize, k);
+        std::array<Scalar, 4> accumulators{};
+        for (Index inner = 0; inner < inner_size; ++inner)
+        {
+            const Scalar left_value = left[inner * rows + row];
+            const Scalar* right = packed_right +
+                (column_begin / 4 * inner_size + inner) * 4;
+            #pragma omp simd
+            for (Index column = column_begin; column < column_end; ++column)
+            {
+                accumulators[static_cast<std::size_t>(column - column_begin)] +=
+                    left_value * right[column - column_begin];
+            }
+        }
         for (Index column = column_begin; column < column_end; ++column)
         {
-            Scalar* output = C_data + column * m;
-            const Scalar* right = B_data + column * k;
-            for (Index inner = inner_begin; inner < inner_end; ++inner)
-            {
-                const Scalar right_value = right[inner];
-                const Scalar* left = A_data + inner * m;
-                #pragma omp simd
-                for (Index row = row_begin; row < row_end; ++row)
-                {
-                    output[row] += left[row] * right_value;
-                }
-            }
+            output[column * rows + row] =
+                accumulators[static_cast<std::size_t>(column - column_begin)];
         }
     }
 }
@@ -61,27 +70,88 @@ void nativeGemm(const Scalar* A_data,
                 Index n,
                 Index k)
 {
-    const Index row_block_count = (m + kRowBlockSize - 1) / kRowBlockSize;
-    const Index column_block_count = (n + kColumnBlockSize - 1) / kColumnBlockSize;
+    constexpr Index column_micro_size = 4;
+    const Index row_block_size = std::is_same_v<Scalar, float> ? 128 : 96;
+    const Index row_block_count = (m + row_block_size - 1) / row_block_size;
+    const Index column_block_count = (n + column_micro_size - 1) / column_micro_size;
     const Index tile_count = row_block_count * column_block_count;
+    const int thread_count = chooseGemmThreadCount(m * n * k, tile_count);
+    std::vector<Scalar> packed_right(static_cast<std::size_t>(
+        column_block_count * k * column_micro_size), Scalar(0));
+    #pragma omp parallel for schedule(static) num_threads(thread_count) \
+        if(detail::shouldUseOpenMp(k * n))
+    for (Index column_block = 0; column_block < column_block_count; ++column_block)
+    {
+        const Index column_begin = column_block * column_micro_size;
+        const Index column_end = std::min(column_begin + column_micro_size, n);
+        for (Index inner = 0; inner < k; ++inner)
+        {
+            Scalar* destination = packed_right.data() + static_cast<std::size_t>(
+                (column_block * k + inner) * column_micro_size);
+            for (Index column = column_begin; column < column_end; ++column)
+            {
+                destination[column - column_begin] = B_data[column * k + inner];
+            }
+        }
+    }
+
+#ifdef PLAMATRIX_HAVE_AVX2_KERNEL
+    static const bool use_avx2 = detail::cpuSupportsAvx2Fma();
+#else
+    constexpr bool use_avx2 = false;
+#endif
+
+    const auto multiply_tile = [&](Index tile)
+    {
+        const Index column_block = tile / row_block_count;
+        const Index row_block = tile % row_block_count;
+        const Index row_begin = row_block * row_block_size;
+        const Index column_begin = column_block * column_micro_size;
+        const Index row_end = std::min(row_begin + row_block_size, m);
+        const Index column_end = std::min(column_begin + column_micro_size, n);
+#ifdef PLAMATRIX_HAVE_AVX2_KERNEL
+        if (use_avx2)
+        {
+            detail::packedGemmMicrokernelAvx2(
+                A_data,
+                packed_right.data(),
+                C_data,
+                m,
+                k,
+                n,
+                row_begin,
+                row_end,
+                column_begin,
+                column_end);
+            return;
+        }
+#endif
+        packedScalarMicrokernel(
+            A_data,
+            packed_right.data(),
+            C_data,
+            m,
+            k,
+            n,
+            row_begin,
+            row_end,
+            column_begin,
+            column_end);
+    };
 
     if (detail::shouldUseOpenMp(m * n * k) && tile_count > 1)
     {
-        #pragma omp parallel for
+        #pragma omp parallel for schedule(static) num_threads(thread_count)
         for (Index tile = 0; tile < tile_count; ++tile)
         {
-            const Index column_block = tile / row_block_count;
-            const Index row_block = tile % row_block_count;
-            const Index row_begin = row_block * kRowBlockSize;
-            const Index column_begin = column_block * kColumnBlockSize;
-            multiplyTile(A_data, B_data, C_data, m, k,
-                         row_begin, std::min(row_begin + kRowBlockSize, m),
-                         column_begin, std::min(column_begin + kColumnBlockSize, n));
+            multiply_tile(tile);
         }
         return;
     }
-
-    multiplyTile(A_data, B_data, C_data, m, k, 0, m, 0, n);
+    for (Index tile = 0; tile < tile_count; ++tile)
+    {
+        multiply_tile(tile);
+    }
 }
 
 } // anonymous namespace
@@ -102,12 +172,6 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
         throw std::runtime_error(oss.str());
     }
 
-#ifdef PLAMATRIX_WITH_BLAS
-    int m_int = detail::checkedLapackInt(m, "GEMM m");
-    int n_int = detail::checkedLapackInt(n, "GEMM n");
-    int k_int = detail::checkedLapackInt(k, "GEMM k");
-#endif
-
     DenseMatrix<Scalar, Device::CPU> C(m, n);
     if (m == 0 || n == 0 || k == 0)
     {
@@ -118,11 +182,7 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
     const Scalar* B_data = B.data();
     Scalar* C_data = C.data();
 
-#ifdef PLAMATRIX_WITH_BLAS
-    detail::fortranGemm(m_int, n_int, k_int, A_data, B_data, C_data);
-#else
     nativeGemm(A_data, B_data, C_data, m, n, k);
-#endif
 
     return C;
 }

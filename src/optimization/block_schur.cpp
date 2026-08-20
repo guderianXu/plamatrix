@@ -89,8 +89,20 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     }
     eliminated_step->assign(static_cast<std::size_t>(eliminated_dimension), Scalar(0));
 
-    std::vector<Scalar> primary_diagonal = equations._primaryDiagonal;
-    std::vector<Scalar> eliminated_diagonal = equations._eliminatedDiagonal;
+    auto& primary_diagonal =
+        block_schur_detail::SchurComplementSolverWorkspaceAccess::hostPrimaryDiagonal(workspace);
+    auto& eliminated_diagonal =
+        block_schur_detail::SchurComplementSolverWorkspaceAccess::hostEliminatedDiagonal(workspace);
+    auto& eliminated_inverse =
+        block_schur_detail::SchurComplementSolverWorkspaceAccess::hostEliminatedInverse(workspace);
+    auto& reduced_rhs =
+        block_schur_detail::SchurComplementSolverWorkspaceAccess::hostReducedRhs(workspace);
+    auto& host_scratch =
+        block_schur_detail::SchurComplementSolverWorkspaceAccess::hostScratch(workspace);
+    primary_diagonal.assign(
+        equations._primaryDiagonal.begin(), equations._primaryDiagonal.end());
+    eliminated_diagonal.assign(
+        equations._eliminatedDiagonal.begin(), equations._eliminatedDiagonal.end());
     const auto apply_damping = [&](std::vector<Scalar>& blocks, Index count, Index size)
     {
         for (Index block = 0; block < count; ++block)
@@ -107,33 +119,50 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     apply_damping(primary_diagonal, primary_count, primary_size);
     apply_damping(eliminated_diagonal, eliminated_count, eliminated_size);
 
-    std::vector<std::vector<Scalar>> eliminated_inverse(
-        static_cast<std::size_t>(eliminated_count));
+    const auto inverse_start = std::chrono::steady_clock::now();
+    eliminated_inverse.resize(static_cast<std::size_t>(
+        eliminated_count * eliminated_size * eliminated_size));
+    host_scratch.resize(static_cast<std::size_t>(
+        eliminated_size * eliminated_size + 3 * eliminated_size));
+    Scalar* inverse_lower = host_scratch.data();
+    Scalar* inverse_intermediate = inverse_lower + eliminated_size * eliminated_size;
     for (Index block = 0; block < eliminated_count; ++block)
     {
         const Scalar* matrix = eliminated_diagonal.data() + block * eliminated_size * eliminated_size;
-        if (!invertPositiveDefinite(
-                matrix, eliminated_size, &eliminated_inverse[static_cast<std::size_t>(block)]))
+        Scalar* inverse = eliminated_inverse.data() +
+            static_cast<std::size_t>(block * eliminated_size * eliminated_size);
+        const bool inverted = eliminated_size == 3
+            ? block_schur_detail::invertPositiveDefinite3x3(matrix, inverse)
+            : block_schur_detail::invertPositiveDefiniteInto(
+                  matrix,
+                  eliminated_size,
+                  inverse,
+                  inverse_lower,
+                  inverse_intermediate);
+        if (!inverted)
         {
             report.message = "eliminated block is not positive definite";
             return report;
         }
     }
+    report.smallBlockInverseSeconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - inverse_start).count();
 
-    std::vector<Scalar> reduced_rhs(static_cast<std::size_t>(primary_dimension), Scalar(0));
+    reduced_rhs.assign(static_cast<std::size_t>(primary_dimension), Scalar(0));
     for (Index index = 0; index < primary_dimension; ++index)
     {
         reduced_rhs[static_cast<std::size_t>(index)] =
             -equations._primaryGradient[static_cast<std::size_t>(index)];
     }
-    std::vector<Scalar> eliminated_product(static_cast<std::size_t>(eliminated_size));
+    Scalar* eliminated_product = host_scratch.data();
     for (Index block = 0; block < eliminated_count; ++block)
     {
-        multiplyMatrixVector(eliminated_inverse[static_cast<std::size_t>(block)].data(),
+        multiplyMatrixVector(eliminated_inverse.data() + static_cast<std::size_t>(
+                                 block * eliminated_size * eliminated_size),
                              eliminated_size,
                              eliminated_size,
                              equations._eliminatedGradient.data() + block * eliminated_size,
-                             eliminated_product.data());
+                             eliminated_product);
         for (const std::size_t cross_index :
              equations._eliminatedAdjacency[static_cast<std::size_t>(block)])
         {
@@ -141,7 +170,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             addMatrixVector(cross.values.data(),
                             primary_size,
                             eliminated_size,
-                            eliminated_product.data(),
+                            eliminated_product,
                             Scalar(1),
                             reduced_rhs.data() + cross.primaryBlock * primary_size);
         }
@@ -162,6 +191,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             static_cast<std::size_t>(primary_size * primary_size));
         std::vector<Scalar> temporary_matrix(
             static_cast<std::size_t>(primary_size * eliminated_size));
+        const auto preconditioner_inverse_start = std::chrono::steady_clock::now();
         for (Index block = 0; block < primary_count; ++block)
         {
             const Scalar* source = primary_diagonal.data() + block * primary_size * primary_size;
@@ -170,11 +200,16 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
                  primary_adjacency[static_cast<std::size_t>(block)])
             {
                 const auto& cross = equations._crossBlocks[cross_index];
-                const auto& inverse = eliminated_inverse[
-                    static_cast<std::size_t>(cross.eliminatedBlock)];
-                for (Index row = 0; row < primary_size; ++row)
+                const Scalar* inverse = eliminated_inverse.data() + static_cast<std::size_t>(
+                    cross.eliminatedBlock * eliminated_size * eliminated_size);
+                if (primary_size == 9 && eliminated_size == 3)
                 {
-                    multiplyMatrixVector(inverse.data(),
+                    block_schur_detail::transform9x3(
+                        inverse, cross.values.data(), temporary_matrix.data());
+                }
+                else for (Index row = 0; row < primary_size; ++row)
+                {
+                    multiplyMatrixVector(inverse,
                                          eliminated_size,
                                          eliminated_size,
                                          cross.values.data() + row * eliminated_size,
@@ -184,13 +219,18 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
                 {
                     for (Index col = 0; col < primary_size; ++col)
                     {
-                        Scalar value = Scalar(0);
-                        for (Index inner = 0; inner < eliminated_size; ++inner)
+                        const Scalar* transformed = temporary_matrix.data() +
+                            static_cast<std::size_t>(row * eliminated_size);
+                        const Scalar* source_row = cross.values.data() +
+                            static_cast<std::size_t>(col * eliminated_size);
+                        Scalar value = eliminated_size == 3
+                            ? block_schur_detail::dot3(transformed, source_row)
+                            : Scalar(0);
+                        for (Index inner = 0;
+                             inner < (eliminated_size == 3 ? 0 : eliminated_size);
+                             ++inner)
                         {
-                            value += temporary_matrix[static_cast<std::size_t>(
-                                         row * eliminated_size + inner)] *
-                                     cross.values[static_cast<std::size_t>(
-                                         col * eliminated_size + inner)];
+                            value += transformed[inner] * source_row[inner];
                         }
                         schur_diagonal[static_cast<std::size_t>(
                             row * primary_size + col)] -= value;
@@ -205,10 +245,12 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
                 return report;
             }
         }
+        report.smallBlockInverseSeconds += std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - preconditioner_inverse_start).count();
     }
 
-    std::vector<Scalar> point_value(static_cast<std::size_t>(eliminated_size), Scalar(0));
-    std::vector<Scalar> inverse_value(static_cast<std::size_t>(eliminated_size), Scalar(0));
+    Scalar* point_value = host_scratch.data() + eliminated_size;
+    Scalar* inverse_value = point_value + eliminated_size;
     const auto apply_schur = [&](const std::vector<Scalar>& input, std::vector<Scalar>* output)
     {
         output->assign(static_cast<std::size_t>(primary_dimension), Scalar(0));
@@ -236,7 +278,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
         }
         for (Index block = 0; block < eliminated_count; ++block)
         {
-            std::fill(point_value.begin(), point_value.end(), Scalar(0));
+            std::fill(point_value, point_value + eliminated_size, Scalar(0));
             const auto& adjacency = equations._eliminatedAdjacency[static_cast<std::size_t>(block)];
             for (const std::size_t cross_index : adjacency)
             {
@@ -245,20 +287,21 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
                                          primary_size,
                                          eliminated_size,
                                          input.data() + cross.primaryBlock * primary_size,
-                                         point_value.data());
+                                         point_value);
             }
-            multiplyMatrixVector(eliminated_inverse[static_cast<std::size_t>(block)].data(),
+            multiplyMatrixVector(eliminated_inverse.data() + static_cast<std::size_t>(
+                                     block * eliminated_size * eliminated_size),
                                  eliminated_size,
                                  eliminated_size,
-                                 point_value.data(),
-                                 inverse_value.data());
+                                 point_value,
+                                 inverse_value);
             for (const std::size_t cross_index : adjacency)
             {
                 const auto& cross = equations._crossBlocks[cross_index];
                 addMatrixVector(cross.values.data(),
                                 primary_size,
                                 eliminated_size,
-                                inverse_value.data(),
+                                inverse_value,
                                 Scalar(-1),
                                 output->data() + cross.primaryBlock * primary_size);
             }
@@ -277,6 +320,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
                                  output->data() + block * primary_size);
         }
     };
+    const double small_block_inverse_seconds = report.smallBlockInverseSeconds;
 
     if (primary_dimension == 0)
     {
@@ -286,7 +330,10 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     {
         const auto assembly_start = std::chrono::steady_clock::now();
         bool pattern_reused = false;
-        auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(
+        double accumulation_seconds = 0.0;
+        std::vector<Scalar>* dense_schur = nullptr;
+        std::vector<Scalar>* dense_reference = nullptr;
+        block_schur_detail::assembleReducedSchurDenseLower(
             primary_count,
             eliminated_count,
             primary_size,
@@ -298,12 +345,15 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             equations._eliminatedAdjacency,
             workspace,
             &pattern_reused,
-            SchurComplementLinearBackend::Cpu,
-            &report.schurAssemblyOnDevice);
+            &accumulation_seconds,
+            &dense_schur,
+            &dense_reference);
         const double assembly_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - assembly_start).count();
-        report = block_schur_detail::solveReducedSchurDense(
-            schur_matrix, reduced_rhs, options, primary_step);
+        report = block_schur_detail::solveReducedSchurDenseLower(
+            dense_schur, *dense_reference, reduced_rhs, options, primary_step);
+        report.smallBlockInverseSeconds = small_block_inverse_seconds;
+        report.schurAccumulationSeconds = accumulation_seconds;
         report.schurAssemblySeconds = assembly_seconds;
         report.schurPatternReused = pattern_reused;
     }
@@ -317,6 +367,8 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
         }
 #endif
         const auto assembly_start = std::chrono::steady_clock::now();
+        double accumulation_seconds = 0.0;
+        double csr_conversion_seconds = 0.0;
         auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(
             primary_count,
             eliminated_count,
@@ -330,7 +382,9 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             workspace,
             &report.schurPatternReused,
             options.linearBackend,
-            &report.schurAssemblyOnDevice);
+            &report.schurAssemblyOnDevice,
+            &accumulation_seconds,
+            &csr_conversion_seconds);
         const double assembly_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - assembly_start).count();
         auto accelerated_report = block_schur_detail::solveAcceleratedReducedSchur(
@@ -342,6 +396,9 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             workspace,
             primary_step);
         accelerated_report.schurAssemblySeconds = assembly_seconds;
+        accelerated_report.smallBlockInverseSeconds = small_block_inverse_seconds;
+        accelerated_report.schurAccumulationSeconds = accumulation_seconds;
+        accelerated_report.csrConversionSeconds = csr_conversion_seconds;
         accelerated_report.schurPatternReused = report.schurPatternReused;
         accelerated_report.schurAssemblyOnDevice = report.schurAssemblyOnDevice;
         report = std::move(accelerated_report);
@@ -350,6 +407,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     {
         report = block_schur_detail::solveReducedSchurOnCpu(
             reduced_rhs, options, apply_schur, apply_preconditioner, primary_step);
+        report.smallBlockInverseSeconds = small_block_inverse_seconds;
     }
 
     if (!report.converged)
@@ -361,36 +419,41 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
         return report;
     }
 
-    std::vector<Scalar> point_rhs(static_cast<std::size_t>(eliminated_size), Scalar(0));
+    const auto back_substitution_start = std::chrono::steady_clock::now();
+    Scalar* point_rhs = host_scratch.data();
     for (Index block = 0; block < eliminated_count; ++block)
     {
         for (Index index = 0; index < eliminated_size; ++index)
         {
-            point_rhs[static_cast<std::size_t>(index)] =
+            point_rhs[index] =
                 -equations._eliminatedGradient[static_cast<std::size_t>(block * eliminated_size + index)];
         }
         for (const std::size_t cross_index :
              equations._eliminatedAdjacency[static_cast<std::size_t>(block)])
         {
             const auto& cross = equations._crossBlocks[cross_index];
-            std::vector<Scalar> cross_product(static_cast<std::size_t>(eliminated_size), Scalar(0));
-            addTransposeMatrixVector(cross.values.data(),
-                                     primary_size,
-                                     eliminated_size,
-                                     primary_step->data() + cross.primaryBlock * primary_size,
-                                     cross_product.data());
-            for (Index index = 0; index < eliminated_size; ++index)
+            const Scalar* primary =
+                primary_step->data() + cross.primaryBlock * primary_size;
+            for (Index column = 0; column < eliminated_size; ++column)
             {
-                point_rhs[static_cast<std::size_t>(index)] -=
-                    cross_product[static_cast<std::size_t>(index)];
+                Scalar value = Scalar(0);
+                for (Index row = 0; row < primary_size; ++row)
+                {
+                    value += cross.values[static_cast<std::size_t>(
+                                 row * eliminated_size + column)] * primary[row];
+                }
+                point_rhs[column] -= value;
             }
         }
-        multiplyMatrixVector(eliminated_inverse[static_cast<std::size_t>(block)].data(),
+        multiplyMatrixVector(eliminated_inverse.data() + static_cast<std::size_t>(
+                                 block * eliminated_size * eliminated_size),
                              eliminated_size,
                              eliminated_size,
-                             point_rhs.data(),
+                             point_rhs,
                              eliminated_step->data() + block * eliminated_size);
     }
+    report.backSubstitutionSeconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - back_substitution_start).count();
     report.message = "converged";
     return report;
 }

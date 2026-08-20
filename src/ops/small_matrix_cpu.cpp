@@ -282,15 +282,14 @@ void sortAndCanonicalize(Matrix3<Scalar>& eigenvectors, Vector3<Scalar>& eigenva
 }
 
 template <typename Scalar>
-void decomposeRow(const DenseMatrix<Scalar, Device::CPU>& compact_matrices,
-                  Index row,
-                  DenseMatrix<Scalar, Device::CPU>& eigenvalues_output,
-                  DenseMatrix<Scalar, Device::CPU>& eigenvectors_output)
+void decomposeCompact(const std::array<Scalar, 6>& compact,
+                      Vector3<Scalar>* eigenvalues_output,
+                      Matrix3<Scalar>* eigenvectors_output)
 {
     Matrix3<Scalar> matrix = {
-        compact_matrices(row, 0), compact_matrices(row, 1), compact_matrices(row, 2),
-        compact_matrices(row, 1), compact_matrices(row, 3), compact_matrices(row, 4),
-        compact_matrices(row, 2), compact_matrices(row, 4), compact_matrices(row, 5)
+        compact[0], compact[1], compact[2],
+        compact[1], compact[3], compact[4],
+        compact[2], compact[4], compact[5]
     };
     Matrix3<Scalar> eigenvectors = {
         Scalar(1), Scalar(0), Scalar(0),
@@ -305,10 +304,25 @@ void decomposeRow(const DenseMatrix<Scalar, Device::CPU>& compact_matrices,
         applyJacobiRotation(matrix, eigenvectors, 1, 2);
     }
 
-    Vector3<Scalar> eigenvalues = {
+    *eigenvalues_output = {
         element(matrix, 0, 0), element(matrix, 1, 1), element(matrix, 2, 2)
     };
-    sortAndCanonicalize(eigenvectors, eigenvalues);
+    sortAndCanonicalize(eigenvectors, *eigenvalues_output);
+    *eigenvectors_output = eigenvectors;
+}
+
+template <typename Scalar>
+void decomposeRow(const DenseMatrix<Scalar, Device::CPU>& compact_matrices,
+                  Index row,
+                  DenseMatrix<Scalar, Device::CPU>& eigenvalues_output,
+                  DenseMatrix<Scalar, Device::CPU>& eigenvectors_output)
+{
+    const std::array<Scalar, 6> compact = {
+        compact_matrices(row, 0), compact_matrices(row, 1), compact_matrices(row, 2),
+        compact_matrices(row, 3), compact_matrices(row, 4), compact_matrices(row, 5)};
+    Vector3<Scalar> eigenvalues{};
+    Matrix3<Scalar> eigenvectors{};
+    decomposeCompact(compact, &eigenvalues, &eigenvectors);
     for (Index col = 0; col < 3; ++col)
     {
         eigenvalues_output(row, col) = eigenvalues[static_cast<std::size_t>(col)];
@@ -320,6 +334,146 @@ void decomposeRow(const DenseMatrix<Scalar, Device::CPU>& compact_matrices,
 }
 
 } // namespace
+
+template <typename Scalar>
+void symmetricEigh3x3(const std::array<Scalar, 6>& compact_matrix,
+                      std::array<Scalar, 3>* eigenvalues,
+                      std::array<Scalar, 9>* eigenvectors)
+{
+    if (!eigenvalues || !eigenvectors)
+    {
+        throw std::invalid_argument("symmetricEigh3x3: outputs must be non-null");
+    }
+    for (const Scalar value : compact_matrix)
+    {
+        if (!std::isfinite(value))
+        {
+            throw std::invalid_argument("symmetricEigh3x3: input must be finite");
+        }
+    }
+    Matrix3<Scalar> internal_eigenvectors{};
+    decomposeCompact(compact_matrix, eigenvalues, &internal_eigenvectors);
+    for (Index column = 0; column < 3; ++column)
+    {
+        for (Index component = 0; component < 3; ++component)
+        {
+            (*eigenvectors)[static_cast<std::size_t>(column * 3 + component)] =
+                element(internal_eigenvectors, component, column);
+        }
+    }
+}
+
+template <typename Scalar>
+void svd3x3(const std::array<Scalar, 9>& matrix,
+            std::array<Scalar, 9>* u,
+            std::array<Scalar, 3>* singular_values,
+            std::array<Scalar, 9>* vt)
+{
+    if (!u || !singular_values || !vt)
+    {
+        throw std::invalid_argument("svd3x3: outputs must be non-null");
+    }
+    for (const Scalar value : matrix)
+    {
+        if (!std::isfinite(value))
+        {
+            throw std::invalid_argument("svd3x3: input must be finite");
+        }
+    }
+
+    std::array<Scalar, 6> normal{};
+    normal[0] = matrix[0] * matrix[0] + matrix[3] * matrix[3] + matrix[6] * matrix[6];
+    normal[1] = matrix[0] * matrix[1] + matrix[3] * matrix[4] + matrix[6] * matrix[7];
+    normal[2] = matrix[0] * matrix[2] + matrix[3] * matrix[5] + matrix[6] * matrix[8];
+    normal[3] = matrix[1] * matrix[1] + matrix[4] * matrix[4] + matrix[7] * matrix[7];
+    normal[4] = matrix[1] * matrix[2] + matrix[4] * matrix[5] + matrix[7] * matrix[8];
+    normal[5] = matrix[2] * matrix[2] + matrix[5] * matrix[5] + matrix[8] * matrix[8];
+
+    Vector3<Scalar> eigenvalues{};
+    Matrix3<Scalar> eigenvectors{};
+    decomposeCompact(normal, &eigenvalues, &eigenvectors);
+    Scalar maximum_singular = Scalar(0);
+    for (Index column = 0; column < 3; ++column)
+    {
+        const Index source = 2 - column;
+        (*singular_values)[static_cast<std::size_t>(column)] = std::sqrt(
+            std::max(Scalar(0), eigenvalues[static_cast<std::size_t>(source)]));
+        maximum_singular = std::max(
+            maximum_singular, (*singular_values)[static_cast<std::size_t>(column)]);
+        for (Index component = 0; component < 3; ++component)
+        {
+            (*vt)[static_cast<std::size_t>(column * 3 + component)] =
+                element(eigenvectors, component, source);
+        }
+    }
+
+    u->fill(Scalar(0));
+    const Scalar threshold = std::max(
+        Scalar(1), maximum_singular) * Scalar(128) * std::numeric_limits<Scalar>::epsilon();
+    for (Index column = 0; column < 3; ++column)
+    {
+        Vector3<Scalar> candidate{};
+        const Scalar singular = (*singular_values)[static_cast<std::size_t>(column)];
+        if (singular > threshold)
+        {
+            for (Index row = 0; row < 3; ++row)
+            {
+                for (Index inner = 0; inner < 3; ++inner)
+                {
+                    candidate[static_cast<std::size_t>(row)] +=
+                        matrix[static_cast<std::size_t>(row * 3 + inner)] *
+                        (*vt)[static_cast<std::size_t>(column * 3 + inner)];
+                }
+                candidate[static_cast<std::size_t>(row)] /= singular;
+            }
+        }
+        for (Index previous = 0; previous < column; ++previous)
+        {
+            Scalar projection = Scalar(0);
+            for (Index row = 0; row < 3; ++row)
+            {
+                projection += candidate[static_cast<std::size_t>(row)] *
+                              (*u)[static_cast<std::size_t>(row * 3 + previous)];
+            }
+            for (Index row = 0; row < 3; ++row)
+            {
+                candidate[static_cast<std::size_t>(row)] -=
+                    projection * (*u)[static_cast<std::size_t>(row * 3 + previous)];
+            }
+        }
+        if (!normalize(candidate, threshold))
+        {
+            for (Index axis = 0; axis < 3; ++axis)
+            {
+                candidate = {Scalar(0), Scalar(0), Scalar(0)};
+                candidate[static_cast<std::size_t>(axis)] = Scalar(1);
+                for (Index previous = 0; previous < column; ++previous)
+                {
+                    Scalar projection = Scalar(0);
+                    for (Index row = 0; row < 3; ++row)
+                    {
+                        projection += candidate[static_cast<std::size_t>(row)] *
+                                      (*u)[static_cast<std::size_t>(row * 3 + previous)];
+                    }
+                    for (Index row = 0; row < 3; ++row)
+                    {
+                        candidate[static_cast<std::size_t>(row)] -=
+                            projection * (*u)[static_cast<std::size_t>(row * 3 + previous)];
+                    }
+                }
+                if (normalize(candidate, threshold))
+                {
+                    break;
+                }
+            }
+        }
+        for (Index row = 0; row < 3; ++row)
+        {
+            (*u)[static_cast<std::size_t>(row * 3 + column)] =
+                candidate[static_cast<std::size_t>(row)];
+        }
+    }
+}
 
 template <typename Scalar>
 SymmetricEigh3x3Result<Scalar, Device::CPU> symmetricEigh3x3Batched(
@@ -339,11 +493,25 @@ SymmetricEigh3x3Result<Scalar, Device::CPU> symmetricEigh3x3Batched(
 }
 
 #ifdef PLAMATRIX_USE_FLOAT
+template void symmetricEigh3x3(const std::array<float, 6>&,
+                               std::array<float, 3>*,
+                               std::array<float, 9>*);
+template void svd3x3(const std::array<float, 9>&,
+                     std::array<float, 9>*,
+                     std::array<float, 3>*,
+                     std::array<float, 9>*);
 template SymmetricEigh3x3Result<float, Device::CPU> symmetricEigh3x3Batched(
     const DenseMatrix<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
+template void symmetricEigh3x3(const std::array<double, 6>&,
+                               std::array<double, 3>*,
+                               std::array<double, 9>*);
+template void svd3x3(const std::array<double, 9>&,
+                     std::array<double, 9>*,
+                     std::array<double, 3>*,
+                     std::array<double, 9>*);
 template SymmetricEigh3x3Result<double, Device::CPU> symmetricEigh3x3Batched(
     const DenseMatrix<double, Device::CPU>&);
 #endif

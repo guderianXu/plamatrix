@@ -9,6 +9,7 @@ target_sources(plamatrix PRIVATE
     sparse/sparse_ops_cpu.cpp
     dense/elementwise_cpu.cpp
     ops/gemm_cpu.cpp
+    ops/cpu_features.cpp
     ops/decomposition_cpu.cpp
     ops/indexing_cpu.cpp
     ops/reduction_cpu.cpp
@@ -16,6 +17,18 @@ target_sources(plamatrix PRIVATE
     ops/solver_cpu.cpp
     ops/point_cloud_cpu.cpp
 )
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$")
+    target_sources(plamatrix PRIVATE ops/gemm_microkernel_avx2.cpp)
+    target_compile_definitions(plamatrix PRIVATE PLAMATRIX_HAVE_AVX2_KERNEL=1)
+    if(MSVC)
+        set_source_files_properties(ops/gemm_microkernel_avx2.cpp PROPERTIES
+            COMPILE_FLAGS "/arch:AVX2")
+    else()
+        set_source_files_properties(ops/gemm_microkernel_avx2.cpp PROPERTIES
+            COMPILE_FLAGS "-mavx2 -mfma")
+    endif()
+endif()
 
 # ---- OpenCL runtime sources ----
 if(PLAMATRIX_WITH_OPENCL)

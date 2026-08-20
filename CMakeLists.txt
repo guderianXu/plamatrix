@@ -14,8 +14,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---- Options ----
 option(PLAMATRIX_USE_FLOAT  "Pre-compile float32 instantiations" ON)
 option(PLAMATRIX_USE_DOUBLE "Pre-compile float64 instantiations" ON)
-option(PLAMATRIX_WITH_SYSTEM_LINALG "Use optional system BLAS/LAPACK acceleration" OFF)
-
 set(_PLAMATRIX_WITH_OPENCL_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_WITH_OPENCL)
     set(_PLAMATRIX_WITH_OPENCL_USER_DEFINED ON)
@@ -143,51 +141,6 @@ endif()
 # ---- OpenMP (always required for C++ CPU paths) ----
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 
-# ---- Optional CPU BLAS/LAPACK acceleration ----
-set(PLAMATRIX_LINALG_PROVIDER "native")
-set(PLAMATRIX_LINALG_LIBRARIES "")
-set(PLAMATRIX_WITH_FOUND_SYSTEM_LINALG OFF)
-if(PLAMATRIX_WITH_SYSTEM_LINALG)
-    find_package(BLAS QUIET)
-    find_package(LAPACK QUIET)
-
-    if(TARGET BLAS::BLAS AND TARGET LAPACK::LAPACK)
-        set(PLAMATRIX_LINALG_PROVIDER "system_blas_lapack")
-        set(PLAMATRIX_WITH_FOUND_SYSTEM_LINALG ON)
-        set(PLAMATRIX_LINALG_LIBRARIES
-            LAPACK::LAPACK
-            BLAS::BLAS
-        )
-    else()
-        find_library(PLAMATRIX_MKL_RT_LIBRARY
-            NAMES mkl_rt
-            HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/anaconda3/lib" "$ENV{HOME}/miniconda3/lib"
-        )
-        if(PLAMATRIX_MKL_RT_LIBRARY)
-            set(PLAMATRIX_LINALG_PROVIDER "mkl_rt")
-            set(PLAMATRIX_LINALG_LIBRARIES "${PLAMATRIX_MKL_RT_LIBRARY}")
-        else()
-            find_library(PLAMATRIX_BLAS_LIBRARY
-                NAMES blas openblas libblas.so.3 libopenblas.so.0
-                PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/blas
-            )
-            find_library(PLAMATRIX_LAPACK_LIBRARY
-                NAMES lapack liblapack.so.3
-                PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/lapack
-            )
-            if(PLAMATRIX_BLAS_LIBRARY AND PLAMATRIX_LAPACK_LIBRARY)
-                set(PLAMATRIX_LINALG_PROVIDER "blas_lapack")
-                set(PLAMATRIX_LINALG_LIBRARIES
-                    "${PLAMATRIX_LAPACK_LIBRARY}"
-                    "${PLAMATRIX_BLAS_LIBRARY}"
-                )
-            else()
-                message(STATUS "System BLAS/LAPACK not found; using PlaMatrix native CPU linalg")
-            endif()
-        endif()
-    endif()
-endif()
-
 # ---- Library target ----
 add_library(plamatrix)
 add_library(plamatrix::plamatrix ALIAS plamatrix)
@@ -242,14 +195,6 @@ target_compile_definitions(plamatrix
         $<$<BOOL:${PLAMATRIX_USE_FLOAT}>:PLAMATRIX_USE_FLOAT=1>
         $<$<BOOL:${PLAMATRIX_USE_DOUBLE}>:PLAMATRIX_USE_DOUBLE=1>
 )
-
-if(PLAMATRIX_LINALG_LIBRARIES)
-    target_link_libraries(plamatrix PUBLIC ${PLAMATRIX_LINALG_LIBRARIES})
-    target_compile_definitions(plamatrix PRIVATE
-        PLAMATRIX_WITH_BLAS=1
-        PLAMATRIX_WITH_LAPACK=1
-    )
-endif()
 
 # ---- Source files ----
 add_subdirectory(src)
@@ -307,7 +252,7 @@ endif()
 message(STATUS "  OpenCL support:  ${PLAMATRIX_WITH_OPENCL}")
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
-message(STATUS "  CPU linalg:      ${PLAMATRIX_LINALG_PROVIDER}")
+message(STATUS "  CPU linalg:      native")
 message(STATUS "  Build tests:     ${PLAMATRIX_BUILD_TESTS}")
 message(STATUS "  Build benchmarks:${PLAMATRIX_BUILD_BENCHMARKS}")
 message(STATUS "  Build docs:      ${PLAMATRIX_BUILD_DOCS}")

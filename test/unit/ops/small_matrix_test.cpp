@@ -174,6 +174,53 @@ TYPED_TEST(SmallMatrixTest, RotatedMatrixReturnsMatchingEigenpairs)
     EXPECT_NEAR(result.eigenvalues(0, 2), Scalar(6), TestFixture::tolerance());
 }
 
+TYPED_TEST(SmallMatrixTest, SingleMatrixApiMatchesBatchedAndSvdReconstructs)
+{
+    using Scalar = TypeParam;
+    const std::array<Scalar, 6> compact = {
+        Scalar(4), Scalar(1), Scalar(-0.5), Scalar(3), Scalar(0.25), Scalar(2)};
+    std::array<Scalar, 3> eigenvalues{};
+    std::array<Scalar, 9> eigenvectors{};
+    symmetricEigh3x3(compact, &eigenvalues, &eigenvectors);
+    const auto batch = TestFixture::makeCompact({compact});
+    const auto batched = symmetricEigh3x3Batched(batch);
+    for (Index index = 0; index < 3; ++index)
+    {
+        EXPECT_EQ(eigenvalues[static_cast<std::size_t>(index)], batched.eigenvalues(0, index));
+    }
+    for (Index index = 0; index < 9; ++index)
+    {
+        EXPECT_EQ(eigenvectors[static_cast<std::size_t>(index)], batched.eigenvectors(0, index));
+    }
+
+    const std::array<Scalar, 9> matrix = {
+        Scalar(1), Scalar(2), Scalar(-1),
+        Scalar(0.5), Scalar(3), Scalar(2),
+        Scalar(-2), Scalar(1), Scalar(4)};
+    std::array<Scalar, 9> u{};
+    std::array<Scalar, 3> singular_values{};
+    std::array<Scalar, 9> vt{};
+    svd3x3(matrix, &u, &singular_values, &vt);
+    EXPECT_GE(singular_values[0], singular_values[1]);
+    EXPECT_GE(singular_values[1], singular_values[2]);
+    for (Index row = 0; row < 3; ++row)
+    {
+        for (Index column = 0; column < 3; ++column)
+        {
+            Scalar reconstructed = Scalar(0);
+            for (Index inner = 0; inner < 3; ++inner)
+            {
+                reconstructed += u[static_cast<std::size_t>(row * 3 + inner)] *
+                                 singular_values[static_cast<std::size_t>(inner)] *
+                                 vt[static_cast<std::size_t>(inner * 3 + column)];
+            }
+            EXPECT_NEAR(reconstructed,
+                        matrix[static_cast<std::size_t>(row * 3 + column)],
+                        TestFixture::tolerance() * Scalar(16));
+        }
+    }
+}
+
 TYPED_TEST(SmallMatrixTest, RankOneAndZeroMatricesUseDeterministicOrthonormalBases)
 {
     using Scalar = TypeParam;

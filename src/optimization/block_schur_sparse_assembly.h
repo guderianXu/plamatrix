@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <map>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+#include <omp.h>
 
 #include "plamatrix/optimization/block_schur.h"
 #include "plamatrix/sparse/csr_matrix.h"
@@ -368,6 +371,83 @@ struct SchurComplementSolverWorkspaceAccess
     }
 
     template <typename Scalar>
+    static std::size_t blockSlotCount(
+        const SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._blockSlots.size();
+    }
+
+    template <typename Scalar>
+    static Index blockSlotRow(const SchurComplementSolverWorkspace<Scalar>& workspace,
+                              std::size_t slot)
+    {
+        return workspace._blockSlots[slot].blockRow;
+    }
+
+    template <typename Scalar>
+    static Index blockSlotColumn(const SchurComplementSolverWorkspace<Scalar>& workspace,
+                                 std::size_t slot)
+    {
+        return workspace._blockSlots[slot].blockColumn;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostDenseSchur(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostDenseSchur;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostDenseReference(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostDenseReference;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostTransformedCross(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostTransformedCross;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostPrimaryDiagonal(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostPrimaryDiagonal;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostEliminatedDiagonal(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostEliminatedDiagonal;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostEliminatedInverse(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostEliminatedInverse;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostReducedRhs(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostReducedRhs;
+    }
+
+    template <typename Scalar>
+    static std::vector<Scalar>& hostScratch(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._hostScratch;
+    }
+
+    template <typename Scalar>
     static std::shared_ptr<void>& acceleratedState(
         SchurComplementSolverWorkspace<Scalar>& workspace)
     {
@@ -390,20 +470,14 @@ struct SchurComplementSolverWorkspaceAccess
 };
 
 template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
-CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
-    Index primary_count,
-    Index eliminated_count,
-    Index primary_size,
-    Index eliminated_size,
-    const std::vector<Scalar>& primary_diagonal,
-    const std::vector<std::vector<Scalar>>& eliminated_inverse,
-    const PrimaryCrossBlocks& primary_cross_blocks,
-    const CrossBlocks& cross_blocks,
-    const Adjacency& adjacency,
-    SchurComplementSolverWorkspace<Scalar>& workspace,
-    bool* pattern_reused,
-    SchurComplementLinearBackend backend,
-    bool* assembly_on_device)
+bool prepareSchurTopology(Index primary_count,
+                          Index eliminated_count,
+                          Index primary_size,
+                          Index eliminated_size,
+                          const PrimaryCrossBlocks& primary_cross_blocks,
+                          const CrossBlocks& cross_blocks,
+                          const Adjacency& adjacency,
+                          SchurComplementSolverWorkspace<Scalar>& workspace)
 {
     std::vector<Index> topology{
         primary_count, eliminated_count, primary_size, eliminated_size};
@@ -442,6 +516,194 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
             adjacency,
             std::move(topology));
     }
+    return reused;
+}
+
+template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
+void assembleReducedSchurDenseLower(
+    Index primary_count,
+    Index eliminated_count,
+    Index primary_size,
+    Index eliminated_size,
+    const std::vector<Scalar>& primary_diagonal,
+    const std::vector<Scalar>& eliminated_inverse,
+    const PrimaryCrossBlocks& primary_cross_blocks,
+    const CrossBlocks& cross_blocks,
+    const Adjacency& adjacency,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool* pattern_reused,
+    double* accumulation_seconds,
+    std::vector<Scalar>** dense_lower,
+    std::vector<Scalar>** dense_reference)
+{
+    const bool reused = prepareSchurTopology(
+        primary_count,
+        eliminated_count,
+        primary_size,
+        eliminated_size,
+        primary_cross_blocks,
+        cross_blocks,
+        adjacency,
+        workspace);
+    if (pattern_reused)
+    {
+        *pattern_reused = reused;
+    }
+
+    const auto accumulation_start = std::chrono::steady_clock::now();
+    const Index dimension = primary_count * primary_size;
+    auto& dense = SchurComplementSolverWorkspaceAccess::hostDenseSchur(workspace);
+    auto& reference = SchurComplementSolverWorkspaceAccess::hostDenseReference(workspace);
+    auto& transformed_cross =
+        SchurComplementSolverWorkspaceAccess::hostTransformedCross(workspace);
+    dense.assign(
+        static_cast<std::size_t>(dimension * dimension), Scalar(0));
+    transformed_cross.resize(
+        cross_blocks.size() * static_cast<std::size_t>(primary_size * eliminated_size));
+
+    const Index cross_count = static_cast<Index>(cross_blocks.size());
+    #pragma omp parallel for schedule(static) if(cross_count >= 64 && !omp_in_parallel())
+    for (Index cross_index = 0; cross_index < cross_count; ++cross_index)
+    {
+        const auto& cross = cross_blocks[static_cast<std::size_t>(cross_index)];
+        const Scalar* inverse = eliminated_inverse.data() + static_cast<std::size_t>(
+            cross.eliminatedBlock * eliminated_size * eliminated_size);
+        Scalar* transformed = transformed_cross.data() +
+            static_cast<std::size_t>(cross_index * primary_size * eliminated_size);
+        if (primary_size == 9 && eliminated_size == 3)
+        {
+            transform9x3(inverse, cross.values.data(), transformed);
+        }
+        else for (Index row = 0; row < primary_size; ++row)
+        {
+            multiplyMatrixVector(
+                inverse,
+                eliminated_size,
+                eliminated_size,
+                cross.values.data() + row * eliminated_size,
+                transformed + row * eliminated_size);
+        }
+    }
+
+    const auto& base_kinds = SchurComplementSolverWorkspaceAccess::valueBaseKinds(workspace);
+    const auto& base_indices = SchurComplementSolverWorkspaceAccess::valueBaseIndices(workspace);
+    const auto& term_offsets = SchurComplementSolverWorkspaceAccess::slotTermOffsets(workspace);
+    const auto& term_left_cross =
+        SchurComplementSolverWorkspaceAccess::slotTermLeftCross(workspace);
+    const auto& term_right_cross =
+        SchurComplementSolverWorkspaceAccess::slotTermRightCross(workspace);
+    const Index slot_count = static_cast<Index>(
+        SchurComplementSolverWorkspaceAccess::blockSlotCount(workspace));
+    #pragma omp parallel for schedule(static) if(slot_count >= 32 && !omp_in_parallel())
+    for (Index slot = 0; slot < slot_count; ++slot)
+    {
+        const Index block_row = SchurComplementSolverWorkspaceAccess::blockSlotRow(
+            workspace, static_cast<std::size_t>(slot));
+        const Index block_column = SchurComplementSolverWorkspaceAccess::blockSlotColumn(
+            workspace, static_cast<std::size_t>(slot));
+        if (block_row < block_column)
+        {
+            continue;
+        }
+        for (Index local_row = 0; local_row < primary_size; ++local_row)
+        {
+            const Index local_column_end = block_row == block_column
+                ? local_row + 1
+                : primary_size;
+            for (Index local_column = 0;
+                 local_column < local_column_end;
+                 ++local_column)
+            {
+                const Index value_position = SchurComplementSolverWorkspaceAccess::valuePosition(
+                    workspace, slot, local_row, local_column);
+                Scalar value = Scalar(0);
+                const Index base_kind = base_kinds[static_cast<std::size_t>(value_position)];
+                const Index base_index = base_indices[static_cast<std::size_t>(value_position)];
+                if (base_kind == 1)
+                {
+                    value = primary_diagonal[static_cast<std::size_t>(base_index)];
+                }
+                else if (base_kind == 2)
+                {
+                    const Index block_area = primary_size * primary_size;
+                    const Index cross_index = base_index / block_area;
+                    const Index source_index = base_index % block_area;
+                    value = primary_cross_blocks[static_cast<std::size_t>(cross_index)]
+                        .values[static_cast<std::size_t>(source_index)];
+                }
+
+                for (Index term = term_offsets[static_cast<std::size_t>(slot)];
+                     term < term_offsets[static_cast<std::size_t>(slot + 1)];
+                     ++term)
+                {
+                    const Index left_index =
+                        term_left_cross[static_cast<std::size_t>(term)];
+                    const Index right_index =
+                        term_right_cross[static_cast<std::size_t>(term)];
+                    const Scalar* transformed = transformed_cross.data() +
+                        static_cast<std::size_t>(
+                            left_index * primary_size * eliminated_size +
+                            local_row * eliminated_size);
+                    const Scalar* right = cross_blocks[static_cast<std::size_t>(right_index)]
+                        .values.data() + local_column * eliminated_size;
+                    Scalar product = eliminated_size == 3
+                        ? dot3(transformed, right)
+                        : Scalar(0);
+                    if (eliminated_size != 3)
+                    {
+                        #pragma omp simd reduction(+:product)
+                        for (Index inner = 0; inner < eliminated_size; ++inner)
+                        {
+                            product += transformed[inner] * right[inner];
+                        }
+                    }
+                    value -= product;
+                }
+                const Index row = block_row * primary_size + local_row;
+                const Index column = block_column * primary_size + local_column;
+                dense[static_cast<std::size_t>(
+                    row * dimension + column)] = value;
+            }
+        }
+    }
+    reference = dense;
+    if (accumulation_seconds)
+    {
+        *accumulation_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - accumulation_start).count();
+    }
+    *dense_lower = &dense;
+    *dense_reference = &reference;
+}
+
+template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
+CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
+    Index primary_count,
+    Index eliminated_count,
+    Index primary_size,
+    Index eliminated_size,
+    const std::vector<Scalar>& primary_diagonal,
+    const std::vector<Scalar>& eliminated_inverse,
+    const PrimaryCrossBlocks& primary_cross_blocks,
+    const CrossBlocks& cross_blocks,
+    const Adjacency& adjacency,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool* pattern_reused,
+    SchurComplementLinearBackend backend,
+    bool* assembly_on_device,
+    double* accumulation_seconds = nullptr,
+    double* csr_conversion_seconds = nullptr)
+{
+    const auto conversion_start = std::chrono::steady_clock::now();
+    const bool reused = prepareSchurTopology(
+        primary_count,
+        eliminated_count,
+        primary_size,
+        eliminated_size,
+        primary_cross_blocks,
+        cross_blocks,
+        adjacency,
+        workspace);
     if (pattern_reused)
     {
         *pattern_reused = reused;
@@ -466,17 +728,15 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
     std::copy(row_offsets.begin(), row_offsets.end(), matrix_row_offsets);
     std::copy(column_indices.begin(), column_indices.end(), matrix_column_indices);
     std::fill(matrix_values, matrix_values + matrix.nnz(), Scalar(0));
+    if (csr_conversion_seconds)
+    {
+        *csr_conversion_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - conversion_start).count();
+    }
+    const auto accumulation_start = std::chrono::steady_clock::now();
 
     if (backend != SchurComplementLinearBackend::Cpu)
     {
-        std::vector<Scalar> flattened_inverse;
-        flattened_inverse.reserve(static_cast<std::size_t>(
-            eliminated_count * eliminated_size * eliminated_size));
-        for (const auto& inverse : eliminated_inverse)
-        {
-            flattened_inverse.insert(
-                flattened_inverse.end(), inverse.begin(), inverse.end());
-        }
         std::vector<Scalar> flattened_primary_cross;
         flattened_primary_cross.reserve(
             primary_cross_blocks.size() * static_cast<std::size_t>(primary_size * primary_size));
@@ -515,7 +775,7 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
         if (backend == SchurComplementLinearBackend::Cuda)
         {
             values = assembleSchurValuesOnCuda(
-                primary_size, eliminated_size, primary_diagonal, flattened_inverse,
+                primary_size, eliminated_size, primary_diagonal, eliminated_inverse,
                 flattened_primary_cross, flattened_cross, base_kinds, base_indices,
                 value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
                 term_left_cross, term_right_cross, workspace, !reused);
@@ -523,7 +783,7 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
         else
         {
             values = assembleSchurValuesOnOpenCl(
-                primary_size, eliminated_size, primary_diagonal, flattened_inverse,
+                primary_size, eliminated_size, primary_diagonal, eliminated_inverse,
                 flattened_primary_cross, flattened_cross, base_kinds, base_indices,
                 value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
                 term_left_cross, term_right_cross, workspace, !reused);
@@ -542,6 +802,11 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
             *assembly_on_device = true;
         }
         matrix.validateStructure();
+        if (accumulation_seconds)
+        {
+            *accumulation_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - accumulation_start).count();
+        }
         return matrix;
     }
     if (assembly_on_device)
@@ -602,7 +867,8 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
             for (Index row = 0; row < primary_size; ++row)
             {
                 multiplyMatrixVector(
-                    eliminated_inverse[static_cast<std::size_t>(eliminated)].data(),
+                    eliminated_inverse.data() + static_cast<std::size_t>(
+                        eliminated * eliminated_size * eliminated_size),
                     eliminated_size,
                     eliminated_size,
                     cross.values.data() + row * eliminated_size,
@@ -636,6 +902,11 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
         }
     }
     matrix.validateStructure();
+    if (accumulation_seconds)
+    {
+        *accumulation_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - accumulation_start).count();
+    }
     return matrix;
 }
 

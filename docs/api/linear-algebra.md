@@ -19,7 +19,7 @@ template <typename Scalar>
 void gemmAsync(A_gpu, B_gpu, C_gpu, cudaStream_t stream = nullptr);
 ```
 
-- **CPU**：默认使用项目内分块、SIMD、OpenMP tile 内核；显式启用系统后端时可使用 BLAS
+- **CPU**：使用项目内 B-panel packing、SIMD 寄存器微内核和 OpenMP tile 内核
 - **同步 GPU 接口**：`cublasSgemm` / `cublasDgemm`，支持指定 CUDA stream；
   返回前会同步该 stream，结果可立即传回 CPU 或继续参与默认 stream 运算
 - **输出复用**：`gemm(A_gpu, B_gpu, C_gpu, stream)` 写入已有输出矩阵，适合循环里避免反复分配
@@ -167,7 +167,7 @@ std::tuple<DenseMatrix<Scalar, Dev>,
            DenseMatrix<Scalar, Dev>> svd(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：默认使用项目内、按标量精度收敛的 Jacobi SVD；显式启用 `PLAMATRIX_WITH_SYSTEM_LINALG` 时可使用 LAPACK `gesvd`
+- **CPU**：使用项目内 one-sided Jacobi SVD；64 列以上使用确定性的 round-robin 独立列对并行和两遍正交化补全基
 - **GPU**：`cusolverDnSgesvd` (float) / `cusolverDnDgesvd` (double)，legacy cuSOLVER 路径要求 `rows >= cols`
 - 返回形状为 `U(m,m)`, `S(min(m,n),1)`, `Vt(n,n)`。
 
@@ -180,7 +180,7 @@ std::tuple<DenseMatrix<Scalar, Dev>, DenseMatrix<Scalar, Dev>>
 qr(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：Householder 反射变换
+- **CPU**：尺度安全的 Householder 反射；大矩阵的尾随列更新和 Q 回放按互不重叠的列/行确定性并行
 - **GPU**：`cusolverDnSgeqrf` + `cusolverDnSorgqr`
 
 ## 对称特征值
@@ -191,7 +191,7 @@ template <typename Scalar, Device Dev>
 DenseMatrix<Scalar, Dev> eigh(const DenseMatrix<Scalar, Dev>& A);
 ```
 
-- **CPU**：默认使用项目内、按矩阵尺度收敛的 Jacobi 特征值算法；显式启用 `PLAMATRIX_WITH_SYSTEM_LINALG` 时可使用 LAPACK `syev`
+- **CPU**：使用 Householder 对称三对角化加隐式 QL，并按降序返回特征值
 - **GPU**：`cusolverDnSsyevd` (分治算法)
 
 ### 批量对称 3x3 特征分解
@@ -201,6 +201,22 @@ auto result = symmetricEigh3x3Batched(compact); // compact: N x 6
 // result.eigenvalues:  N x 3
 // result.eigenvectors: N x 9
 ```
+
+单矩阵热路径可使用不分配 `DenseMatrix` 的固定尺寸接口：
+
+```cpp
+std::array<Scalar, 3> eigenvalues;
+std::array<Scalar, 9> eigenvectors;
+symmetricEigh3x3(compact_covariance, &eigenvalues, &eigenvectors);
+
+std::array<Scalar, 9> u;
+std::array<Scalar, 3> singular_values;
+std::array<Scalar, 9> vt;
+svd3x3(matrix, &u, &singular_values, &vt);
+```
+
+`symmetricEigh3x3` 与批量接口使用相同的 compact covariance 和升序特征对布局；`svd3x3`
+输入/输出为 row-major，奇异值降序，适合局部 PCA、刚体配准和小块优化内核。
 
 每个输入行按 `[xx, xy, xz, yy, yz, zz]` 表示
 `[[xx,xy,xz],[xy,yy,yz],[xz,yz,zz]]`。每个特征值输出行按升序排列；特征向量输出行为
@@ -246,9 +262,9 @@ DenseMatrix<Scalar, Dev> solve(
 
 | 运算 | GPU 临界尺寸 | 说明 |
 |------|-------------|------|
-| gemm | 依 CPU/CUDA 和矩阵尺寸而定 | 原生 CPU 使用分块、SIMD 和 OpenMP；可选 BLAS 在部分尺寸更快 |
+| gemm | 依 CPU/CUDA 和矩阵尺寸而定 | 原生 CPU 使用 packing、SIMD 和 OpenMP |
 | add/sub | ~4096 | 内存带宽受限，GPU 优势出现较晚 |
-| svd | 依 CPU/CUDA 和矩阵尺寸而定 | 原生 CPU 适合点云常见小矩阵；大规模可选 LAPACK 或 CUDA |
+| svd | 依 CPU/CUDA 和矩阵尺寸而定 | CPU 使用原生 one-sided Jacobi；CUDA 使用 cuSOLVER |
 | solve | ~256 | GPU LU 分解远超 CPU 高斯消元 |
 
 *注：临界尺寸因硬件而异，请使用 `plamatrix_benchmark` 工具实际测量。*

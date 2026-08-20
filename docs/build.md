@@ -166,7 +166,6 @@ cmake --build . -j$(nproc)
 |------|--------|------|
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | GPU 加速，无 NVIDIA GPU 设为 `OFF` |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 架构目标。可设为具体值如 `80`(A100)、`86`(RTX3090)、`89`(RTX4090) |
-| `PLAMATRIX_WITH_SYSTEM_LINALG` | `OFF` | 可选；通过 CMake `find_package(BLAS/LAPACK)` 检测并使用系统 BLAS/LAPACK 加速 CPU GEMM/SVD/eigh |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 `float` (32-bit) 实例化 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 `double` (64-bit) 实例化 |
 | `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 (需要 Google Test) |
@@ -183,12 +182,8 @@ cmake .. && cmake --build . -j$(nproc)
 # CPU-only 版本
 cmake .. -DPLAMATRIX_WITH_CUDA=OFF && cmake --build . -j$(nproc)
 
-# 默认使用自包含的原生 CPU 线性代数，不需要 BLAS/LAPACK
+# CPU 线性代数始终使用自包含的原生实现
 cmake .. -DPLAMATRIX_WITH_CUDA=OFF
-
-# 独立部署需要系统库加速时显式启用（PlaScan 生产构建不启用）
-cmake .. -DPLAMATRIX_WITH_SYSTEM_LINALG=ON
-cmake --build . -j$(nproc)
 
 # 开发模式（测试 + benchmark）
 cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON && cmake --build . -j$(nproc)

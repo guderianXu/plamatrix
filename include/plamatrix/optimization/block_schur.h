@@ -55,8 +55,22 @@ struct SchurComplementSolverReport
     int iterations = 0;
     Scalar initialResidualNorm = Scalar(0);
     Scalar finalResidualNorm = Scalar(0);
+    /// Time spent factoring/inverting small eliminated and preconditioner blocks.
+    double smallBlockInverseSeconds = 0.0;
+    /// Time spent accumulating numerical Schur-complement values.
+    double schurAccumulationSeconds = 0.0;
+    /// Time spent building/copying the reduced CSR representation.
+    double csrConversionSeconds = 0.0;
     double schurAssemblySeconds = 0.0;
+    /// Time spent factoring the dense reduced system.
+    double choleskyFactorizationSeconds = 0.0;
+    /// Time spent in the dense forward/backward triangular solves.
+    double triangularSolveSeconds = 0.0;
+    /// Time spent checking the final reduced-system residual.
+    double residualCheckSeconds = 0.0;
     double linearSolveSeconds = 0.0;
+    /// Time spent recovering eliminated-variable steps.
+    double backSubstitutionSeconds = 0.0;
     bool schurPatternReused = false;
     bool schurAssemblyOnDevice = false;
     bool mixedPrecisionUsed = false;
@@ -91,6 +105,14 @@ public:
         _slotTermEliminated.clear();
         _slotTermLeftCross.clear();
         _slotTermRightCross.clear();
+        _hostDenseSchur.clear();
+        _hostDenseReference.clear();
+        _hostTransformedCross.clear();
+        _hostPrimaryDiagonal.clear();
+        _hostEliminatedDiagonal.clear();
+        _hostEliminatedInverse.clear();
+        _hostReducedRhs.clear();
+        _hostScratch.clear();
         _acceleratedState.reset();
         _mixedPrecisionState.reset();
         _deviceAssemblyState.reset();
@@ -130,6 +152,14 @@ private:
     std::vector<Index> _slotTermEliminated;
     std::vector<Index> _slotTermLeftCross;
     std::vector<Index> _slotTermRightCross;
+    std::vector<Scalar> _hostDenseSchur;
+    std::vector<Scalar> _hostDenseReference;
+    std::vector<Scalar> _hostTransformedCross;
+    std::vector<Scalar> _hostPrimaryDiagonal;
+    std::vector<Scalar> _hostEliminatedDiagonal;
+    std::vector<Scalar> _hostEliminatedInverse;
+    std::vector<Scalar> _hostReducedRhs;
+    std::vector<Scalar> _hostScratch;
     std::shared_ptr<void> _acceleratedState;
     std::shared_ptr<void> _mixedPrecisionState;
     std::shared_ptr<void> _deviceAssemblyState;

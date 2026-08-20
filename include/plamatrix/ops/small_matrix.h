@@ -156,6 +156,22 @@ struct SymmetricEigh3x3Result
     DenseMatrix<Scalar, Dev> eigenvectors;
 };
 
+/// Allocation-free symmetric 3x3 eigendecomposition for one compact matrix.
+/// Input is `[xx, xy, xz, yy, yz, zz]`; eigenvalues are ascending and eigenvectors are packed
+/// column-major with the same deterministic sign/repeated-space convention as the batched API.
+template <typename Scalar>
+void symmetricEigh3x3(const std::array<Scalar, 6>& compact_matrix,
+                      std::array<Scalar, 3>* eigenvalues,
+                      std::array<Scalar, 9>* eigenvectors);
+
+/// Allocation-free full SVD of one row-major 3x3 matrix.
+/// Output satisfies `matrix = U * diag(singularValues) * Vt`; singular values are descending.
+template <typename Scalar>
+void svd3x3(const std::array<Scalar, 9>& matrix,
+            std::array<Scalar, 9>* u,
+            std::array<Scalar, 3>* singular_values,
+            std::array<Scalar, 9>* vt);
+
 namespace small_matrix_detail
 {
 struct SymmetricEigh3x3WorkspaceAccess;

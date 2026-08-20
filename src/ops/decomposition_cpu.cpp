@@ -1,16 +1,15 @@
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
 
-#include "plamatrix/ops/decomposition.h"
+#include <omp.h>
 
-#ifdef PLAMATRIX_WITH_LAPACK
-#include "fortran_linalg.h"
-#endif
+#include "plamatrix/ops/decomposition.h"
 
 namespace plamatrix
 {
@@ -42,16 +41,19 @@ bool normalizeColumnCandidate(DenseMatrix<Scalar, Device::CPU>& U,
                               Scalar epsilon)
 {
     Index rows = U.rows();
-    for (Index prev = 0; prev < col; ++prev)
+    for (int pass = 0; pass < 2; ++pass)
     {
-        Scalar dot = Scalar(0);
-        for (Index i = 0; i < rows; ++i)
+        for (Index prev = 0; prev < col; ++prev)
         {
-            dot += candidate[static_cast<std::size_t>(i)] * U(i, prev);
-        }
-        for (Index i = 0; i < rows; ++i)
-        {
-            candidate[static_cast<std::size_t>(i)] -= dot * U(i, prev);
+            Scalar dot = Scalar(0);
+            for (Index i = 0; i < rows; ++i)
+            {
+                dot += candidate[static_cast<std::size_t>(i)] * U(i, prev);
+            }
+            for (Index i = 0; i < rows; ++i)
+            {
+                candidate[static_cast<std::size_t>(i)] -= dot * U(i, prev);
+            }
         }
     }
 
@@ -100,6 +102,279 @@ void setOrthonormalColumn(DenseMatrix<Scalar, Device::CPU>& U,
     throw std::runtime_error("SVD: failed to construct orthonormal U basis");
 }
 
+template <typename Scalar>
+void applyOneSidedJacobiPair(DenseMatrix<Scalar, Device::CPU>& u,
+                             DenseMatrix<Scalar, Device::CPU>& vt,
+                             Index first,
+                             Index second,
+                             Scalar epsilon,
+                             Scalar* maximum_correlation)
+{
+    Scalar first_norm = Scalar(0);
+    Scalar second_norm = Scalar(0);
+    Scalar cross = Scalar(0);
+    for (Index row = 0; row < u.rows(); ++row)
+    {
+        const Scalar left = u(row, first);
+        const Scalar right = u(row, second);
+        first_norm += left * left;
+        second_norm += right * right;
+        cross += left * right;
+    }
+    const Scalar scale = first_norm * second_norm;
+    if (scale <= std::numeric_limits<Scalar>::min())
+    {
+        return;
+    }
+    const Scalar correlation = std::abs(cross) / std::sqrt(scale);
+    *maximum_correlation = std::max(*maximum_correlation, correlation);
+    if (correlation <= epsilon)
+    {
+        return;
+    }
+    const Scalar tau = (first_norm - second_norm) / (Scalar(2) * cross);
+    const Scalar tangent = sign(tau) /
+        (std::abs(tau) + std::sqrt(Scalar(1) + tau * tau));
+    const Scalar cosine = Scalar(1) / std::sqrt(Scalar(1) + tangent * tangent);
+    const Scalar sine = cosine * tangent;
+    for (Index row = 0; row < u.rows(); ++row)
+    {
+        const Scalar left = u(row, first);
+        const Scalar right = u(row, second);
+        u(row, first) = cosine * left + sine * right;
+        u(row, second) = -sine * left + cosine * right;
+    }
+    for (Index column = 0; column < vt.cols(); ++column)
+    {
+        const Scalar left = vt(first, column);
+        const Scalar right = vt(second, column);
+        vt(first, column) = cosine * left + sine * right;
+        vt(second, column) = -sine * left + cosine * right;
+    }
+}
+
+template <typename Scalar>
+void parallelRoundRobinJacobi(DenseMatrix<Scalar, Device::CPU>& u,
+                              DenseMatrix<Scalar, Device::CPU>& vt,
+                              Scalar epsilon)
+{
+    const Index column_count = u.cols();
+    const Index participant_count = column_count + column_count % 2;
+    std::vector<Index> participants(static_cast<std::size_t>(participant_count), -1);
+    for (Index column = 0; column < column_count; ++column)
+    {
+        participants[static_cast<std::size_t>(column)] = column;
+    }
+    for (int sweep = 0; sweep < maxJacobiSweeps; ++sweep)
+    {
+        Scalar maximum_correlation = Scalar(0);
+        for (Index round = 0; round < participant_count - 1; ++round)
+        {
+            Scalar round_maximum = Scalar(0);
+            #pragma omp parallel for schedule(static) reduction(max:round_maximum) \
+                if(column_count >= 64 && !omp_in_parallel())
+            for (Index pair = 0; pair < participant_count / 2; ++pair)
+            {
+                const Index first = participants[static_cast<std::size_t>(pair)];
+                const Index second = participants[static_cast<std::size_t>(
+                    participant_count - 1 - pair)];
+                if (first >= 0 && second >= 0)
+                {
+                    Scalar pair_maximum = Scalar(0);
+                    applyOneSidedJacobiPair(
+                        u, vt, first, second, epsilon, &pair_maximum);
+                    round_maximum = std::max(round_maximum, pair_maximum);
+                }
+            }
+            maximum_correlation = std::max(maximum_correlation, round_maximum);
+            const Index last = participants.back();
+            for (Index index = participant_count - 1; index > 1; --index)
+            {
+                participants[static_cast<std::size_t>(index)] =
+                    participants[static_cast<std::size_t>(index - 1)];
+            }
+            participants[1] = last;
+        }
+        if (maximum_correlation <= epsilon)
+        {
+            break;
+        }
+    }
+}
+
+template <typename Scalar>
+std::vector<Scalar> symmetricEigenvaluesHouseholderQl(
+    const DenseMatrix<Scalar, Device::CPU>& input)
+{
+    const Index dimension = input.rows();
+    std::vector<Scalar> matrix(static_cast<std::size_t>(dimension * dimension));
+    const auto at = [&](Index row, Index column) -> Scalar&
+    {
+        return matrix[static_cast<std::size_t>(row * dimension + column)];
+    };
+    for (Index row = 0; row < dimension; ++row)
+    {
+        for (Index column = 0; column < dimension; ++column)
+        {
+            at(row, column) = input(row, column);
+        }
+    }
+    std::vector<Scalar> diagonal(static_cast<std::size_t>(dimension));
+    std::vector<Scalar> off_diagonal(static_cast<std::size_t>(dimension), Scalar(0));
+    std::vector<Scalar> reflector(static_cast<std::size_t>(dimension));
+    std::vector<Scalar> product(static_cast<std::size_t>(dimension));
+    for (Index column = 0; column + 2 < dimension; ++column)
+    {
+        const Index begin = column + 1;
+        Scalar norm = Scalar(0);
+        for (Index row = begin; row < dimension; ++row)
+        {
+            norm = std::hypot(norm, at(row, column));
+        }
+        if (norm <= std::numeric_limits<Scalar>::min())
+        {
+            continue;
+        }
+        const Scalar transformed = -std::copysign(norm, at(begin, column));
+        off_diagonal[static_cast<std::size_t>(begin)] = transformed;
+        std::fill(reflector.begin(), reflector.end(), Scalar(0));
+        for (Index row = begin; row < dimension; ++row)
+        {
+            reflector[static_cast<std::size_t>(row)] = at(row, column);
+        }
+        reflector[static_cast<std::size_t>(begin)] -= transformed;
+        Scalar reflector_norm = Scalar(0);
+        for (Index row = begin; row < dimension; ++row)
+        {
+            const Scalar value = reflector[static_cast<std::size_t>(row)];
+            reflector_norm += value * value;
+        }
+        const Scalar beta = Scalar(2) / reflector_norm;
+        std::fill(product.begin(), product.end(), Scalar(0));
+        for (Index row = begin; row < dimension; ++row)
+        {
+            for (Index inner = begin; inner < dimension; ++inner)
+            {
+                product[static_cast<std::size_t>(row)] +=
+                    beta * at(row, inner) * reflector[static_cast<std::size_t>(inner)];
+            }
+        }
+        Scalar correction = Scalar(0);
+        for (Index row = begin; row < dimension; ++row)
+        {
+            correction += reflector[static_cast<std::size_t>(row)] *
+                          product[static_cast<std::size_t>(row)];
+        }
+        correction *= -Scalar(0.5) * beta;
+        for (Index row = begin; row < dimension; ++row)
+        {
+            product[static_cast<std::size_t>(row)] +=
+                correction * reflector[static_cast<std::size_t>(row)];
+        }
+        for (Index row = begin; row < dimension; ++row)
+        {
+            for (Index inner = begin; inner <= row; ++inner)
+            {
+                at(row, inner) -=
+                    reflector[static_cast<std::size_t>(row)] *
+                        product[static_cast<std::size_t>(inner)] +
+                    product[static_cast<std::size_t>(row)] *
+                        reflector[static_cast<std::size_t>(inner)];
+                at(inner, row) = at(row, inner);
+            }
+        }
+    }
+    for (Index index = 0; index < dimension; ++index)
+    {
+        diagonal[static_cast<std::size_t>(index)] = at(index, index);
+        if (index > 0 && off_diagonal[static_cast<std::size_t>(index)] == Scalar(0))
+        {
+            off_diagonal[static_cast<std::size_t>(index)] = at(index, index - 1);
+        }
+    }
+    for (Index index = 1; index < dimension; ++index)
+    {
+        off_diagonal[static_cast<std::size_t>(index - 1)] =
+            off_diagonal[static_cast<std::size_t>(index)];
+    }
+    off_diagonal.back() = Scalar(0);
+
+    const Scalar epsilon = std::numeric_limits<Scalar>::epsilon();
+    for (Index left = 0; left < dimension; ++left)
+    {
+        int iterations = 0;
+        while (true)
+        {
+            Index right = left;
+            while (right + 1 < dimension)
+            {
+                const Scalar scale = std::abs(diagonal[static_cast<std::size_t>(right)]) +
+                                     std::abs(diagonal[static_cast<std::size_t>(right + 1)]);
+                if (std::abs(off_diagonal[static_cast<std::size_t>(right)]) <=
+                    epsilon * std::max(Scalar(1), scale))
+                {
+                    break;
+                }
+                ++right;
+            }
+            if (right == left)
+            {
+                break;
+            }
+            if (++iterations > 128)
+            {
+                throw std::runtime_error("Eigh: implicit QL iteration did not converge");
+            }
+            Scalar shift = (diagonal[static_cast<std::size_t>(left + 1)] -
+                            diagonal[static_cast<std::size_t>(left)]) /
+                           (Scalar(2) * off_diagonal[static_cast<std::size_t>(left)]);
+            Scalar root = std::hypot(shift, Scalar(1));
+            shift = diagonal[static_cast<std::size_t>(right)] -
+                    diagonal[static_cast<std::size_t>(left)] +
+                    off_diagonal[static_cast<std::size_t>(left)] /
+                        (shift + std::copysign(root, shift));
+            Scalar sine = Scalar(1);
+            Scalar cosine = Scalar(1);
+            Scalar correction = Scalar(0);
+            for (Index offset = 0; offset < right - left; ++offset)
+            {
+                const Index index = right - 1 - offset;
+                const Scalar left_value = sine *
+                    off_diagonal[static_cast<std::size_t>(index)];
+                const Scalar right_value = cosine *
+                    off_diagonal[static_cast<std::size_t>(index)];
+                if (std::abs(left_value) >= std::abs(shift))
+                {
+                    cosine = shift / left_value;
+                    root = std::hypot(cosine, Scalar(1));
+                    off_diagonal[static_cast<std::size_t>(index + 1)] = left_value * root;
+                    sine = Scalar(1) / root;
+                    cosine *= sine;
+                }
+                else
+                {
+                    sine = left_value / shift;
+                    root = std::hypot(sine, Scalar(1));
+                    off_diagonal[static_cast<std::size_t>(index + 1)] = shift * root;
+                    cosine = Scalar(1) / root;
+                    sine *= cosine;
+                }
+                shift = diagonal[static_cast<std::size_t>(index + 1)] - correction;
+                root = (diagonal[static_cast<std::size_t>(index)] - shift) * sine +
+                       Scalar(2) * cosine * right_value;
+                correction = sine * root;
+                diagonal[static_cast<std::size_t>(index + 1)] = shift + correction;
+                shift = cosine * root - right_value;
+            }
+            diagonal[static_cast<std::size_t>(left)] -= correction;
+            off_diagonal[static_cast<std::size_t>(left)] = shift;
+            off_diagonal[static_cast<std::size_t>(right)] = Scalar(0);
+        }
+    }
+    std::sort(diagonal.begin(), diagonal.end(), std::greater<Scalar>());
+    return diagonal;
+}
+
 } // anonymous namespace
 
 template <typename Scalar>
@@ -113,28 +388,6 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     {
         throw std::runtime_error("SVD: input matrix has zero dimensions");
     }
-
-#ifdef PLAMATRIX_WITH_LAPACK
-    int m_int = detail::checkedLapackInt(m, "SVD m");
-    int n_int = detail::checkedLapackInt(n, "SVD n");
-    Index min_mn = (m < n) ? m : n;
-
-    DenseMatrix<Scalar, Device::CPU> A_work(m, n);
-    for (Index j = 0; j < n; ++j)
-    {
-        for (Index i = 0; i < m; ++i)
-        {
-            A_work(i, j) = A(i, j);
-        }
-    }
-
-    DenseMatrix<Scalar, Device::CPU> U_full(m, m);
-    DenseMatrix<Scalar, Device::CPU> S_compact(min_mn, 1);
-    DenseMatrix<Scalar, Device::CPU> Vt(n, n);
-
-    detail::fortranGesvd(m_int, n_int, A_work.data(), S_compact.data(), U_full.data(), Vt.data());
-    return {std::move(U_full), std::move(S_compact), std::move(Vt)};
-#else
 
     // U = copy of A (m x n), we work in-place on U (columns will become left singular vectors)
     DenseMatrix<Scalar, Device::CPU> U(m, n);
@@ -159,72 +412,27 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     // Jacobi sweeps
     Scalar epsilon = jacobiTolerance<Scalar>();
 
-    for (int sweep = 0; sweep < maxJacobiSweeps; ++sweep)
+    if (n >= 64)
     {
-        Scalar max_correlation = Scalar(0);
-
-        for (Index j1 = 0; j1 < n; ++j1)
+        parallelRoundRobinJacobi(U, Vt, epsilon);
+    }
+    else
+    {
+        for (int sweep = 0; sweep < maxJacobiSweeps; ++sweep)
         {
-            for (Index j2 = j1 + 1; j2 < n; ++j2)
+            Scalar max_correlation = Scalar(0);
+            for (Index first = 0; first < n; ++first)
             {
-                // Compute column norms and dot product
-                Scalar a = Scalar(0);
-                Scalar b = Scalar(0);
-                Scalar c = Scalar(0);
-
-                for (Index i = 0; i < m; ++i)
+                for (Index second = first + 1; second < n; ++second)
                 {
-                    Scalar u_i_j1 = U(i, j1);
-                    Scalar u_i_j2 = U(i, j2);
-                    a += u_i_j1 * u_i_j1;
-                    b += u_i_j2 * u_i_j2;
-                    c += u_i_j1 * u_i_j2;
-                }
-
-                // Skip if either column pair cannot produce a stable rotation.
-                Scalar scale = a * b;
-                if (scale <= std::numeric_limits<Scalar>::min())
-                {
-                    continue;
-                }
-                const Scalar correlation = std::abs(c) / std::sqrt(scale);
-                max_correlation = std::max(max_correlation, correlation);
-                if (correlation <= epsilon)
-                {
-                    continue;
-                }
-
-                // Compute Givens rotation to zero out c
-                // Standard Jacobi: tau = (a - b) / (2*c), where a,b are diagonal entries
-                Scalar tau = (a - b) / (Scalar(2) * c);
-                Scalar t = sign(tau) / (std::abs(tau) + std::sqrt(Scalar(1) + tau * tau));
-                Scalar cs = Scalar(1) / std::sqrt(Scalar(1) + t * t);
-                Scalar sn = cs * t;
-
-                // Apply rotation to columns j1, j2 of U
-                for (Index i = 0; i < m; ++i)
-                {
-                    Scalar u_i_j1 = U(i, j1);
-                    Scalar u_i_j2 = U(i, j2);
-                    U(i, j1) = cs * u_i_j1 + sn * u_i_j2;
-                    U(i, j2) = -sn * u_i_j1 + cs * u_i_j2;
-                }
-
-                // Apply rotation to rows j1, j2 of Vt
-                for (Index k = 0; k < n; ++k)
-                {
-                    Scalar v_j1_k = Vt(j1, k);
-                    Scalar v_j2_k = Vt(j2, k);
-                    Vt(j1, k) = cs * v_j1_k + sn * v_j2_k;
-                    Vt(j2, k) = -sn * v_j1_k + cs * v_j2_k;
+                    applyOneSidedJacobiPair(
+                        U, Vt, first, second, epsilon, &max_correlation);
                 }
             }
-        }
-
-        // Check convergence
-        if (max_correlation <= epsilon)
-        {
-            break;
+            if (max_correlation <= epsilon)
+            {
+                break;
+            }
         }
     }
 
@@ -315,7 +523,6 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     return {std::move(U_full), std::move(S_compact), std::move(Vt_sorted)};
-#endif
 }
 
 // Explicit template instantiations
@@ -352,7 +559,17 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     Index p = (m < n) ? m : n;  // min(m, n)
-    Scalar epsilon = static_cast<Scalar>(1e-15);
+    Scalar matrix_scale = Scalar(0);
+    for (Index column = 0; column < n; ++column)
+    {
+        for (Index row = 0; row < m; ++row)
+        {
+            matrix_scale = std::max(matrix_scale, std::abs(R(row, column)));
+        }
+    }
+    const Scalar epsilon = std::numeric_limits<Scalar>::epsilon() *
+                           std::max(Scalar(1), matrix_scale) *
+                           static_cast<Scalar>(std::max(m, n));
 
     // Store tau for each reflector
     std::vector<Scalar> tau(p, Scalar(0));
@@ -366,9 +583,8 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
         Scalar norm_x = Scalar(0);
         for (Index i = k; i < m; ++i)
         {
-            norm_x += R(i, k) * R(i, k);
+            norm_x = std::hypot(norm_x, R(i, k));
         }
-        norm_x = std::sqrt(norm_x);
 
         if (norm_x < epsilon)
         {
@@ -393,6 +609,8 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
         tau[k] = (alpha - x0) / alpha;
 
         // Apply Householder to trailing submatrix
+        #pragma omp parallel for schedule(static) \
+            if(n - k >= 64 && !omp_in_parallel())
         for (Index j = k + 1; j < n; ++j)
         {
             // dot = v^T * R[k:m, j]  (v[0] = 1)
@@ -429,6 +647,8 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
 
         Index len = m - k;
 
+        #pragma omp parallel for schedule(static) \
+            if(m >= 128 && !omp_in_parallel())
         for (Index r = 0; r < m; ++r)
         {
             // dot = v^T * Q[r, k:m]  (v[0] = 1)
@@ -474,125 +694,14 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
         throw std::runtime_error("Eigh: input matrix must be square");
     }
 
-#ifdef PLAMATRIX_WITH_LAPACK
-    int n_int = detail::checkedLapackInt(n, "Eigh n");
-    DenseMatrix<Scalar, Device::CPU> A_work(n, n);
-    for (Index j = 0; j < n; ++j)
-    {
-        for (Index i = 0; i < n; ++i)
-        {
-            A_work(i, j) = A(i, j);
-        }
-    }
-
-    std::vector<Scalar> eigenvalues(static_cast<std::size_t>(n));
-    detail::fortranSyev(n_int, A_work.data(), eigenvalues.data());
-
+    const auto eigenvalues = symmetricEigenvaluesHouseholderQl(A);
     DenseMatrix<Scalar, Device::CPU> eigvals(n, 1);
     for (Index i = 0; i < n; ++i)
     {
-        eigvals(i, 0) = eigenvalues[static_cast<std::size_t>(n - 1 - i)];
-    }
-    return eigvals;
-#else
-
-    // Copy A to working matrix
-    DenseMatrix<Scalar, Device::CPU> A_work(n, n);
-    Scalar matrix_scale = Scalar(0);
-    for (Index j = 0; j < n; ++j)
-    {
-        for (Index i = 0; i < n; ++i)
-        {
-            A_work(i, j) = A(i, j);
-            matrix_scale = std::max(matrix_scale, std::abs(A(i, j)));
-        }
-    }
-
-    const Scalar epsilon = jacobiTolerance<Scalar>();
-    const Scalar convergence_threshold = epsilon * matrix_scale;
-    constexpr int maxSweeps = 100;
-
-    for (int sweep = 0; sweep < maxSweeps; ++sweep)
-    {
-        bool rotated = false;
-
-        for (Index p = 0; p < n - 1; ++p)
-        {
-            for (Index q = p + 1; q < n; ++q)
-            {
-                Scalar apq = A_work(p, q);
-                Scalar app = A_work(p, p);
-                Scalar aqq = A_work(q, q);
-                if (std::abs(apq) <= convergence_threshold)
-                {
-                    continue;
-                }
-                rotated = true;
-
-                // Compute Jacobi rotation
-                Scalar tau_val = (aqq - app) / (Scalar(2) * apq);
-                Scalar t = -sign(tau_val) / (std::abs(tau_val) + std::sqrt(Scalar(1) + tau_val * tau_val));
-                Scalar c = Scalar(1) / std::sqrt(Scalar(1) + t * t);
-                Scalar s = c * t;
-
-                // Update diagonal entries
-                A_work(p, p) = c * c * app + s * s * aqq - Scalar(2) * c * s * apq;
-                A_work(q, q) = s * s * app + c * c * aqq + Scalar(2) * c * s * apq;
-                A_work(p, q) = Scalar(0);
-                A_work(q, p) = Scalar(0);
-
-                // Update off-diagonal elements in rows/cols p and q
-                for (Index k = 0; k < n; ++k)
-                {
-                    if (k == p || k == q)
-                    {
-                        continue;
-                    }
-
-                    Scalar akp = A_work(k, p);
-                    Scalar akq = A_work(k, q);
-                    A_work(k, p) = c * akp - s * akq;
-                    A_work(p, k) = A_work(k, p);
-                    A_work(k, q) = s * akp + c * akq;
-                    A_work(q, k) = A_work(k, q);
-                }
-            }
-        }
-
-        if (!rotated)
-        {
-            break;
-        }
-    }
-
-    // Extract eigenvalues from diagonal
-    DenseMatrix<Scalar, Device::CPU> eigvals(n, 1);
-    for (Index i = 0; i < n; ++i)
-    {
-        eigvals(i, 0) = A_work(i, i);
-    }
-
-    // Sort eigenvalues in descending order
-    for (Index i = 0; i < n - 1; ++i)
-    {
-        Index max_idx = i;
-        for (Index j = i + 1; j < n; ++j)
-        {
-            if (eigvals(j, 0) > eigvals(max_idx, 0))
-            {
-                max_idx = j;
-            }
-        }
-        if (max_idx != i)
-        {
-            Scalar tmp = eigvals(i, 0);
-            eigvals(i, 0) = eigvals(max_idx, 0);
-            eigvals(max_idx, 0) = tmp;
-        }
+        eigvals(i, 0) = eigenvalues[static_cast<std::size_t>(i)];
     }
 
     return eigvals;
-#endif
 }
 
 // Explicit template instantiations for qr
