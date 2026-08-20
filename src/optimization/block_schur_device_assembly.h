@@ -24,7 +24,9 @@ std::vector<Scalar> assembleSchurValuesOnCuda(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross);
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology);
 
 template <typename Scalar>
 std::vector<Scalar> assembleSchurValuesOnOpenCl(
@@ -42,6 +44,15 @@ std::vector<Scalar> assembleSchurValuesOnOpenCl(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross);
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology);
+
+template <typename Scalar>
+void copyLastCudaSchurValuesToDevice(
+    Scalar* destination,
+    std::size_t value_count,
+    SchurComplementSolverWorkspace<Scalar>& workspace);
+
 
 } // namespace plamatrix::block_schur_detail

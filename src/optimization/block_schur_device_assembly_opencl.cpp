@@ -1,8 +1,11 @@
 #include "block_schur_device_assembly.h"
 
+#include "block_schur_sparse_assembly.h"
+
 #include "plamatrix/opencl/execution.h"
 
 #include <algorithm>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -82,6 +85,55 @@ std::vector<Value> padded(const std::vector<Value>& values)
 }
 
 template <typename Scalar>
+struct OpenClAssemblyState
+{
+    std::unique_ptr<opencl::CommandQueue> queue;
+    std::unique_ptr<opencl::CompiledKernel> kernel;
+    opencl::DeviceBuffer primary;
+    opencl::DeviceBuffer inverse;
+    opencl::DeviceBuffer direct;
+    opencl::DeviceBuffer cross;
+    opencl::DeviceBuffer baseKinds;
+    opencl::DeviceBuffer baseIndices;
+    opencl::DeviceBuffer blockSlots;
+    opencl::DeviceBuffer rows;
+    opencl::DeviceBuffer columns;
+    opencl::DeviceBuffer termOffsets;
+    opencl::DeviceBuffer termEliminated;
+    opencl::DeviceBuffer termLeft;
+    opencl::DeviceBuffer termRight;
+    opencl::DeviceBuffer output;
+};
+
+bool ensureBuffer(opencl::DeviceBuffer* buffer,
+                  cl_context context,
+                  cl_mem_flags flags,
+                  std::size_t bytes)
+{
+    if (buffer->size() == bytes)
+    {
+        return false;
+    }
+    *buffer = opencl::DeviceBuffer(context, flags, bytes);
+    return true;
+}
+
+template <typename Value>
+void uploadBuffer(cl_command_queue queue,
+                  opencl::DeviceBuffer* buffer,
+                  const std::vector<Value>& values)
+{
+    const std::size_t bytes = opencl::byteSize<Value>(values.size());
+    if (bytes > buffer->size())
+    {
+        throw std::out_of_range("OpenCL Schur assembly upload exceeds buffer");
+    }
+    opencl::checkOpenCl(clEnqueueWriteBuffer(
+        queue, buffer->get(), CL_FALSE, 0, bytes, values.data(),
+        0, nullptr, nullptr), "clEnqueueWriteBuffer(Schur assembly)");
+}
+
+template <typename Scalar>
 std::vector<Scalar> assemble(
     Index primary_size,
     Index eliminated_size,
@@ -97,18 +149,30 @@ std::vector<Scalar> assemble(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross)
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology)
 {
     using namespace opencl;
     requireUsableOpenClDevice();
     auto& runtime = OpenClRuntime::instance();
     requireFp64<Scalar>(runtime);
-    auto queue = CommandQueue(runtime.createQueue());
     const std::string options = std::is_same_v<Scalar, double>
         ? "-DREAL_DOUBLE=1" : std::string{};
-    cl_program program = runtime.program(
-        "plamatrix_block_schur_device_assembly", kAssemblySource, options);
-    CompiledKernel kernel(program, "assembleSchurValues");
+    auto& opaque_state = SchurComplementSolverWorkspaceAccess::deviceAssemblyState(workspace);
+    auto state = std::static_pointer_cast<OpenClAssemblyState<Scalar>>(opaque_state);
+    if (!state)
+    {
+        state = std::make_shared<OpenClAssemblyState<Scalar>>();
+        state->queue = std::make_unique<CommandQueue>(runtime.createQueue());
+        cl_program program = runtime.program(
+            "plamatrix_block_schur_device_assembly", kAssemblySource, options);
+        state->kernel = std::make_unique<CompiledKernel>(program, "assembleSchurValues");
+        opaque_state = state;
+        upload_topology = true;
+    }
+    const cl_command_queue queue = state->queue->get();
+    CompiledKernel& kernel = *state->kernel;
 
     auto primary_values = padded(primary_diagonal);
     auto inverse_values = padded(eliminated_inverse);
@@ -118,43 +182,75 @@ std::vector<Scalar> assemble(
     auto term_left_values = padded(term_left_cross);
     auto term_right_values = padded(term_right_cross);
     auto output = std::vector<Scalar>(base_kinds.size(), Scalar(0));
-    auto primary_buffer = inputVector(runtime, primary_values);
-    auto inverse_buffer = inputVector(runtime, inverse_values);
-    auto direct_buffer = inputVector(runtime, direct_values);
-    auto cross_buffer = inputVector(runtime, cross_block_values);
-    auto base_kind_buffer = inputVector(runtime, base_kinds);
-    auto base_index_buffer = inputVector(runtime, base_indices);
-    auto block_slot_buffer = inputVector(runtime, value_block_slots);
-    auto row_buffer = inputVector(runtime, local_rows);
-    auto column_buffer = inputVector(runtime, local_columns);
-    auto term_offset_buffer = inputVector(runtime, term_offsets);
-    auto term_eliminated_buffer = inputVector(runtime, term_eliminated_values);
-    auto term_left_buffer = inputVector(runtime, term_left_values);
-    auto term_right_buffer = inputVector(runtime, term_right_values);
-    auto output_buffer = inOutVector(runtime, output);
+    const auto read_only = CL_MEM_READ_ONLY;
+    ensureBuffer(&state->primary, runtime.context(), read_only,
+                 byteSize<Scalar>(primary_values.size()));
+    ensureBuffer(&state->inverse, runtime.context(), read_only,
+                 byteSize<Scalar>(inverse_values.size()));
+    ensureBuffer(&state->direct, runtime.context(), read_only,
+                 byteSize<Scalar>(direct_values.size()));
+    ensureBuffer(&state->cross, runtime.context(), read_only,
+                 byteSize<Scalar>(cross_block_values.size()));
+    uploadBuffer(queue, &state->primary, primary_values);
+    uploadBuffer(queue, &state->inverse, inverse_values);
+    uploadBuffer(queue, &state->direct, direct_values);
+    uploadBuffer(queue, &state->cross, cross_block_values);
+    const bool topology_resized =
+        ensureBuffer(&state->baseKinds, runtime.context(), read_only,
+                     byteSize<Index>(base_kinds.size())) |
+        ensureBuffer(&state->baseIndices, runtime.context(), read_only,
+                     byteSize<Index>(base_indices.size())) |
+        ensureBuffer(&state->blockSlots, runtime.context(), read_only,
+                     byteSize<Index>(value_block_slots.size())) |
+        ensureBuffer(&state->rows, runtime.context(), read_only,
+                     byteSize<Index>(local_rows.size())) |
+        ensureBuffer(&state->columns, runtime.context(), read_only,
+                     byteSize<Index>(local_columns.size())) |
+        ensureBuffer(&state->termOffsets, runtime.context(), read_only,
+                     byteSize<Index>(term_offsets.size())) |
+        ensureBuffer(&state->termEliminated, runtime.context(), read_only,
+                     byteSize<Index>(term_eliminated_values.size())) |
+        ensureBuffer(&state->termLeft, runtime.context(), read_only,
+                     byteSize<Index>(term_left_values.size())) |
+        ensureBuffer(&state->termRight, runtime.context(), read_only,
+                     byteSize<Index>(term_right_values.size()));
+    if (upload_topology || topology_resized)
+    {
+        uploadBuffer(queue, &state->baseKinds, base_kinds);
+        uploadBuffer(queue, &state->baseIndices, base_indices);
+        uploadBuffer(queue, &state->blockSlots, value_block_slots);
+        uploadBuffer(queue, &state->rows, local_rows);
+        uploadBuffer(queue, &state->columns, local_columns);
+        uploadBuffer(queue, &state->termOffsets, term_offsets);
+        uploadBuffer(queue, &state->termEliminated, term_eliminated_values);
+        uploadBuffer(queue, &state->termLeft, term_left_values);
+        uploadBuffer(queue, &state->termRight, term_right_values);
+    }
+    ensureBuffer(&state->output, runtime.context(), CL_MEM_READ_WRITE,
+                 byteSize<Scalar>(output.size()));
 
     kernelArg(kernel, 0, static_cast<cl_long>(output.size()));
     kernelArg(kernel, 1, static_cast<cl_long>(primary_size));
     kernelArg(kernel, 2, static_cast<cl_long>(eliminated_size));
-    kernelBufferArg(kernel, 3, primary_buffer);
-    kernelBufferArg(kernel, 4, inverse_buffer);
-    kernelBufferArg(kernel, 5, direct_buffer);
-    kernelBufferArg(kernel, 6, cross_buffer);
-    kernelBufferArg(kernel, 7, base_kind_buffer);
-    kernelBufferArg(kernel, 8, base_index_buffer);
-    kernelBufferArg(kernel, 9, block_slot_buffer);
-    kernelBufferArg(kernel, 10, row_buffer);
-    kernelBufferArg(kernel, 11, column_buffer);
-    kernelBufferArg(kernel, 12, term_offset_buffer);
-    kernelBufferArg(kernel, 13, term_eliminated_buffer);
-    kernelBufferArg(kernel, 14, term_left_buffer);
-    kernelBufferArg(kernel, 15, term_right_buffer);
-    kernelBufferArg(kernel, 16, output_buffer);
+    kernelBufferArg(kernel, 3, state->primary);
+    kernelBufferArg(kernel, 4, state->inverse);
+    kernelBufferArg(kernel, 5, state->direct);
+    kernelBufferArg(kernel, 6, state->cross);
+    kernelBufferArg(kernel, 7, state->baseKinds);
+    kernelBufferArg(kernel, 8, state->baseIndices);
+    kernelBufferArg(kernel, 9, state->blockSlots);
+    kernelBufferArg(kernel, 10, state->rows);
+    kernelBufferArg(kernel, 11, state->columns);
+    kernelBufferArg(kernel, 12, state->termOffsets);
+    kernelBufferArg(kernel, 13, state->termEliminated);
+    kernelBufferArg(kernel, 14, state->termLeft);
+    kernelBufferArg(kernel, 15, state->termRight);
+    kernelBufferArg(kernel, 16, state->output);
     const std::size_t global_size = output.size();
     checkOpenCl(clEnqueueNDRangeKernel(
-        queue.get(), kernel.get(), 1, nullptr, &global_size, nullptr,
+        queue, kernel.get(), 1, nullptr, &global_size, nullptr,
         0, nullptr, nullptr), "clEnqueueNDRangeKernel(Schur assembly)");
-    readVector(queue.get(), output_buffer, output);
+    readVector(queue, state->output, output);
     return output;
 }
 
@@ -176,13 +272,15 @@ std::vector<Scalar> assembleSchurValuesOnOpenCl(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross)
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology)
 {
     return assemble(
         primary_size, eliminated_size, primary_diagonal, eliminated_inverse,
         primary_cross_values, cross_values, base_kinds, base_indices,
         value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
-        term_left_cross, term_right_cross);
+        term_left_cross, term_right_cross, workspace, upload_topology);
 }
 
 template std::vector<float> assembleSchurValuesOnOpenCl(
@@ -192,7 +290,8 @@ template std::vector<float> assembleSchurValuesOnOpenCl(
     const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
-    const std::vector<Index>&, const std::vector<Index>&);
+    const std::vector<Index>&, const std::vector<Index>&,
+    SchurComplementSolverWorkspace<float>&, bool);
 template std::vector<double> assembleSchurValuesOnOpenCl(
     Index, Index, const std::vector<double>&, const std::vector<double>&,
     const std::vector<double>&, const std::vector<double>&,
@@ -200,6 +299,7 @@ template std::vector<double> assembleSchurValuesOnOpenCl(
     const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
-    const std::vector<Index>&, const std::vector<Index>&);
+    const std::vector<Index>&, const std::vector<Index>&,
+    SchurComplementSolverWorkspace<double>&, bool);
 
 } // namespace plamatrix::block_schur_detail

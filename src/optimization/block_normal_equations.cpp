@@ -373,6 +373,44 @@ void BlockNormalEquations<Scalar>::addEliminatedResidualBlock(
 }
 
 template <typename Scalar>
+void BlockNormalEquations<Scalar>::mergeFrom(const BlockNormalEquations& other)
+{
+    if (_primaryBlockCount != other._primaryBlockCount ||
+        _eliminatedBlockCount != other._eliminatedBlockCount ||
+        _primaryBlockSize != other._primaryBlockSize ||
+        _eliminatedBlockSize != other._eliminatedBlockSize)
+    {
+        throw std::invalid_argument(
+            "BlockNormalEquations::mergeFrom: block layouts must match");
+    }
+    const auto add_values = [](std::vector<Scalar>* target,
+                               const std::vector<Scalar>& source)
+    {
+        for (std::size_t index = 0; index < source.size(); ++index)
+        {
+            (*target)[index] += source[index];
+        }
+    };
+    add_values(&_primaryDiagonal, other._primaryDiagonal);
+    add_values(&_eliminatedDiagonal, other._eliminatedDiagonal);
+    add_values(&_primaryGradient, other._primaryGradient);
+    add_values(&_eliminatedGradient, other._eliminatedGradient);
+
+    for (const auto& source : other._primaryCrossBlocks)
+    {
+        auto& target = _primaryCrossBlocks[findOrCreatePrimaryCrossBlock(
+            source.rowBlock, source.columnBlock)].values;
+        add_values(&target, source.values);
+    }
+    for (const auto& source : other._crossBlocks)
+    {
+        auto& target = _crossBlocks[findOrCreateCrossBlock(
+            source.primaryBlock, source.eliminatedBlock)].values;
+        add_values(&target, source.values);
+    }
+}
+
+template <typename Scalar>
 Index BlockNormalEquations<Scalar>::primaryBlockCount() const noexcept
 {
     return _primaryBlockCount;

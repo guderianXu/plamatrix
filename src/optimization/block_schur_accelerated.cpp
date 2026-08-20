@@ -2,13 +2,18 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/opencl/iterative_solver.h"
 #include "plamatrix/opencl/runtime.h"
 #include "plamatrix/sparse/iterative_solver.h"
+
+#include "block_schur_sparse_assembly.h"
+#include "block_schur_device_assembly.h"
 
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime_api.h>
@@ -20,6 +25,19 @@ namespace plamatrix::block_schur_detail
 {
 namespace
 {
+
+#ifdef PLAMATRIX_WITH_CUDA
+template <typename Scalar>
+struct CudaSchurState
+{
+    int deviceIndex = -1;
+    std::unique_ptr<CSRMatrix<Scalar, Device::GPU>> matrix;
+    std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> rhs;
+    std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> solution;
+    std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> inverseBlocks;
+    IterativeSolverWorkspace<Scalar> solverWorkspace;
+};
+#endif
 
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> makeDenseVector(const std::vector<Scalar>& values)
@@ -66,6 +84,7 @@ SchurComplementSolverReport<Scalar> solveAcceleratedReducedSchur(
     const std::vector<std::vector<Scalar>>& inverse_diagonal_blocks,
     Index block_size,
     const SchurComplementSolverOptions<Scalar>& options,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
     std::vector<Scalar>* solution)
 {
     if (!solution)
@@ -99,7 +118,82 @@ SchurComplementSolverReport<Scalar> solveAcceleratedReducedSchur(
         static_cast<double>(options.absoluteTolerance));
     auto rhs_cpu = makeDenseVector(rhs);
     DenseMatrix<Scalar, Device::CPU> solution_cpu(matrix.rows(), 1);
-    solution_cpu.fill(Scalar(0));
+    if (options.useInitialGuess &&
+        solution->size() == static_cast<std::size_t>(matrix.rows()))
+    {
+        std::copy(solution->begin(), solution->end(), solution_cpu.data());
+    }
+    else
+    {
+        solution_cpu.fill(Scalar(0));
+    }
+
+    bool mixed_precision_used = false;
+    if constexpr (std::is_same_v<Scalar, double>)
+    {
+        if (options.useMixedPrecision &&
+            (options.linearBackend == SchurComplementLinearBackend::Cuda ||
+             options.linearBackend == SchurComplementLinearBackend::OpenCl))
+        {
+            CSRMatrix<float, Device::CPU> float_matrix(
+                matrix.rows(), matrix.cols(), matrix.nnz());
+            std::copy(matrix.rowOffsets(), matrix.rowOffsets() + matrix.rows() + 1,
+                      float_matrix.rowOffsets());
+            std::copy(matrix.colIndices(), matrix.colIndices() + matrix.nnz(),
+                      float_matrix.colIndices());
+            for (Index index = 0; index < matrix.nnz(); ++index)
+            {
+                float_matrix.values()[index] = static_cast<float>(matrix.values()[index]);
+            }
+            float_matrix.validateStructure();
+            std::vector<float> float_rhs(rhs.size());
+            std::transform(rhs.begin(), rhs.end(), float_rhs.begin(),
+                           [](double value) { return static_cast<float>(value); });
+            std::vector<std::vector<float>> float_inverse(inverse_diagonal_blocks.size());
+            for (std::size_t block = 0; block < inverse_diagonal_blocks.size(); ++block)
+            {
+                float_inverse[block].resize(inverse_diagonal_blocks[block].size());
+                std::transform(inverse_diagonal_blocks[block].begin(),
+                               inverse_diagonal_blocks[block].end(),
+                               float_inverse[block].begin(),
+                               [](double value) { return static_cast<float>(value); });
+            }
+            SchurComplementSolverOptions<float> float_options;
+            float_options.linearBackend = options.linearBackend;
+            float_options.deviceIndex = options.deviceIndex;
+            float_options.maxIterations = std::min(options.maxIterations, 200);
+            float_options.relativeTolerance = std::max(
+                1.0e-3f, static_cast<float>(options.relativeTolerance));
+            float_options.absoluteTolerance = std::max(
+                1.0e-7f, static_cast<float>(options.absoluteTolerance));
+            float_options.schurValuesOnDevice = false;
+            std::vector<float> float_solution(solution_cpu.rows(), 0.0f);
+            SchurComplementSolverWorkspace<float> float_workspace;
+            auto& persistent_float_state =
+                SchurComplementSolverWorkspaceAccess::mixedPrecisionState(workspace);
+            SchurComplementSolverWorkspaceAccess::acceleratedState(float_workspace) =
+                persistent_float_state;
+            try
+            {
+                const auto float_report = solveAcceleratedReducedSchur(
+                    float_matrix, float_rhs, float_inverse, block_size,
+                    float_options, float_workspace, &float_solution);
+                persistent_float_state =
+                    SchurComplementSolverWorkspaceAccess::acceleratedState(float_workspace);
+                if (float_report.converged)
+                {
+                    std::transform(float_solution.begin(), float_solution.end(),
+                                   solution_cpu.data(),
+                                   [](float value) { return static_cast<double>(value); });
+                    mixed_precision_used = true;
+                }
+            }
+            catch (const std::runtime_error&)
+            {
+                persistent_float_state.reset();
+            }
+        }
+    }
     const auto solve_start = std::chrono::steady_clock::now();
 
     if (options.linearBackend == SchurComplementLinearBackend::Cuda)
@@ -115,15 +209,61 @@ SchurComplementSolverReport<Scalar> solveAcceleratedReducedSchur(
         PLAMATRIX_CHECK_CUDA(cudaGetDeviceProperties(&properties, active_device));
         report.deviceName = properties.name;
 
-        auto matrix_gpu = matrix.toGpu();
-        auto rhs_gpu = rhs_cpu.toGpu();
-        auto solution_gpu = solution_cpu.toGpu();
-        auto inverse_blocks_gpu = inverse_blocks_cpu.toGpu();
-        IterativeSolverWorkspace<Scalar> workspace;
+        auto& opaque_state = SchurComplementSolverWorkspaceAccess::acceleratedState(workspace);
+        auto state = std::static_pointer_cast<CudaSchurState<Scalar>>(opaque_state);
+        const bool reusable = state && state->deviceIndex == active_device && state->matrix &&
+            state->matrix->rows() == matrix.rows() && state->matrix->nnz() == matrix.nnz();
+        if (!reusable)
+        {
+            state = std::make_shared<CudaSchurState<Scalar>>();
+            state->deviceIndex = active_device;
+            state->matrix = std::make_unique<CSRMatrix<Scalar, Device::GPU>>(
+                matrix.rows(), matrix.cols(), matrix.nnz());
+            state->rhs = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(matrix.rows(), 1);
+            state->solution = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(matrix.rows(), 1);
+            state->inverseBlocks = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(
+                inverse_blocks_cpu.rows(), 1);
+            opaque_state = state;
+        }
+        if (options.schurValuesOnDevice)
+        {
+            copyLastCudaSchurValuesToDevice(
+                detail::CSRMatrixAccess::values(*state->matrix),
+                static_cast<std::size_t>(matrix.nnz()), workspace);
+        }
+        else
+        {
+            PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+                detail::CSRMatrixAccess::values(*state->matrix), matrix.values(),
+                static_cast<std::size_t>(matrix.nnz()) * sizeof(Scalar),
+                cudaMemcpyHostToDevice));
+        }
+        if (!reusable)
+        {
+            PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+                detail::CSRMatrixAccess::colIndices(*state->matrix), matrix.colIndices(),
+                static_cast<std::size_t>(matrix.nnz()) * sizeof(Index), cudaMemcpyHostToDevice));
+            PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+                detail::CSRMatrixAccess::rowOffsets(*state->matrix), matrix.rowOffsets(),
+                static_cast<std::size_t>(matrix.rows() + 1) * sizeof(Index), cudaMemcpyHostToDevice));
+        }
+        detail::CSRMatrixAccess::completeAsyncWrite(*state->matrix, true);
+        PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+            state->rhs->data(), rhs_cpu.data(),
+            static_cast<std::size_t>(matrix.rows()) * sizeof(Scalar), cudaMemcpyHostToDevice));
+        PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+            state->solution->data(), solution_cpu.data(),
+            static_cast<std::size_t>(matrix.rows()) * sizeof(Scalar), cudaMemcpyHostToDevice));
+        PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+            state->inverseBlocks->data(), inverse_blocks_cpu.data(),
+            static_cast<std::size_t>(inverse_blocks_cpu.rows()) * sizeof(Scalar),
+            cudaMemcpyHostToDevice));
         const auto iterative_report = blockPcg(
-            matrix_gpu, rhs_gpu, solution_gpu, inverse_blocks_gpu,
-            block_size, workspace, iterative_options);
-        solution_cpu = solution_gpu.toCpu();
+            *state->matrix, *state->rhs, *state->solution, *state->inverseBlocks,
+            block_size, state->solverWorkspace, iterative_options);
+        PLAMATRIX_CHECK_CUDA(cudaMemcpy(
+            solution_cpu.data(), state->solution->data(),
+            static_cast<std::size_t>(matrix.rows()) * sizeof(Scalar), cudaMemcpyDeviceToHost));
         copyReport(iterative_report, &report);
 #else
         throw std::runtime_error(
@@ -154,6 +294,7 @@ SchurComplementSolverReport<Scalar> solveAcceleratedReducedSchur(
     report.linearSolveSeconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - solve_start).count();
     solution->assign(solution_cpu.data(), solution_cpu.data() + solution_cpu.rows());
+    report.mixedPrecisionUsed = mixed_precision_used;
     return report;
 }
 
@@ -163,6 +304,7 @@ template SchurComplementSolverReport<float> solveAcceleratedReducedSchur(
     const std::vector<std::vector<float>>&,
     Index,
     const SchurComplementSolverOptions<float>&,
+    SchurComplementSolverWorkspace<float>&,
     std::vector<float>*);
 template SchurComplementSolverReport<double> solveAcceleratedReducedSchur(
     const CSRMatrix<double, Device::CPU>&,
@@ -170,6 +312,7 @@ template SchurComplementSolverReport<double> solveAcceleratedReducedSchur(
     const std::vector<std::vector<double>>&,
     Index,
     const SchurComplementSolverOptions<double>&,
+    SchurComplementSolverWorkspace<double>&,
     std::vector<double>*);
 
 } // namespace plamatrix::block_schur_detail

@@ -1,11 +1,14 @@
 #include "block_schur_device_assembly.h"
 
+#include "block_schur_sparse_assembly.h"
+
 #include "plamatrix/core/error_check.h"
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <utility>
 
 namespace plamatrix::block_schur_detail
@@ -17,10 +20,32 @@ template <typename Value>
 class DeviceArray
 {
 public:
-    explicit DeviceArray(const std::vector<Value>& values)
-        : _count(std::max<std::size_t>(1, values.size()))
+    DeviceArray() = default;
+
+    ~DeviceArray()
     {
-        PLAMATRIX_CHECK_CUDA(cudaMalloc(&_data, _count * sizeof(Value)));
+        cudaFree(_data);
+    }
+
+    bool ensure(std::size_t count)
+    {
+        const std::size_t required = std::max<std::size_t>(1, count);
+        if (_count == required)
+        {
+            return false;
+        }
+        if (_data)
+        {
+            PLAMATRIX_CHECK_CUDA(cudaFree(_data));
+        }
+        PLAMATRIX_CHECK_CUDA(cudaMalloc(&_data, required * sizeof(Value)));
+        _count = required;
+        return true;
+    }
+
+    void upload(const std::vector<Value>& values)
+    {
+        ensure(values.size());
         if (values.empty())
         {
             PLAMATRIX_CHECK_CUDA(cudaMemset(_data, 0, sizeof(Value)));
@@ -30,17 +55,6 @@ public:
             PLAMATRIX_CHECK_CUDA(cudaMemcpy(
                 _data, values.data(), values.size() * sizeof(Value), cudaMemcpyHostToDevice));
         }
-    }
-
-    explicit DeviceArray(std::size_t count)
-        : _count(std::max<std::size_t>(1, count))
-    {
-        PLAMATRIX_CHECK_CUDA(cudaMalloc(&_data, _count * sizeof(Value)));
-    }
-
-    ~DeviceArray()
-    {
-        cudaFree(_data);
     }
 
     DeviceArray(const DeviceArray&) = delete;
@@ -54,6 +68,25 @@ public:
 private:
     Value* _data = nullptr;
     std::size_t _count = 0;
+};
+
+template <typename Scalar>
+struct CudaAssemblyState
+{
+    DeviceArray<Scalar> primary;
+    DeviceArray<Scalar> inverse;
+    DeviceArray<Scalar> primaryCross;
+    DeviceArray<Scalar> cross;
+    DeviceArray<Index> baseKinds;
+    DeviceArray<Index> baseIndices;
+    DeviceArray<Index> blockSlots;
+    DeviceArray<Index> rows;
+    DeviceArray<Index> columns;
+    DeviceArray<Index> termOffsets;
+    DeviceArray<Index> termEliminated;
+    DeviceArray<Index> termLeft;
+    DeviceArray<Index> termRight;
+    DeviceArray<Scalar> output;
 };
 
 template <typename Scalar>
@@ -135,42 +168,91 @@ std::vector<Scalar> assemble(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross)
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology)
 {
     const std::size_t value_count = base_kinds.size();
-    DeviceArray<Scalar> device_primary(primary_diagonal);
-    DeviceArray<Scalar> device_inverse(eliminated_inverse);
-    DeviceArray<Scalar> device_primary_cross(primary_cross_values);
-    DeviceArray<Scalar> device_cross(cross_values);
-    DeviceArray<Index> device_base_kinds(base_kinds);
-    DeviceArray<Index> device_base_indices(base_indices);
-    DeviceArray<Index> device_block_slots(value_block_slots);
-    DeviceArray<Index> device_rows(local_rows);
-    DeviceArray<Index> device_columns(local_columns);
-    DeviceArray<Index> device_term_offsets(term_offsets);
-    DeviceArray<Index> device_term_eliminated(term_eliminated);
-    DeviceArray<Index> device_term_left(term_left_cross);
-    DeviceArray<Index> device_term_right(term_right_cross);
-    DeviceArray<Scalar> device_output(value_count);
+    auto& opaque_state = SchurComplementSolverWorkspaceAccess::deviceAssemblyState(workspace);
+    auto state = std::static_pointer_cast<CudaAssemblyState<Scalar>>(opaque_state);
+    if (!state)
+    {
+        state = std::make_shared<CudaAssemblyState<Scalar>>();
+        opaque_state = state;
+        upload_topology = true;
+    }
+    state->primary.upload(primary_diagonal);
+    state->inverse.upload(eliminated_inverse);
+    state->primaryCross.upload(primary_cross_values);
+    state->cross.upload(cross_values);
+    const bool resized_topology = state->baseKinds.ensure(base_kinds.size()) |
+        state->baseIndices.ensure(base_indices.size()) |
+        state->blockSlots.ensure(value_block_slots.size()) |
+        state->rows.ensure(local_rows.size()) |
+        state->columns.ensure(local_columns.size()) |
+        state->termOffsets.ensure(term_offsets.size()) |
+        state->termEliminated.ensure(term_eliminated.size()) |
+        state->termLeft.ensure(term_left_cross.size()) |
+        state->termRight.ensure(term_right_cross.size());
+    if (upload_topology || resized_topology)
+    {
+        state->baseKinds.upload(base_kinds);
+        state->baseIndices.upload(base_indices);
+        state->blockSlots.upload(value_block_slots);
+        state->rows.upload(local_rows);
+        state->columns.upload(local_columns);
+        state->termOffsets.upload(term_offsets);
+        state->termEliminated.upload(term_eliminated);
+        state->termLeft.upload(term_left_cross);
+        state->termRight.upload(term_right_cross);
+    }
+    state->output.ensure(value_count);
 
     constexpr int block_size = 256;
     const int grid_size = static_cast<int>((value_count + block_size - 1) / block_size);
     assembleSchurValuesKernel<<<grid_size, block_size>>>(
         static_cast<Index>(value_count), primary_size, eliminated_size,
-        device_primary.data(), device_inverse.data(), device_primary_cross.data(),
-        device_cross.data(), device_base_kinds.data(), device_base_indices.data(),
-        device_block_slots.data(), device_rows.data(), device_columns.data(),
-        device_term_offsets.data(),
-        device_term_eliminated.data(), device_term_left.data(), device_term_right.data(),
-        device_output.data());
+        state->primary.data(), state->inverse.data(), state->primaryCross.data(),
+        state->cross.data(), state->baseKinds.data(), state->baseIndices.data(),
+        state->blockSlots.data(), state->rows.data(), state->columns.data(),
+        state->termOffsets.data(),
+        state->termEliminated.data(), state->termLeft.data(), state->termRight.data(),
+        state->output.data());
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
-    std::vector<Scalar> result(value_count);
+    return {};
+}
+
+template <typename Scalar>
+void copyLastCudaSchurValuesToDeviceImpl(
+    Scalar* destination,
+    std::size_t value_count,
+    SchurComplementSolverWorkspace<Scalar>& workspace)
+{
+    if (!destination)
+    {
+        throw std::invalid_argument("CUDA Schur destination is null");
+    }
+    auto state = std::static_pointer_cast<CudaAssemblyState<Scalar>>(
+        SchurComplementSolverWorkspaceAccess::deviceAssemblyState(workspace));
+    if (!state)
+    {
+        throw std::logic_error("CUDA Schur values have not been assembled");
+    }
     PLAMATRIX_CHECK_CUDA(cudaMemcpy(
-        result.data(), device_output.data(), value_count * sizeof(Scalar), cudaMemcpyDeviceToHost));
-    return result;
+        destination, state->output.data(), value_count * sizeof(Scalar),
+        cudaMemcpyDeviceToDevice));
 }
 
 } // namespace
+
+template <typename Scalar>
+void copyLastCudaSchurValuesToDevice(
+    Scalar* destination,
+    std::size_t value_count,
+    SchurComplementSolverWorkspace<Scalar>& workspace)
+{
+    copyLastCudaSchurValuesToDeviceImpl(destination, value_count, workspace);
+}
 
 template <typename Scalar>
 std::vector<Scalar> assembleSchurValuesOnCuda(
@@ -188,13 +270,15 @@ std::vector<Scalar> assembleSchurValuesOnCuda(
     const std::vector<Index>& term_offsets,
     const std::vector<Index>& term_eliminated,
     const std::vector<Index>& term_left_cross,
-    const std::vector<Index>& term_right_cross)
+    const std::vector<Index>& term_right_cross,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
+    bool upload_topology)
 {
     return assemble(
         primary_size, eliminated_size, primary_diagonal, eliminated_inverse,
         primary_cross_values, cross_values, base_kinds, base_indices,
         value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
-        term_left_cross, term_right_cross);
+        term_left_cross, term_right_cross, workspace, upload_topology);
 }
 
 template std::vector<float> assembleSchurValuesOnCuda(
@@ -204,7 +288,8 @@ template std::vector<float> assembleSchurValuesOnCuda(
     const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
-    const std::vector<Index>&, const std::vector<Index>&);
+    const std::vector<Index>&, const std::vector<Index>&,
+    SchurComplementSolverWorkspace<float>&, bool);
 template std::vector<double> assembleSchurValuesOnCuda(
     Index, Index, const std::vector<double>&, const std::vector<double>&,
     const std::vector<double>&, const std::vector<double>&,
@@ -212,6 +297,11 @@ template std::vector<double> assembleSchurValuesOnCuda(
     const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
     const std::vector<Index>&, const std::vector<Index>&,
-    const std::vector<Index>&, const std::vector<Index>&);
+    const std::vector<Index>&, const std::vector<Index>&,
+    SchurComplementSolverWorkspace<double>&, bool);
+template void copyLastCudaSchurValuesToDevice(
+    float*, std::size_t, SchurComplementSolverWorkspace<float>&);
+template void copyLastCudaSchurValuesToDevice(
+    double*, std::size_t, SchurComplementSolverWorkspace<double>&);
 
 } // namespace plamatrix::block_schur_detail

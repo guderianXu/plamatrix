@@ -15,6 +15,7 @@ SchurComplementSolverReport<Scalar> solveAcceleratedReducedSchur(
     const std::vector<std::vector<Scalar>>& inverse_diagonal_blocks,
     Index block_size,
     const SchurComplementSolverOptions<Scalar>& options,
+    SchurComplementSolverWorkspace<Scalar>& workspace,
     std::vector<Scalar>* solution);
 
 } // namespace plamatrix::block_schur_detail

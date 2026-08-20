@@ -41,6 +41,13 @@ void ssyev_(const char* jobz, const char* uplo,
 void dsyev_(const char* jobz, const char* uplo,
             const int* n, double* a, const int* lda,
             double* w, double* work, const int* lwork, int* info);
+
+void spotrf_(const char* uplo, const int* n, float* a, const int* lda, int* info);
+void dpotrf_(const char* uplo, const int* n, double* a, const int* lda, int* info);
+void spotrs_(const char* uplo, const int* n, const int* nrhs,
+             const float* a, const int* lda, float* b, const int* ldb, int* info);
+void dpotrs_(const char* uplo, const int* n, const int* nrhs,
+             const double* a, const int* lda, double* b, const int* ldb, int* info);
 }
 
 namespace plamatrix
@@ -182,6 +189,33 @@ void fortranSyev(int n, Scalar* A, Scalar* eigenvalues)
         oss << "Eigh: LAPACK syev did not converge, " << info << " off-diagonal elements remain";
         throw std::runtime_error(oss.str());
     }
+}
+
+template <typename Scalar>
+bool fortranPositiveDefiniteSolve(int n, Scalar* A, Scalar* b)
+{
+    const char lower = 'L';
+    const int nrhs = 1;
+    const int lda = n;
+    const int ldb = n;
+    int info = 0;
+    if constexpr (std::is_same_v<Scalar, float>)
+    {
+        spotrf_(&lower, &n, A, &lda, &info);
+        if (info == 0)
+        {
+            spotrs_(&lower, &n, &nrhs, A, &lda, b, &ldb, &info);
+        }
+    }
+    else
+    {
+        dpotrf_(&lower, &n, A, &lda, &info);
+        if (info == 0)
+        {
+            dpotrs_(&lower, &n, &nrhs, A, &lda, b, &ldb, &info);
+        }
+    }
+    return info == 0;
 }
 
 } // namespace detail

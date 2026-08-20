@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ class BlockNormalEquations;
 enum class SchurComplementLinearBackend
 {
     Cpu,
+    DenseCpu,
     Cuda,
     OpenCl,
 };
@@ -36,6 +38,12 @@ struct SchurComplementSolverOptions
     Scalar relativeTolerance = Scalar(1e-8);
     Scalar absoluteTolerance = Scalar(1e-12);
     Scalar minimumDiagonal = Scalar(1e-12);
+    /// Treat a correctly sized primary_step as an initial guess instead of clearing it.
+    bool useInitialGuess = false;
+    /// Seed a double-precision accelerated solve with a guarded float PCG pass.
+    bool useMixedPrecision = false;
+    /// Internal handoff flag for an already assembled CUDA Schur values buffer.
+    bool schurValuesOnDevice = true;
 };
 
 /// Numerical status returned by solveDampedSchurComplement().
@@ -51,6 +59,7 @@ struct SchurComplementSolverReport
     double linearSolveSeconds = 0.0;
     bool schurPatternReused = false;
     bool schurAssemblyOnDevice = false;
+    bool mixedPrecisionUsed = false;
     std::string deviceName;
     std::string message;
 };
@@ -82,6 +91,9 @@ public:
         _slotTermEliminated.clear();
         _slotTermLeftCross.clear();
         _slotTermRightCross.clear();
+        _acceleratedState.reset();
+        _mixedPrecisionState.reset();
+        _deviceAssemblyState.reset();
         _patternBuildCount = 0;
     }
 
@@ -118,6 +130,9 @@ private:
     std::vector<Index> _slotTermEliminated;
     std::vector<Index> _slotTermLeftCross;
     std::vector<Index> _slotTermRightCross;
+    std::shared_ptr<void> _acceleratedState;
+    std::shared_ptr<void> _mixedPrecisionState;
+    std::shared_ptr<void> _deviceAssemblyState;
     std::size_t _patternBuildCount = 0;
 
     friend struct block_schur_detail::SchurComplementSolverWorkspaceAccess;
@@ -201,6 +216,9 @@ public:
                                     const Scalar* residual,
                                     Index residual_size,
                                     Scalar weight = Scalar(1));
+
+    /// Deterministically accumulate another equation set with the same block layout.
+    void mergeFrom(const BlockNormalEquations& other);
 
     /// Return the number of primary variable blocks.
     Index primaryBlockCount() const noexcept;

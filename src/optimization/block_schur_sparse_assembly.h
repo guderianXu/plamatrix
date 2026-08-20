@@ -366,6 +366,27 @@ struct SchurComplementSolverWorkspaceAccess
     {
         return workspace._slotTermRightCross;
     }
+
+    template <typename Scalar>
+    static std::shared_ptr<void>& acceleratedState(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._acceleratedState;
+    }
+
+    template <typename Scalar>
+    static std::shared_ptr<void>& mixedPrecisionState(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._mixedPrecisionState;
+    }
+
+    template <typename Scalar>
+    static std::shared_ptr<void>& deviceAssemblyState(
+        SchurComplementSolverWorkspace<Scalar>& workspace)
+    {
+        return workspace._deviceAssemblyState;
+    }
 };
 
 template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
@@ -497,7 +518,7 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
                 primary_size, eliminated_size, primary_diagonal, flattened_inverse,
                 flattened_primary_cross, flattened_cross, base_kinds, base_indices,
                 value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
-                term_left_cross, term_right_cross);
+                term_left_cross, term_right_cross, workspace, !reused);
         }
         else
         {
@@ -505,13 +526,17 @@ CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(
                 primary_size, eliminated_size, primary_diagonal, flattened_inverse,
                 flattened_primary_cross, flattened_cross, base_kinds, base_indices,
                 value_block_slots, local_rows, local_columns, term_offsets, term_eliminated,
-                term_left_cross, term_right_cross);
+                term_left_cross, term_right_cross, workspace, !reused);
         }
-        if (values.size() != static_cast<std::size_t>(matrix.nnz()))
+        if (backend == SchurComplementLinearBackend::OpenCl &&
+            values.size() != static_cast<std::size_t>(matrix.nnz()))
         {
             throw std::runtime_error("Device Schur assembly returned an invalid value count");
         }
-        std::copy(values.begin(), values.end(), matrix_values);
+        if (backend == SchurComplementLinearBackend::OpenCl)
+        {
+            std::copy(values.begin(), values.end(), matrix_values);
+        }
         if (assembly_on_device)
         {
             *assembly_on_device = true;

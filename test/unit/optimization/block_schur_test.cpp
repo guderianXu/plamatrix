@@ -129,7 +129,8 @@ void expectSyntheticReference(SchurComplementLinearBackend backend)
 
     ASSERT_TRUE(report.converged) << report.message;
     EXPECT_EQ(report.linearBackend, backend);
-    if (backend != SchurComplementLinearBackend::Cpu)
+    if (backend == SchurComplementLinearBackend::Cuda ||
+        backend == SchurComplementLinearBackend::OpenCl)
     {
         EXPECT_FALSE(report.deviceName.empty());
         EXPECT_GT(report.linearSolveSeconds, 0.0);
@@ -233,6 +234,37 @@ TEST(BlockSchurTest, MultiPrimaryResidualMatchesDenseDampedNormalEquation)
     expectMultiPrimaryReference(SchurComplementLinearBackend::Cpu);
 }
 
+TEST(BlockSchurTest, DenseCpuMatchesDenseDampedNormalEquation)
+{
+    expectSyntheticReference(SchurComplementLinearBackend::DenseCpu);
+    expectMultiPrimaryReference(SchurComplementLinearBackend::DenseCpu);
+    expectAcceleratedPatternReuse(SchurComplementLinearBackend::DenseCpu);
+}
+
+TEST(BlockSchurTest, DeterministicMergeMatchesSerialAssembly)
+{
+    auto serial = makeSyntheticEquations();
+    BlockNormalEquations<double> merged(2, 2, 2, 1);
+    merged.mergeFrom(makeSyntheticEquations());
+
+    SchurComplementSolverOptions<double> options;
+    options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+    options.relativeTolerance = 1e-13;
+    options.absoluteTolerance = 1e-14;
+    std::vector<double> serial_primary;
+    std::vector<double> serial_eliminated;
+    std::vector<double> merged_primary;
+    std::vector<double> merged_eliminated;
+    const auto serial_report = solveDampedSchurComplement(
+        serial, 0.1, options, &serial_primary, &serial_eliminated);
+    const auto merged_report = solveDampedSchurComplement(
+        merged, 0.1, options, &merged_primary, &merged_eliminated);
+    ASSERT_TRUE(serial_report.converged) << serial_report.message;
+    ASSERT_TRUE(merged_report.converged) << merged_report.message;
+    EXPECT_EQ(serial_primary, merged_primary);
+    EXPECT_EQ(serial_eliminated, merged_eliminated);
+}
+
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(BlockSchurAcceleratedTest, CudaMatchesDenseDampedNormalEquation)
 {
@@ -244,6 +276,30 @@ TEST(BlockSchurAcceleratedTest, CudaMatchesDenseDampedNormalEquation)
     expectSyntheticReference(SchurComplementLinearBackend::Cuda);
     expectMultiPrimaryReference(SchurComplementLinearBackend::Cuda);
     expectAcceleratedPatternReuse(SchurComplementLinearBackend::Cuda);
+}
+
+TEST(BlockSchurAcceleratedTest, CudaMixedPrecisionFallsBackToDoubleForIllConditionedSeed)
+{
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0)
+    {
+        GTEST_SKIP() << "CUDA device is unavailable";
+    }
+    const auto equations = makeSyntheticEquations();
+    SchurComplementSolverOptions<double> options;
+    options.linearBackend = SchurComplementLinearBackend::Cuda;
+    options.maxIterations = 50;
+    options.relativeTolerance = 1e-12;
+    options.absoluteTolerance = 1e-14;
+    options.useMixedPrecision = true;
+    std::vector<double> primary_step;
+    std::vector<double> eliminated_step;
+    const auto report = solveDampedSchurComplement(
+        equations, 0.1, options, &primary_step, &eliminated_step);
+    ASSERT_TRUE(report.converged) << report.message;
+    EXPECT_FALSE(report.mixedPrecisionUsed);
+    EXPECT_NEAR(primary_step[0], -0.532196868252671, 1e-10);
+    EXPECT_NEAR(eliminated_step[0], 0.017900956933130, 1e-10);
 }
 #endif
 

@@ -11,6 +11,7 @@
 
 #include "block_schur_accelerated.h"
 #include "block_schur_cpu_solver.h"
+#include "block_schur_dense_solver.h"
 #include "block_schur_linear_algebra.h"
 #include "block_schur_sparse_assembly.h"
 
@@ -81,7 +82,11 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     const Index eliminated_size = equations._eliminatedBlockSize;
     const Index primary_dimension = primary_count * primary_size;
     const Index eliminated_dimension = eliminated_count * eliminated_size;
-    primary_step->assign(static_cast<std::size_t>(primary_dimension), Scalar(0));
+    if (!options.useInitialGuess ||
+        primary_step->size() != static_cast<std::size_t>(primary_dimension))
+    {
+        primary_step->assign(static_cast<std::size_t>(primary_dimension), Scalar(0));
+    }
     eliminated_step->assign(static_cast<std::size_t>(eliminated_dimension), Scalar(0));
 
     std::vector<Scalar> primary_diagonal = equations._primaryDiagonal;
@@ -142,48 +147,63 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
         }
     }
 
-    std::vector<std::vector<Scalar>> preconditioner_inverse(static_cast<std::size_t>(primary_count));
-    std::vector<Scalar> schur_diagonal(static_cast<std::size_t>(primary_size * primary_size));
-    std::vector<Scalar> temporary_matrix(static_cast<std::size_t>(primary_size * eliminated_size));
-    for (Index block = 0; block < primary_count; ++block)
+    std::vector<std::vector<Scalar>> preconditioner_inverse;
+    if (options.linearBackend != SchurComplementLinearBackend::DenseCpu)
     {
-        const Scalar* source = primary_diagonal.data() + block * primary_size * primary_size;
-        std::copy(source, source + primary_size * primary_size, schur_diagonal.begin());
-        for (const auto& cross : equations._crossBlocks)
+        preconditioner_inverse.resize(static_cast<std::size_t>(primary_count));
+        std::vector<std::vector<std::size_t>> primary_adjacency(
+            static_cast<std::size_t>(primary_count));
+        for (std::size_t index = 0; index < equations._crossBlocks.size(); ++index)
         {
-            if (cross.primaryBlock != block)
+            primary_adjacency[static_cast<std::size_t>(
+                equations._crossBlocks[index].primaryBlock)].push_back(index);
+        }
+        std::vector<Scalar> schur_diagonal(
+            static_cast<std::size_t>(primary_size * primary_size));
+        std::vector<Scalar> temporary_matrix(
+            static_cast<std::size_t>(primary_size * eliminated_size));
+        for (Index block = 0; block < primary_count; ++block)
+        {
+            const Scalar* source = primary_diagonal.data() + block * primary_size * primary_size;
+            std::copy(source, source + primary_size * primary_size, schur_diagonal.begin());
+            for (const std::size_t cross_index :
+                 primary_adjacency[static_cast<std::size_t>(block)])
             {
-                continue;
-            }
-            const auto& inverse = eliminated_inverse[static_cast<std::size_t>(cross.eliminatedBlock)];
-            for (Index row = 0; row < primary_size; ++row)
-            {
-                multiplyMatrixVector(inverse.data(),
-                                     eliminated_size,
-                                     eliminated_size,
-                                     cross.values.data() + row * eliminated_size,
-                                     temporary_matrix.data() + row * eliminated_size);
-            }
-            for (Index row = 0; row < primary_size; ++row)
-            {
-                for (Index col = 0; col < primary_size; ++col)
+                const auto& cross = equations._crossBlocks[cross_index];
+                const auto& inverse = eliminated_inverse[
+                    static_cast<std::size_t>(cross.eliminatedBlock)];
+                for (Index row = 0; row < primary_size; ++row)
                 {
-                    Scalar value = Scalar(0);
-                    for (Index inner = 0; inner < eliminated_size; ++inner)
+                    multiplyMatrixVector(inverse.data(),
+                                         eliminated_size,
+                                         eliminated_size,
+                                         cross.values.data() + row * eliminated_size,
+                                         temporary_matrix.data() + row * eliminated_size);
+                }
+                for (Index row = 0; row < primary_size; ++row)
+                {
+                    for (Index col = 0; col < primary_size; ++col)
                     {
-                        value += temporary_matrix[static_cast<std::size_t>(row * eliminated_size + inner)] *
-                                 cross.values[static_cast<std::size_t>(col * eliminated_size + inner)];
+                        Scalar value = Scalar(0);
+                        for (Index inner = 0; inner < eliminated_size; ++inner)
+                        {
+                            value += temporary_matrix[static_cast<std::size_t>(
+                                         row * eliminated_size + inner)] *
+                                     cross.values[static_cast<std::size_t>(
+                                         col * eliminated_size + inner)];
+                        }
+                        schur_diagonal[static_cast<std::size_t>(
+                            row * primary_size + col)] -= value;
                     }
-                    schur_diagonal[static_cast<std::size_t>(row * primary_size + col)] -= value;
                 }
             }
-        }
-        if (!invertPositiveDefinite(schur_diagonal.data(),
-                                    primary_size,
-                                    &preconditioner_inverse[static_cast<std::size_t>(block)]))
-        {
-            report.message = "Schur preconditioner block is not positive definite";
-            return report;
+            if (!invertPositiveDefinite(
+                    schur_diagonal.data(), primary_size,
+                    &preconditioner_inverse[static_cast<std::size_t>(block)]))
+            {
+                report.message = "Schur preconditioner block is not positive definite";
+                return report;
+            }
         }
     }
 
@@ -262,6 +282,31 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
     {
         report.converged = true;
     }
+    else if (options.linearBackend == SchurComplementLinearBackend::DenseCpu)
+    {
+        const auto assembly_start = std::chrono::steady_clock::now();
+        bool pattern_reused = false;
+        auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(
+            primary_count,
+            eliminated_count,
+            primary_size,
+            eliminated_size,
+            primary_diagonal,
+            eliminated_inverse,
+            equations._primaryCrossBlocks,
+            equations._crossBlocks,
+            equations._eliminatedAdjacency,
+            workspace,
+            &pattern_reused,
+            SchurComplementLinearBackend::Cpu,
+            &report.schurAssemblyOnDevice);
+        const double assembly_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - assembly_start).count();
+        report = block_schur_detail::solveReducedSchurDense(
+            schur_matrix, reduced_rhs, options, primary_step);
+        report.schurAssemblySeconds = assembly_seconds;
+        report.schurPatternReused = pattern_reused;
+    }
     else if (options.linearBackend != SchurComplementLinearBackend::Cpu)
     {
 #ifdef PLAMATRIX_WITH_CUDA
@@ -294,6 +339,7 @@ SchurComplementSolverReport<Scalar> solveDampedSchurComplement(
             preconditioner_inverse,
             primary_size,
             options,
+            workspace,
             primary_step);
         accelerated_report.schurAssemblySeconds = assembly_seconds;
         accelerated_report.schurPatternReused = report.schurPatternReused;

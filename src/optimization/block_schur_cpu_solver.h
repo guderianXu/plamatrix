@@ -22,7 +22,13 @@ SchurComplementSolverReport<Scalar> solveReducedSchurOnCpu(
     SchurComplementSolverReport<Scalar> report;
     report.linearBackend = SchurComplementLinearBackend::Cpu;
     const auto solve_start = std::chrono::steady_clock::now();
+    std::vector<Scalar> product(rhs.size(), Scalar(0));
+    apply_schur(*solution, &product);
     std::vector<Scalar> residual = rhs;
+    for (std::size_t index = 0; index < rhs.size(); ++index)
+    {
+        residual[index] -= product[index];
+    }
     report.initialResidualNorm = vectorNorm(residual);
     report.finalResidualNorm = report.initialResidualNorm;
     const Scalar tolerance = options.absoluteTolerance +
@@ -36,7 +42,7 @@ SchurComplementSolverReport<Scalar> solveReducedSchurOnCpu(
         std::vector<Scalar> preconditioned(rhs.size(), Scalar(0));
         apply_preconditioner(residual, &preconditioned);
         std::vector<Scalar> direction = preconditioned;
-        std::vector<Scalar> product(rhs.size(), Scalar(0));
+        std::fill(product.begin(), product.end(), Scalar(0));
         Scalar residual_dot = dotProduct(residual, preconditioned);
         for (int iteration = 0; iteration < options.maxIterations; ++iteration)
         {
