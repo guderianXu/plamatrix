@@ -81,6 +81,9 @@ const auto report = pcg(csr, rhs, solution, options);
 CUDA 自适应接口额外接收可复用的 `IterativeSolverWorkspace<Scalar>` 和 stream。
 `blockPcg()` 接收连续 row-major 逆对角块和显式 `block_size`，在 CUDA/OpenCL 设备上执行块
 Jacobi 预条件；逆块向量尺寸必须为 `matrix.rows() * block_size`。
+`IterativeSolverOptions::convergenceCheckInterval` 控制 CUDA 自适应求解器隔多少轮把状态同步到主机，
+默认值 1 保持逐轮检查。大于 1 时，设备仍在首个满足容差的轮次记录迭代数并冻结解，批内其余已提交轮次
+只做数值 no-op；CPU/OpenCL 只校验该值为正，不改变现有判停频率。
 固定轮数 pipeline 可使用 `cgFixedIterationsAsync()` 或 `pcgFixedIterationsAsync()`，
 随后调用 `finalizeIterativeSolverReport()`。workspace 绑定首次使用的 stream；切换或销毁
 非默认 stream 前，先同步、`closeAsyncAllocation()`，再同步一次完成有序释放。
@@ -93,4 +96,5 @@ plamatrix_benchmark --mode all --size smoke \
 ```
 
 稀疏 CUDA 行分别记录冷分配、热 workspace、计算/求解和传输时间。自适应 CG/PCG
-包含主机收敛检查，因此其计算列表示完整 GPU 求解总时间。
+包含主机收敛检查，因此其计算列表示完整 GPU 求解总时间。设置批量检查时，该时间也包含最后一个批次中
+冻结后的设备 no-op。

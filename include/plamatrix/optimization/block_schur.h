@@ -22,9 +22,13 @@ namespace plamatrix
     {
         Cpu,
         DenseCpu,
+        SparseCpu,
         Cuda,
         OpenCl,
     };
+
+    /// Return whether the built-in CPU sparse-direct Schur solver is available.
+    bool hasSparseDirectSchurSolver() noexcept;
 
     /// Controls the PCG solve of the reduced Schur complement.
     template <typename Scalar> struct SchurComplementSolverOptions
@@ -65,12 +69,15 @@ namespace plamatrix
         double choleskyFactorizationSeconds = 0.0;
         /// Time spent in the dense forward/backward triangular solves.
         double triangularSolveSeconds = 0.0;
+        /// Time spent preparing and analyzing a new sparse factorization pattern.
+        double symbolicAnalysisSeconds = 0.0;
         /// Time spent checking the final reduced-system residual.
         double residualCheckSeconds = 0.0;
         double linearSolveSeconds = 0.0;
         /// Time spent recovering eliminated-variable steps.
         double backSubstitutionSeconds = 0.0;
         bool schurPatternReused = false;
+        bool symbolicAnalysisReused = false;
         bool schurAssemblyOnDevice = false;
         bool mixedPrecisionUsed = false;
         std::string deviceName;
@@ -115,6 +122,7 @@ namespace plamatrix
             _acceleratedState.reset();
             _mixedPrecisionState.reset();
             _deviceAssemblyState.reset();
+            _sparseDirectState.reset();
             _patternBuildCount = 0;
         }
 
@@ -162,6 +170,7 @@ namespace plamatrix
         std::shared_ptr<void> _acceleratedState;
         std::shared_ptr<void> _mixedPrecisionState;
         std::shared_ptr<void> _deviceAssemblyState;
+        std::shared_ptr<void> _sparseDirectState;
         std::size_t _patternBuildCount = 0;
 
         friend struct block_schur_detail::SchurComplementSolverWorkspaceAccess;
@@ -261,8 +270,45 @@ namespace plamatrix
                                         Index residual_size,
                                         Scalar weight = Scalar(1));
 
+        /**
+         * @brief Add an already accumulated primary gradient block.
+         *
+         * `values` contains `primaryBlockSize()` finite scalar entries. This
+         * low-level entry point is intended for callers that eliminate local
+         * variables while assembling a reduced Schur system.
+         */
+        void addPrimaryGradientBlock(Index primary_block, const Scalar* values);
+
+        /**
+         * @brief Add an already accumulated primary Hessian block.
+         *
+         * `values` is a row-major square block. Diagonal blocks are accumulated
+         * directly. Off-diagonal inputs may use either block order; values are
+         * transposed when the order is normalized to the stored upper triangle.
+         */
+        void addPrimaryHessianBlock(Index row_block, Index column_block, const Scalar* values);
+
+        /**
+         * @brief Multiply non-zero primary scalar diagonals and constrain empty columns.
+         *
+         * This finalizes a pre-reduced system whose local variables were already
+         * eliminated with the same damping multiplier. `zero_diagonal` is assigned
+         * only where the accumulated scalar diagonal is exactly zero.
+         */
+        void finalizePrimaryDiagonal(Scalar multiplier, Scalar zero_diagonal = Scalar(1));
+
         /// Deterministically accumulate another equation set with the same block layout.
         void mergeFrom(const BlockNormalEquations& other);
+
+        /**
+         * @brief Accumulate a compact shard of eliminated blocks.
+         *
+         * Primary blocks use the same global layout in both equation sets. Eliminated
+         * block zero in `other` is mapped to `eliminated_block_offset` in this set.
+         * This lets parallel callers keep only their disjoint eliminated-variable
+         * range instead of replicating every eliminated block per worker.
+         */
+        void mergeEliminatedShardFrom(const BlockNormalEquations& other, Index eliminated_block_offset);
 
         /// Clear all accumulated numeric values while retaining the discovered block topology.
         void clearValues() noexcept;
@@ -318,6 +364,7 @@ namespace plamatrix
         std::vector<Scalar> _primaryGradient;
         std::vector<Scalar> _eliminatedGradient;
         std::vector<PrimaryCrossBlock> _primaryCrossBlocks;
+        std::vector<std::vector<std::size_t>> _primaryAdjacency;
         std::vector<CrossBlock> _crossBlocks;
         std::vector<std::vector<std::size_t>> _eliminatedAdjacency;
 

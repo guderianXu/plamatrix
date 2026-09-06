@@ -33,6 +33,7 @@ namespace plamatrix
             Scalar(0));
         _primaryGradient.assign(static_cast<std::size_t>(primary_block_count * primary_block_size), Scalar(0));
         _eliminatedGradient.assign(static_cast<std::size_t>(eliminated_block_count * eliminated_block_size), Scalar(0));
+        _primaryAdjacency.resize(static_cast<std::size_t>(primary_block_count));
         _eliminatedAdjacency.resize(static_cast<std::size_t>(eliminated_block_count));
     }
 
@@ -97,10 +98,11 @@ namespace plamatrix
         {
             throw std::invalid_argument("BlockNormalEquations: primary cross blocks must be upper triangular");
         }
-        for (std::size_t index = 0; index < _primaryCrossBlocks.size(); ++index)
+        auto& adjacency = _primaryAdjacency[static_cast<std::size_t>(row_block)];
+        for (const std::size_t index : adjacency)
         {
             const auto& cross = _primaryCrossBlocks[index];
-            if (cross.rowBlock == row_block && cross.columnBlock == column_block)
+            if (cross.columnBlock == column_block)
             {
                 return index;
             }
@@ -110,6 +112,7 @@ namespace plamatrix
         cross.columnBlock = column_block;
         cross.values.assign(static_cast<std::size_t>(_primaryBlockSize * _primaryBlockSize), Scalar(0));
         _primaryCrossBlocks.push_back(std::move(cross));
+        adjacency.push_back(_primaryCrossBlocks.size() - 1);
         return _primaryCrossBlocks.size() - 1;
     }
 
@@ -367,6 +370,88 @@ namespace plamatrix
         }
     }
 
+    template <typename Scalar>
+    void BlockNormalEquations<Scalar>::addPrimaryGradientBlock(Index primary_block, const Scalar* values)
+    {
+        if (primary_block < 0 || primary_block >= _primaryBlockCount || !values)
+        {
+            throw std::invalid_argument("BlockNormalEquations::addPrimaryGradientBlock: invalid input");
+        }
+        const std::size_t offset = static_cast<std::size_t>(primary_block * _primaryBlockSize);
+        for (Index index = 0; index < _primaryBlockSize; ++index)
+        {
+            const Scalar value = values[static_cast<std::size_t>(index)];
+            if (!std::isfinite(value))
+            {
+                throw std::invalid_argument("BlockNormalEquations::addPrimaryGradientBlock: value must be finite");
+            }
+            _primaryGradient[offset + static_cast<std::size_t>(index)] += value;
+        }
+    }
+
+    template <typename Scalar>
+    void BlockNormalEquations<Scalar>::addPrimaryHessianBlock(Index row_block, Index column_block, const Scalar* values)
+    {
+        if (row_block < 0 || row_block >= _primaryBlockCount || column_block < 0 ||
+            column_block >= _primaryBlockCount || !values)
+        {
+            throw std::invalid_argument("BlockNormalEquations::addPrimaryHessianBlock: invalid input");
+        }
+        const std::size_t block_values = static_cast<std::size_t>(_primaryBlockSize * _primaryBlockSize);
+        for (std::size_t index = 0; index < block_values; ++index)
+        {
+            if (!std::isfinite(values[index]))
+            {
+                throw std::invalid_argument("BlockNormalEquations::addPrimaryHessianBlock: value must be finite");
+            }
+        }
+
+        if (row_block == column_block)
+        {
+            const std::size_t offset = static_cast<std::size_t>(row_block * _primaryBlockSize * _primaryBlockSize);
+            for (std::size_t index = 0; index < block_values; ++index)
+            {
+                _primaryDiagonal[offset + index] += values[index];
+            }
+            return;
+        }
+
+        const bool ordered = row_block < column_block;
+        const Index stored_row = ordered ? row_block : column_block;
+        const Index stored_column = ordered ? column_block : row_block;
+        auto& target = _primaryCrossBlocks[findOrCreatePrimaryCrossBlock(stored_row, stored_column)].values;
+        for (Index row = 0; row < _primaryBlockSize; ++row)
+        {
+            for (Index column = 0; column < _primaryBlockSize; ++column)
+            {
+                const std::size_t target_index = static_cast<std::size_t>(row * _primaryBlockSize + column);
+                const std::size_t source_index =
+                    ordered ? target_index : static_cast<std::size_t>(column * _primaryBlockSize + row);
+                target[target_index] += values[source_index];
+            }
+        }
+    }
+
+    template <typename Scalar>
+    void BlockNormalEquations<Scalar>::finalizePrimaryDiagonal(Scalar multiplier, Scalar zero_diagonal)
+    {
+        if (!std::isfinite(multiplier) || multiplier <= Scalar(0) || !std::isfinite(zero_diagonal) ||
+            zero_diagonal <= Scalar(0))
+        {
+            throw std::invalid_argument("BlockNormalEquations::finalizePrimaryDiagonal: invalid scale");
+        }
+        for (Index block = 0; block < _primaryBlockCount; ++block)
+        {
+            const Index offset = block * _primaryBlockSize * _primaryBlockSize;
+            for (Index diagonal = 0; diagonal < _primaryBlockSize; ++diagonal)
+            {
+                Scalar& value =
+                    _primaryDiagonal[static_cast<std::size_t>(offset + diagonal * _primaryBlockSize + diagonal)];
+                value = value == Scalar(0) ? zero_diagonal : value * multiplier;
+            }
+        }
+    }
+
     template <typename Scalar> void BlockNormalEquations<Scalar>::mergeFrom(const BlockNormalEquations& other)
     {
         if (_primaryBlockCount != other._primaryBlockCount || _eliminatedBlockCount != other._eliminatedBlockCount ||
@@ -396,6 +481,48 @@ namespace plamatrix
         {
             auto& target = _crossBlocks[findOrCreateCrossBlock(source.primaryBlock, source.eliminatedBlock)].values;
             add_values(&target, source.values);
+        }
+    }
+
+    template <typename Scalar>
+    void BlockNormalEquations<Scalar>::mergeEliminatedShardFrom(const BlockNormalEquations& other,
+                                                                Index eliminated_block_offset)
+    {
+        if (_primaryBlockCount != other._primaryBlockCount || _primaryBlockSize != other._primaryBlockSize ||
+            _eliminatedBlockSize != other._eliminatedBlockSize || eliminated_block_offset < 0 ||
+            eliminated_block_offset > _eliminatedBlockCount ||
+            other._eliminatedBlockCount > _eliminatedBlockCount - eliminated_block_offset)
+        {
+            throw std::invalid_argument("BlockNormalEquations::mergeEliminatedShardFrom: incompatible block layout");
+        }
+        const auto add_values =
+            [](std::vector<Scalar>* target, std::size_t target_offset, const std::vector<Scalar>& source)
+        {
+            for (std::size_t index = 0; index < source.size(); ++index)
+            {
+                (*target)[target_offset + index] += source[index];
+            }
+        };
+        add_values(&_primaryDiagonal, 0, other._primaryDiagonal);
+        add_values(&_primaryGradient, 0, other._primaryGradient);
+        add_values(&_eliminatedDiagonal,
+                   static_cast<std::size_t>(eliminated_block_offset * _eliminatedBlockSize * _eliminatedBlockSize),
+                   other._eliminatedDiagonal);
+        add_values(&_eliminatedGradient,
+                   static_cast<std::size_t>(eliminated_block_offset * _eliminatedBlockSize),
+                   other._eliminatedGradient);
+
+        for (const auto& source : other._primaryCrossBlocks)
+        {
+            auto& target =
+                _primaryCrossBlocks[findOrCreatePrimaryCrossBlock(source.rowBlock, source.columnBlock)].values;
+            add_values(&target, 0, source.values);
+        }
+        for (const auto& source : other._crossBlocks)
+        {
+            const Index target_eliminated_block = source.eliminatedBlock + eliminated_block_offset;
+            auto& target = _crossBlocks[findOrCreateCrossBlock(source.primaryBlock, target_eliminated_block)].values;
+            add_values(&target, 0, source.values);
         }
     }
 

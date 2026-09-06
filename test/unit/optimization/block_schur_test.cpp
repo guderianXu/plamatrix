@@ -174,6 +174,54 @@ namespace plamatrix
             EXPECT_EQ(workspace.patternBuildCount(), 2u);
         }
 
+        template <typename Scalar> void expectSparseCpuEliminatesInactiveCoordinates(Scalar tolerance)
+        {
+            constexpr Index block_size = 3;
+            BlockNormalEquations<Scalar> equations(2, 0, block_size, 1);
+            const std::array<Scalar, 2 * block_size> first_jacobian{{
+                Scalar(2),
+                Scalar(0),
+                Scalar(0),
+                Scalar(0),
+                Scalar(3),
+                Scalar(0),
+            }};
+            const std::array<Scalar, 2> first_residual{{Scalar(1), Scalar(-2)}};
+            equations.addPrimaryResidualBlock(0, first_jacobian.data(), first_residual.data(), 2);
+
+            const std::array<Scalar, block_size> left_jacobian{{Scalar(0), Scalar(1), Scalar(0)}};
+            const std::array<Scalar, block_size> right_jacobian{{Scalar(2), Scalar(0), Scalar(0)}};
+            const Scalar coupled_residual = Scalar(0.5);
+            equations.addPrimaryResidualBlocks(
+                {0, 1}, {left_jacobian.data(), right_jacobian.data()}, &coupled_residual, 1);
+
+            SchurComplementSolverOptions<Scalar> options;
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            options.relativeTolerance = tolerance;
+            options.absoluteTolerance = tolerance;
+            SchurComplementSolverWorkspace<Scalar> workspace;
+            std::vector<Scalar> primary_step;
+            std::vector<Scalar> eliminated_step;
+            const auto first =
+                solveDampedSchurComplement(equations, Scalar(0), options, workspace, &primary_step, &eliminated_step);
+
+            ASSERT_TRUE(first.converged) << first.message;
+            ASSERT_EQ(primary_step.size(), 6u);
+            EXPECT_TRUE(eliminated_step.empty());
+            EXPECT_NEAR(primary_step[0], Scalar(-0.5), tolerance);
+            EXPECT_NEAR(primary_step[1], Scalar(2.0 / 3.0), tolerance);
+            EXPECT_EQ(primary_step[2], Scalar(0));
+            EXPECT_NEAR(primary_step[3], Scalar(-7.0 / 12.0), tolerance);
+            EXPECT_EQ(primary_step[4], Scalar(0));
+            EXPECT_EQ(primary_step[5], Scalar(0));
+
+            const auto second =
+                solveDampedSchurComplement(equations, Scalar(0), options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(second.converged) << second.message;
+            EXPECT_TRUE(second.schurPatternReused);
+            EXPECT_TRUE(second.symbolicAnalysisReused);
+        }
+
         TEST(BlockSchurTest, MatchesDenseDampedNormalEquation)
         {
             auto equations = makeSyntheticEquations();
@@ -259,6 +307,62 @@ namespace plamatrix
             EXPECT_TRUE(report.converged) << report.message;
         }
 
+        TEST(BlockNormalEquationsTest, PreReducedPrimaryBlocksMatchResidualAssembly)
+        {
+            BlockNormalEquations<double> residual_equations(2, 0, 2, 1);
+            const std::array<double, 4> left_jacobian{{2.0, -1.0, 0.5, 3.0}};
+            const std::array<double, 4> right_jacobian{{-0.25, 1.5, 2.0, 0.75}};
+            const std::array<double, 2> residual{{0.4, -1.2}};
+            residual_equations.addPrimaryResidualBlocks(
+                {0, 1}, {left_jacobian.data(), right_jacobian.data()}, residual.data(), 2);
+
+            std::array<double, 4> left_hessian{};
+            std::array<double, 4> right_hessian{};
+            std::array<double, 4> cross_hessian{};
+            std::array<double, 2> left_gradient{};
+            std::array<double, 2> right_gradient{};
+            for (std::size_t observation = 0; observation < 2; ++observation)
+            {
+                for (std::size_t row = 0; row < 2; ++row)
+                {
+                    left_gradient[row] += left_jacobian[observation * 2 + row] * residual[observation];
+                    right_gradient[row] += right_jacobian[observation * 2 + row] * residual[observation];
+                    for (std::size_t column = 0; column < 2; ++column)
+                    {
+                        left_hessian[row * 2 + column] +=
+                            left_jacobian[observation * 2 + row] * left_jacobian[observation * 2 + column];
+                        right_hessian[row * 2 + column] +=
+                            right_jacobian[observation * 2 + row] * right_jacobian[observation * 2 + column];
+                        cross_hessian[row * 2 + column] +=
+                            left_jacobian[observation * 2 + row] * right_jacobian[observation * 2 + column];
+                    }
+                }
+            }
+
+            BlockNormalEquations<double> reduced_equations(2, 0, 2, 1);
+            reduced_equations.addPrimaryHessianBlock(0, 0, left_hessian.data());
+            reduced_equations.addPrimaryHessianBlock(1, 1, right_hessian.data());
+            reduced_equations.addPrimaryHessianBlock(0, 1, cross_hessian.data());
+            reduced_equations.addPrimaryGradientBlock(0, left_gradient.data());
+            reduced_equations.addPrimaryGradientBlock(1, right_gradient.data());
+
+            SchurComplementSolverOptions<double> options;
+            options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+            std::vector<double> residual_step;
+            std::vector<double> residual_eliminated;
+            std::vector<double> reduced_step;
+            std::vector<double> reduced_eliminated;
+            const auto residual_report =
+                solveDampedSchurComplement(residual_equations, 0.1, options, &residual_step, &residual_eliminated);
+            const auto reduced_report =
+                solveDampedSchurComplement(reduced_equations, 0.1, options, &reduced_step, &reduced_eliminated);
+            ASSERT_TRUE(residual_report.converged) << residual_report.message;
+            ASSERT_TRUE(reduced_report.converged) << reduced_report.message;
+            EXPECT_EQ(residual_step, reduced_step);
+            EXPECT_TRUE(residual_eliminated.empty());
+            EXPECT_TRUE(reduced_eliminated.empty());
+        }
+
         TEST(BlockSchurTest, DenseCpuReportsEveryRequestedNumericalPhase)
         {
             const auto equations = makeSyntheticEquations();
@@ -297,7 +401,131 @@ namespace plamatrix
             expectAcceleratedPatternReuse(SchurComplementLinearBackend::DenseCpu);
         }
 
-        TEST(BlockSchurTest, DenseCpuSolvesParallelSizeCoupledSystemDeterministically)
+        TEST(BlockSchurTest, NativeSparseCpuSymbolicReuseIsExplicit)
+        {
+            EXPECT_TRUE(hasSparseDirectSchurSolver());
+            const auto equations = makeSyntheticEquations();
+            SchurComplementSolverOptions<double> options;
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            options.relativeTolerance = 1e-12;
+            options.absoluteTolerance = 1e-14;
+            SchurComplementSolverWorkspace<double> workspace;
+            std::vector<double> primary_step;
+            std::vector<double> eliminated_step;
+
+            const auto first =
+                solveDampedSchurComplement(equations, 0.1, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(first.converged) << first.message;
+            EXPECT_EQ(first.linearBackend, SchurComplementLinearBackend::SparseCpu);
+            EXPECT_EQ(first.preconditionerName, "none");
+            EXPECT_FALSE(first.schurPatternReused);
+            EXPECT_FALSE(first.symbolicAnalysisReused);
+            EXPECT_GE(first.symbolicAnalysisSeconds, 0.0);
+            EXPECT_GE(first.choleskyFactorizationSeconds, 0.0);
+            EXPECT_GE(first.triangularSolveSeconds, 0.0);
+
+            const auto second =
+                solveDampedSchurComplement(equations, 0.2, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(second.converged) << second.message;
+            EXPECT_TRUE(second.schurPatternReused);
+            EXPECT_TRUE(second.symbolicAnalysisReused);
+            EXPECT_DOUBLE_EQ(second.symbolicAnalysisSeconds, 0.0);
+            EXPECT_EQ(workspace.patternBuildCount(), 1u);
+
+            workspace.clear();
+            const auto after_clear =
+                solveDampedSchurComplement(equations, 0.2, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(after_clear.converged) << after_clear.message;
+            EXPECT_FALSE(after_clear.symbolicAnalysisReused);
+        }
+
+        TEST(BlockSchurTest, CachedSchurTopologyInvalidatesWhenSameEquationsGrow)
+        {
+            BlockNormalEquations<double> equations(2, 1, 1, 1);
+            const double jacobian = 1.0;
+            const double residual = -0.5;
+            equations.addResidualBlock(0, 0, &jacobian, &jacobian, &residual, 1);
+            equations.addPrimaryResidualBlock(1, &jacobian, &residual, 1);
+
+            SchurComplementSolverOptions<double> options;
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            SchurComplementSolverWorkspace<double> workspace;
+            std::vector<double> primary_step;
+            std::vector<double> eliminated_step;
+            const auto first =
+                solveDampedSchurComplement(equations, 0.1, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(first.converged) << first.message;
+            EXPECT_FALSE(first.schurPatternReused);
+
+            const auto reused =
+                solveDampedSchurComplement(equations, 0.2, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(reused.converged) << reused.message;
+            EXPECT_TRUE(reused.schurPatternReused);
+
+            equations.addResidualBlock(1, 0, &jacobian, &jacobian, &residual, 1);
+            const auto rebuilt =
+                solveDampedSchurComplement(equations, 0.2, options, workspace, &primary_step, &eliminated_step);
+            ASSERT_TRUE(rebuilt.converged) << rebuilt.message;
+            EXPECT_FALSE(rebuilt.schurPatternReused);
+            EXPECT_EQ(workspace.patternBuildCount(), 2U);
+        }
+
+        TEST(BlockSchurTest, NativeSparseCpuMatchesDenseDampedNormalEquation)
+        {
+            expectSyntheticReference(SchurComplementLinearBackend::SparseCpu);
+            expectMultiPrimaryReference(SchurComplementLinearBackend::SparseCpu);
+        }
+
+        TEST(BlockSchurTest, NativeSparseCpuSupportsFloatEquations)
+        {
+            constexpr Index block_size = 2;
+            BlockNormalEquations<float> equations(2, 0, block_size, 1);
+            const std::array<float, block_size * block_size> identity{{1.0F, 0.0F, 0.0F, 1.0F}};
+            const std::array<float, block_size> first_residual{{0.2F, -0.1F}};
+            const std::array<float, block_size> second_residual{{-0.3F, 0.4F}};
+            equations.addPrimaryResidualBlock(0, identity.data(), first_residual.data(), block_size);
+            equations.addPrimaryResidualBlock(1, identity.data(), second_residual.data(), block_size);
+            const std::array<float, block_size> first_jacobian{{0.5F, -0.25F}};
+            const std::array<float, block_size> second_jacobian{{-0.2F, 0.75F}};
+            const float coupled_residual = 0.15F;
+            equations.addPrimaryResidualBlocks(
+                {0, 1}, {first_jacobian.data(), second_jacobian.data()}, &coupled_residual, 1);
+
+            SchurComplementSolverOptions<float> options;
+            options.relativeTolerance = 1e-5F;
+            options.absoluteTolerance = 1e-7F;
+            std::vector<float> dense_primary;
+            std::vector<float> dense_eliminated;
+            options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+            const auto dense = solveDampedSchurComplement(equations, 0.01F, options, &dense_primary, &dense_eliminated);
+            ASSERT_TRUE(dense.converged) << dense.message;
+
+            std::vector<float> sparse_primary;
+            std::vector<float> sparse_eliminated;
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            const auto sparse =
+                solveDampedSchurComplement(equations, 0.01F, options, &sparse_primary, &sparse_eliminated);
+            ASSERT_TRUE(sparse.converged) << sparse.message;
+            ASSERT_EQ(sparse_primary.size(), dense_primary.size());
+            EXPECT_TRUE(dense_eliminated.empty());
+            EXPECT_TRUE(sparse_eliminated.empty());
+            for (std::size_t index = 0; index < dense_primary.size(); ++index)
+            {
+                EXPECT_NEAR(sparse_primary[index], dense_primary[index], 1e-5F);
+            }
+        }
+
+        TEST(BlockSchurTest, NativeSparseCpuEliminatesInactiveDoubleCoordinatesAtZeroDamping)
+        {
+            expectSparseCpuEliminatesInactiveCoordinates<double>(1e-12);
+        }
+
+        TEST(BlockSchurTest, NativeSparseCpuEliminatesInactiveFloatCoordinatesAtZeroDamping)
+        {
+            expectSparseCpuEliminatesInactiveCoordinates<float>(1e-5F);
+        }
+
+        TEST(BlockSchurTest, DenseAndNativeSparseCpuSolveBlockChainDeterministically)
         {
             constexpr Index block_count = 24;
             constexpr Index block_size = 6;
@@ -348,6 +576,19 @@ namespace plamatrix
             for (double value : first_primary)
             {
                 EXPECT_TRUE(std::isfinite(value));
+            }
+
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            std::vector<double> sparse_primary;
+            std::vector<double> sparse_eliminated;
+            const auto sparse =
+                solveDampedSchurComplement(equations, 0.01, options, &sparse_primary, &sparse_eliminated);
+            ASSERT_TRUE(sparse.converged) << sparse.message;
+            ASSERT_EQ(sparse_primary.size(), first_primary.size());
+            EXPECT_TRUE(sparse_eliminated.empty());
+            for (std::size_t index = 0; index < first_primary.size(); ++index)
+            {
+                EXPECT_NEAR(sparse_primary[index], first_primary[index], 1e-10);
             }
         }
 
@@ -437,6 +678,53 @@ namespace plamatrix
             ASSERT_TRUE(merged_report.converged) << merged_report.message;
             EXPECT_EQ(serial_primary, merged_primary);
             EXPECT_EQ(serial_eliminated, merged_eliminated);
+        }
+
+        TEST(BlockSchurTest, EliminatedShardMergeMatchesSerialAssembly)
+        {
+            auto serial = makeSyntheticEquations();
+            BlockNormalEquations<double> first_shard(2, 1, 2, 1);
+            addSyntheticResidual(first_shard, 0, 0, {{1.0, 2.0}}, 0.5, -1.0);
+            addSyntheticResidual(first_shard, 1, 0, {{-0.5, 1.0}}, 1.5, 0.25);
+
+            BlockNormalEquations<double> second_shard(2, 1, 2, 1);
+            addSyntheticResidual(second_shard, 0, 0, {{2.0, -1.0}}, -0.75, 2.0);
+            addSyntheticResidual(second_shard, 1, 0, {{1.25, 0.5}}, 2.0, -0.5);
+            const double primary_prior_jacobian[2] = {0.4, -0.2};
+            const double primary_prior_residual = 0.75;
+            second_shard.addPrimaryResidualBlock(0, primary_prior_jacobian, &primary_prior_residual, 1, 2.0);
+            const double eliminated_prior_jacobian = 0.8;
+            const double eliminated_prior_residual = -0.3;
+            second_shard.addEliminatedResidualBlock(0, &eliminated_prior_jacobian, &eliminated_prior_residual, 1, 1.5);
+
+            BlockNormalEquations<double> merged(2, 2, 2, 1);
+            merged.mergeEliminatedShardFrom(first_shard, 0);
+            merged.mergeEliminatedShardFrom(second_shard, 1);
+
+            SchurComplementSolverOptions<double> options;
+            options.linearBackend = SchurComplementLinearBackend::DenseCpu;
+            options.relativeTolerance = 1e-13;
+            options.absoluteTolerance = 1e-14;
+            std::vector<double> serial_primary;
+            std::vector<double> serial_eliminated;
+            std::vector<double> merged_primary;
+            std::vector<double> merged_eliminated;
+            const auto serial_report =
+                solveDampedSchurComplement(serial, 0.1, options, &serial_primary, &serial_eliminated);
+            const auto merged_report =
+                solveDampedSchurComplement(merged, 0.1, options, &merged_primary, &merged_eliminated);
+            ASSERT_TRUE(serial_report.converged) << serial_report.message;
+            ASSERT_TRUE(merged_report.converged) << merged_report.message;
+            ASSERT_EQ(serial_primary.size(), merged_primary.size());
+            ASSERT_EQ(serial_eliminated.size(), merged_eliminated.size());
+            for (std::size_t index = 0; index < serial_primary.size(); ++index)
+            {
+                EXPECT_NEAR(serial_primary[index], merged_primary[index], 1e-14);
+            }
+            for (std::size_t index = 0; index < serial_eliminated.size(); ++index)
+            {
+                EXPECT_NEAR(serial_eliminated[index], merged_eliminated[index], 1e-14);
+            }
         }
 
 #ifdef PLAMATRIX_WITH_CUDA

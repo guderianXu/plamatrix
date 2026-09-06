@@ -9,16 +9,17 @@
 - **归约与索引**：`sum/mean/min/max/argMin/argMax`、exclusive scan、按行 gather/scatter/compact
 - **矩阵分解**：原生 CPU SVD、QR、对称特征值，GPU 使用 cuSOLVER
 - **批量小矩阵**：CPU/CUDA 对称 3x3 特征分解，稳定的 8-sweep Jacobi 和重复特征空间基
-- **线性求解**：稠密 LU/cuSOLVER，以及 CPU/CUDA CSR 和 CPU-owned CSR OpenCL 上的 CG/Jacobi-PCG
+- **线性求解**：稠密 LU/cuSOLVER、原生块稀疏 Cholesky，以及 CPU/CUDA CSR 和 CPU-owned CSR
+  OpenCL 上的 CG/Jacobi-PCG
 - **稀疏矩阵**：确定性 COO→CSR、CPU/CUDA 传输、cuSPARSE SpMV/SpMM 和可复用 workspace
 - **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
 - **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
 - **OpenCL 执行与稀疏求解**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII、program cache，
   以及一次上传 CPU-owned CSR 系统的 Jacobi-PCG
-- **通用块优化**：Huber、二分块法方程、LM 阻尼、可复用 Schur CSR pattern，
+- **通用块优化**：Huber、二分块法方程、LM 阻尼、可复用 Schur CSR pattern 和块图最小度符号分析，
   多 primary 残差与直接交叉块，以及 CPU/CUDA/OpenCL 块 Jacobi-PCG；CUDA/OpenCL 在设备端装配
-  Schur 数值
+  Schur 数值，CPU 可选择原生稀疏或稠密直接求解
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
 
 > `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL PCG 接受 CPU-owned CSR 和向量，
@@ -111,7 +112,7 @@ target_link_libraries(my_project plamatrix::plamatrix)
 ```
 
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
-CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含主机收敛检查，因而
+CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含可批量执行的主机收敛检查，因而
 `kernel_only_ms` 对这两行表示完整 GPU 求解时间。
 
 | 档位 | 矩阵尺寸 |

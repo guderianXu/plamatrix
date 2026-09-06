@@ -42,7 +42,7 @@ src/                            实现文件
 ├── ops/*_workspace.cu          grow-only workspace 与 stream/status 生命周期
 ├── ops/*.cu + *_cpu.cpp        其他 GPU + CPU 运算实现
 ├── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
-└── optimization/*              多 primary 块累计、CPU 矩阵自由、可复用 CSR 拓扑、设备数值装配及块 Jacobi Schur-PCG
+└── optimization/*              多 primary 块累计、CPU 矩阵自由/原生稀疏直接解、可复用 CSR/符号拓扑、设备数值装配及块 Jacobi Schur-PCG
 ```
 
 **核心设计原则**：
@@ -509,18 +509,31 @@ CPU `spmv/spmm` 使用排序 CSR；CUDA 路径通过 cuSPARSE 执行，并由
 
 `cg()` 和 `pcg()` 接受 SPD CSR、列向量 RHS、调用方持有的初始解和
 `IterativeSolverOptions`。CPU 与 CUDA 均报告初始/最终残差、迭代数和收敛状态；
-Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口执行主机收敛检查，
+Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口可按
+`convergenceCheckInterval` 批量执行主机状态检查；设备在首次收敛时记录轮次并冻结解，避免批内继续更新。
+解/残差和搜索方向分别由融合 kernel 同时更新，减少小型 Schur 系统中的 launch 开销。
 `cgFixedIterationsAsync()/pcgFixedIterationsAsync()` 则提交固定轮数并通过显式 finalize
 读取报告。
 
 CUDA/OpenCL `blockPcg()` 使用调用方提供的 row-major 逆对角块，适合块法方程和 Schur
 约化系统；普通 `pcg()` 的标量 Jacobi 行为保持不变。
 
+CUDA Schur 数值装配对常见 3 维 eliminated block 先执行一次 `inverse * cross_row` 预变换，
+每个 CSR 标量 term 随后只需 3 项点积；其它 eliminated 尺寸保留通用双循环 kernel。设备缓冲和拓扑索引
+随 `SchurComplementSolverWorkspace` 复用。
+
 `DenseCpu` Schur 后端直接装配 row-major 下三角，不创建 CSR 或完整对称副本。每个 block slot
 由唯一线程按固定 term 顺序累计，常见 3×3 eliminated / 9×3 cross 使用固定尺寸内核和 workspace
 连续缓冲。小系统走串行左看 Cholesky；128 阶以上使用自动选择的 32/48/64 列 block 和一个持久
 OpenMP 并行区，依次执行对角 POTRF、panel TRSM 和 4×4 tiled 下三角 SYRK/GEMM 更新。算法选择
 不依赖线程数，因而一线程和多线程保持相同数值顺序。
+
+`SparseCpu` 复用同一 block slot 拓扑装配对称 CSR，并按 primary 参数块构造邻接图。原生符号阶段执行
+确定性最小度消元、生成填充块和输入值映射；数值阶段按块列执行对角 LLT、panel 右三角求解及 trailing
+块更新。workspace 持有排列、填充结构、数值因子和 RHS 缓冲；拓扑不变时只覆盖数值并重新因子化，
+拓扑变化或 `clear()` 时统一释放。Schur block slot 使用哈希去重后排序编号，消元 term 以 prefix-sum 连续表
+保存；常见 9x3/3 维路径使用固定尺寸内核。固定块内全局零行列按单位独立 pivot、零解实现有效子空间消除，
+零行对应非零 RHS 则失败；严格残差检查不通过时复用当前因子执行有限次迭代精化。该路径只依赖 C++17 和 OpenMP。
 
 ---
 

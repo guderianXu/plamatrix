@@ -1,9 +1,11 @@
 # ---- CPU sources (always compiled) ----
 target_sources(plamatrix PRIVATE
     optimization/block_normal_equations.cpp
+    optimization/block_sparse_cholesky.cpp
     optimization/block_schur.cpp
     optimization/block_schur_accelerated.cpp
     optimization/block_schur_device_assembly_stub.cpp
+    optimization/block_schur_sparse_direct.cpp
     sparse/csr_matrix.cpp
     sparse/iterative_solver_cpu.cpp
     sparse/sparse_ops_cpu.cpp

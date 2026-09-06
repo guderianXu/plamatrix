@@ -14,6 +14,7 @@
 #include "block_schur_dense_solver.h"
 #include "block_schur_linear_algebra.h"
 #include "block_schur_sparse_assembly.h"
+#include "block_schur_sparse_direct.h"
 
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime_api.h>
@@ -156,7 +157,8 @@ namespace plamatrix
         std::vector<std::vector<Scalar>> preconditioner_inverse;
         std::vector<std::vector<Scalar>> cluster_preconditioner_inverse;
         Index preconditioner_cluster_size = 1;
-        if (options.linearBackend != SchurComplementLinearBackend::DenseCpu)
+        if (options.linearBackend != SchurComplementLinearBackend::DenseCpu &&
+            options.linearBackend != SchurComplementLinearBackend::SparseCpu)
         {
             preconditioner_inverse.resize(static_cast<std::size_t>(primary_count));
             std::vector<std::vector<std::size_t>> primary_adjacency(static_cast<std::size_t>(primary_count));
@@ -480,6 +482,43 @@ namespace plamatrix
             report.schurAccumulationSeconds = accumulation_seconds;
             report.schurAssemblySeconds = assembly_seconds;
             report.schurPatternReused = pattern_reused;
+        }
+        else if (options.linearBackend == SchurComplementLinearBackend::SparseCpu)
+        {
+            const auto assembly_start = std::chrono::steady_clock::now();
+            double accumulation_seconds = 0.0;
+            double csr_conversion_seconds = 0.0;
+            auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(primary_count,
+                                                                            eliminated_count,
+                                                                            primary_size,
+                                                                            eliminated_size,
+                                                                            primary_diagonal,
+                                                                            eliminated_inverse,
+                                                                            equations._primaryCrossBlocks,
+                                                                            equations._crossBlocks,
+                                                                            equations._eliminatedAdjacency,
+                                                                            workspace,
+                                                                            &report.schurPatternReused,
+                                                                            options.linearBackend,
+                                                                            &report.schurAssemblyOnDevice,
+                                                                            &accumulation_seconds,
+                                                                            &csr_conversion_seconds);
+            const double assembly_seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - assembly_start).count();
+            auto sparse_report = block_schur_detail::solveReducedSchurSparseDirect(
+                schur_matrix,
+                reduced_rhs,
+                options,
+                primary_size,
+                block_schur_detail::SchurComplementSolverWorkspaceAccess::sparseDirectState(workspace),
+                primary_step);
+            sparse_report.schurAssemblySeconds = assembly_seconds;
+            sparse_report.smallBlockInverseSeconds = small_block_inverse_seconds;
+            sparse_report.schurAccumulationSeconds = accumulation_seconds;
+            sparse_report.csrConversionSeconds = csr_conversion_seconds;
+            sparse_report.schurPatternReused = report.schurPatternReused;
+            sparse_report.schurAssemblyOnDevice = false;
+            report = std::move(sparse_report);
         }
         else if (options.linearBackend != SchurComplementLinearBackend::Cpu)
         {
