@@ -369,11 +369,14 @@ namespace plamatrix::vulkan
                          reductionReadback,
                          count);
 
+        bool hasPendingDirection = false;
         for (int iteration = 0; !report.converged && iteration < options.maxIterations; ++iteration)
         {
             if (!std::isfinite(rho) || rho <= 0.0)
                 throw std::runtime_error("Vulkan PCG breakdown in residual");
-            context.begin();
+            if (!hasPendingDirection)
+                context.begin();
+            hasPendingDirection = false;
             dispatch(context,
                      pipelines.spmv,
                      {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
@@ -420,6 +423,9 @@ namespace plamatrix::vulkan
             if (report.converged)
                 break;
 
+            if (report.iterations >= options.maxIterations)
+                break;
+
             if (check)
                 context.begin();
             dispatch(context,
@@ -447,7 +453,7 @@ namespace plamatrix::vulkan
                      groupsFor(count),
                      &directionPush,
                      sizeof(directionPush));
-            context.submitAndWait();
+            hasPendingDirection = true;
             rho = nextRho;
         }
 
