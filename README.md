@@ -1,284 +1,292 @@
 # PlaMatrix
 
-面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP)、CUDA GPU 加速，以及可选的 OpenCL
-和 Vulkan Compute 运行时。
+PlaMatrix 是一个面向摄影测量、点云和稀疏优化工作负载的 C++17 矩阵库。它提供统一的 CPU/CUDA
+矩阵接口，并为 OpenCL 和 Vulkan Compute 提供专用的 CSR Jacobi-PCG 路径。项目最初服务于
+[PlaScan](https://github.com/guderianXu/plascan)，也可以作为独立 CMake 库集成。
 
-## 特性
+> **项目状态：** 当前版本为 `0.1.0`，处于活跃开发阶段。CPU/CUDA 矩阵 API 已覆盖主要功能；
+> OpenCL/Vulkan 目前聚焦稀疏迭代求解。`0.x` 阶段公开 API 仍可能随性能和下游需求调整。
 
-- **密集矩阵**：矩阵乘法、逐元素加减乘除、标量变换、绝对值、平方根、截断和转置
-- **归约与索引**：`sum/mean/min/max/argMin/argMax`、exclusive scan、按行 gather/scatter/compact
-- **矩阵分解**：原生 CPU SVD、QR、对称特征值，GPU 使用 cuSOLVER
-- **批量小矩阵**：CPU/CUDA 对称 3x3 特征分解，稳定的 8-sweep Jacobi 和重复特征空间基
-- **线性求解**：稠密 LU/cuSOLVER、原生块稀疏 Cholesky，以及 CPU/CUDA CSR 和 CPU-owned CSR
-  OpenCL 上的 CG/Jacobi-PCG
-- **稀疏矩阵**：确定性 COO→CSR、CPU/CUDA 传输、cuSPARSE SpMV/SpMM 和可复用 workspace
-- **小向量数学**：`Vec3<T>` 算术、数组转换、点积、叉积、范数、归一化和有限性检查
-- **点云专用**：Rodrigues 旋转矩阵、4×4 刚体变换、批量点变换、协方差矩阵
-- **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
-- **OpenCL 执行与稀疏求解**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII、program cache，
-  以及一次上传 CPU-owned CSR 系统的 Jacobi-PCG
-- **Vulkan Compute 稀疏求解**：可选 Vulkan 1.1 Compute runtime、SPIR-V shader 和 float32 CPU-owned CSR
-  Jacobi-PCG，可与 OpenCL 使用相同输入和收敛条件进行对比
-- **通用块优化**：Huber、二分块法方程、LM 阻尼、可复用 Schur CSR pattern 和块图最小度符号分析，
-  多 primary 残差与直接交叉块，以及 CPU/CUDA/OpenCL 块 Jacobi-PCG；CUDA/OpenCL 在设备端装配
-  Schur 数值，CPU 可选择原生稀疏或稠密直接求解
-- **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
+## 目录
 
-> `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL/Vulkan PCG 接受 CPU-owned CSR
-> 和向量，在一次调用内上传并求解。GEMM、SVD 和通用 OpenCL/Vulkan 矩阵容器尚未提供。
+- [适用场景](#适用场景)
+- [后端能力](#后端能力)
+- [五分钟构建](#五分钟构建)
+- [最小示例](#最小示例)
+- [集成到其他项目](#集成到其他项目)
+- [构建选项](#构建选项)
+- [测试与基准](#测试与基准)
+- [开发者指南](#开发者指南)
+- [当前边界](#当前边界)
+- [贡献与许可证](#贡献与许可证)
 
-## 快速开始
+## 适用场景
 
-**新电脑从零搭建？** 先看 [编译指南](docs/build.md)，包含 CUDA 驱动安装、CMake 升级、Google Test 安装、CPU-only 构建等完整步骤。
+PlaMatrix 适合需要以下能力的 C++ 项目：
 
-### 编译
+- 列优先的 `DenseMatrix`，以及显式的 CPU/CUDA 数据传输；
+- COO/CSR 稀疏矩阵、确定性 COO→CSR、SpMV、SpMM 和 CG/Jacobi-PCG；
+- GEMM、LU 求解、SVD、QR、对称特征分解和批量 3×3 特征分解；
+- `Vec3<T>`、Rodrigues 旋转、刚体变换、批量点变换和协方差；
+- 鲁棒损失、LM 阻尼、块法方程、Schur 补和块 Jacobi-PCG；
+- 可复用 CUDA workspace、异步 stream API 和 CPU OpenMP 并行；
+- 在同一 CSR、初值和收敛条件下对比 OpenCL 与 Vulkan Compute。
+
+核心设计有三个原则：
+
+1. **数据位置显式可见。** `Device::CPU` / `Device::GPU` 是编译期类型，`toCpu()` / `toGpu()`
+   明确表示传输，不隐藏昂贵拷贝。
+2. **存储与数值语义稳定。** 密集矩阵采用列优先布局；稀疏结构会验证边界、排序和有限性。
+3. **优化必须可复现。** 测试覆盖 CPU/GPU 一致性，基准分别报告冷启动、热路径和设备执行时间。
+
+## 后端能力
+
+| 后端 | 当前范围 | 主要依赖 |
+|------|----------|----------|
+| CPU | 密集/稀疏运算、分解、求解、点云运算、块 Schur/LM | OpenMP |
+| CUDA | CPU 功能的主要 GPU 路径、cuBLAS/cuSOLVER/cuSPARSE、异步 workspace | CUDA Toolkit |
+| OpenCL | GPU 枚举与运行时、CPU-owned CSR 的 float/double Jacobi-PCG、Schur 数值装配 | OpenCL 1.2 |
+| Vulkan | Vulkan 1.1 Compute 运行时、CPU-owned CSR 的 float32 Jacobi-PCG | Vulkan 1.1、`glslangValidator` |
+
+OpenCL/Vulkan 并不是通用矩阵容器后端。`DenseMatrix` / `CSRMatrix` 的持久设备类型目前仍是
+CPU/CUDA；OpenCL/Vulkan 求解器在单次调用内上传 CPU-owned CSR 和向量。
+
+## 五分钟构建
+
+基础要求：
+
+- CMake 3.18 或更高版本；
+- 支持 C++17 的编译器；
+- OpenMP；
+- Google Test（仅在构建测试时需要）。
+
+第一次构建建议从确定性的 CPU 配置开始：
 
 ```bash
 git clone https://github.com/guderianXu/plamatrix.git
 cd plamatrix
-mkdir build && cd build
-cmake .. -DPLAMATRIX_BUILD_TESTS=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
-cmake --build . -j$(nproc)
+
+cmake -S . -B build/cpu \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPLAMATRIX_WITH_CUDA=OFF \
+  -DPLAMATRIX_WITH_OPENCL=OFF \
+  -DPLAMATRIX_WITH_VULKAN=OFF \
+  -DPLAMATRIX_BUILD_TESTS=ON \
+  -DPLAMATRIX_BUILD_BENCHMARKS=ON
+cmake --build build/cpu --parallel
+ctest --test-dir build/cpu --output-on-failure
 ```
 
-**无 NVIDIA GPU？** 加 `-DPLAMATRIX_WITH_CUDA=OFF` 即可 CPU-only 编译。
+启用 CUDA：
 
-### CMake 选项
+```bash
+cmake -S . -B build/cuda \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPLAMATRIX_WITH_CUDA=ON \
+  -DPLAMATRIX_CUDA_ARCHITECTURES=89 \
+  -DPLAMATRIX_BUILD_TESTS=ON \
+  -DPLAMATRIX_BUILD_BENCHMARKS=ON
+cmake --build build/cuda --parallel
+ctest --test-dir build/cuda --output-on-failure
+```
 
-| 选项 | 默认值 | 说明 |
-|------|--------|------|
-| `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
-| `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
-| `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；OpenCL 1.2 SDK/loader 未找到且未显式要求时自动关闭 |
-| `PLAMATRIX_WITH_VULKAN` | `OFF` | 启用 Vulkan 1.1 Compute；需要 Vulkan SDK/loader 和 `glslangValidator` |
-| `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
-| `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |
-| `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 |
-| `PLAMATRIX_BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
+`89` 只是 Ada GPU 的示例。请按目标设备设置架构，或省略该选项使用项目默认值
+`75;86;89`。完整依赖安装和平台说明见[编译指南](docs/build.md)。
 
-独立顶层构建时仍兼容 `BUILD_TESTS` / `BUILD_BENCHMARKS` 短名；作为子项目集成时优先使用 `PLAMATRIX_BUILD_*` 选项。
+## 最小示例
 
-### 第一个程序
+下面的程序只使用 CPU 路径，因此在所有构建组合下都可以运行：
 
 ```cpp
+#include <iostream>
+
 #include <plamatrix/plamatrix.h>
-using namespace plamatrix;
 
 int main()
 {
-    // 创建 1000×1000 的 CPU 矩阵
-    DenseMatrix<float, Device::CPU> A(1000, 1000);
-    A.fill(1.0f);
+    using namespace plamatrix;
 
-    // 转移到 GPU，执行矩阵乘法
-    auto A_gpu = A.toGpu();
-    auto C_gpu = gemm(A_gpu, A_gpu);
+    DenseMatrix<double, Device::CPU> matrix(2, 2);
+    DenseMatrix<double, Device::CPU> rhs(2, 1);
+    matrix(0, 0) = 4.0;
+    matrix(0, 1) = 1.0;
+    matrix(1, 0) = 1.0;
+    matrix(1, 1) = 3.0;
+    rhs(0, 0) = 1.0;
+    rhs(1, 0) = 2.0;
 
-    // 取回 CPU
-    auto C = C_gpu.toCpu();
-    return 0;
+    const auto solution = solve(matrix, rhs);
+    std::cout << solution(0, 0) << ' ' << solution(1, 0) << '\n';
 }
 ```
 
-### 集成到你的项目
+启用 CUDA 后，显式传输和运算保持相同风格：
 
-**方式一：安装后 find_package**
-```bash
-cd build && cmake --install . --prefix /your/install/path
-```
-```cmake
-find_package(plamatrix REQUIRED)
-target_link_libraries(my_project plamatrix::plamatrix)
+```cpp
+auto matrix_gpu = matrix_cpu.toGpu();
+auto product_gpu = gemm(matrix_gpu, matrix_gpu);
+auto product_cpu = product_gpu.toCpu();
 ```
 
-**方式二：直接 add_subdirectory**
-```cmake
-add_subdirectory(plamatrix)
-target_link_libraries(my_project plamatrix::plamatrix)
-```
+更多完整程序位于 [`docs/examples/`](docs/examples/)。
 
-## 性能基准
+## 集成到其他项目
+
+### 安装后使用
 
 ```bash
-# CPU 对比 (串行 vs 多线程)
-./benchmark/plamatrix_benchmark --mode cpu --size medium
-
-# 完整对比 (CPU + GPU)
-./benchmark/plamatrix_benchmark --mode all --size large --output report.md
-
-# 快速 smoke 或只跑指定 case
-./benchmark/plamatrix_benchmark --mode cpu --size smoke --case gemm,covariance
-
-# 稀疏转换、乘法和迭代求解专项
-./benchmark/plamatrix_benchmark --mode all --size smoke \
-  --case coo_to_csr,spmv,spmm,cg,pcg
-
-# OpenCL/Vulkan 相同 CSR-PCG 工作负载对比（参数为矩阵规模）
-./benchmark/plamatrix_backend_compare 4096
-# 多规模大矩阵套件
-./benchmark/plamatrix_backend_compare --suite
-# 自定义规模
-./benchmark/plamatrix_backend_compare --sizes 4096,16384,65536,262144,1048576
-# 二维五点、三维七点 stencil
-./benchmark/plamatrix_backend_compare --case stencil2d --sizes 64,128,256
-./benchmark/plamatrix_backend_compare --case stencil3d --sizes 16,24,32
-# BA Schur 相机块拓扑（参数为相机数量，每个相机 6 个变量）
-./benchmark/plamatrix_backend_compare --case ba_schur --sizes 32,64,128,256
-# MVS 空间邻域 + 跨视图可见性拓扑（参数为影像边长）
-./benchmark/plamatrix_backend_compare --case mvs_visibility --sizes 64,128,256
-# 直接比较真实的、已经阻尼为正定的 CSR MatrixMarket 文件
-./benchmark/plamatrix_backend_compare --matrix-market /path/to/ba_schur.mtx
+cmake --install build/cpu --prefix "$PWD/build/install"
 ```
 
-`--suite` 会依次运行一维三对角、二维/三维 stencil、BA Schur 相机块图和 MVS visibility 图，
-输出中的 `dimension` 是展开后的标量维度，`nnz` 是实际 CSR 非零元数量。`ba_schur` 的参数是相机数，
-每个相机展开为 6 个标量变量；其它二维/三维场景的参数是网格边长。内置 BA/MVS 场景保持了 PlaScan
-中常见的稀疏拓扑和不规则行长度，所有内置场景使用确定性的非均匀右端项，避免全 1 向量形成过于容易的
-特征方向；矩阵数值仍是确定性合成值。要测量真实工程数据，把已经完成阻尼、适合
-Jacobi-PCG 的 CSR 矩阵导出为 MatrixMarket coordinate real general/symmetric 文件后使用
-`--matrix-market`。当前 MatrixMarket 输入必须是非空方阵，且矩阵应为正定或经过 LM damping。
-PlaScan 当前 MVS 主链不持久化 CSR 文件，因此 `mvs_visibility` 用的是同样的空间邻域和跨视图连接形态；
-真实 MVS 数据应通过 MatrixMarket 入口接入。
-
-该基准还会输出 Vulkan 的 `command_submissions`、`gpu_ms`、`barrier_count`、`spmv_kernel` 和
-`cold_descriptor_set_allocations`，分别用于观察显式 queue submit/fence wait、GPU 实际执行时间、记录的
-buffer 依赖屏障数量以及冷启动时 descriptor set 的创建数量；OpenCL 的该列固定为 `0`，仅表示当前未暴露
-同等统计。`cold_ms` 包含首次工作区和 shader 路径，`warm_median_ms` 是工作区复用后的端到端 PCG 时间。
-使用 `--convergence-interval N` 可以批量执行 N 次 PCG 迭代后再检查收敛；`gpu_ms` 与 `warm_median_ms`
-的差值可用于区分 GPU 执行和主机提交/等待开销。
-Vulkan 会在设备支持 subgroup arithmetic 且 CSR 平均行长达到 `max(16, subgroupSize / 2)` 时自动选择
-subgroup-per-row SpMV；短行矩阵继续使用 scalar-per-row 内核。上传、初始残差与容差初始化、首批 PCG
-迭代记录在同一个 command buffer 中，只在批次边界读取 GPU 状态。对不超过 64 KiB 的解向量，结果回读
-也合并到批次提交中；更大的解向量保留独立最终下载，避免批量收敛检查重复传输大块数据。可设置
-`PLAMATRIX_VULKAN_SPMV=auto|scalar|subgroup` 固定策略，用于复现实验或设备调优。
-
-CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
-CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含可批量执行的主机收敛检查，因而
-`kernel_only_ms` 对这两行表示完整 GPU 求解时间。
-
-| 档位 | 矩阵尺寸 |
-|------|----------|
-| smoke/tiny | 16, 32 |
-| small | 256, 512, 1024, 2048 |
-| medium | 1024, 2048, 4096, 8192 |
-| large | 4096, 8192, 12288, 16384 |
-
-## API 概览
-
-### 矩阵类型
-```cpp
-DenseMatrix<float, Device::CPU>  A(rows, cols);   // CPU 密集矩阵
-DenseMatrix<float, Device::GPU>  B(rows, cols);   // GPU 密集矩阵
-COOMatrix<float, Device::CPU>    coo(rows, cols); // COO 稀疏矩阵
-CSRMatrix<float, Device::CPU>    csr(rows, cols, nnz); // CSR 稀疏矩阵
+```cmake
+find_package(plamatrix 0.1 CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE plamatrix::plamatrix)
 ```
 
-### 基本运算
-```cpp
-auto C = gemm(A, B);     // 矩阵乘法 (原生 CPU / cuBLAS)
-auto D = add(A, B);      // 逐元素加法
-auto H = hadamardMultiply(A, B); // 逐元素乘法；A/B 必须完全同形，不做广播
-auto M = mean(A, ReductionAxis::Columns); // 按行归约，得到 1 x A.cols()
-auto E = A.transpose();  // 转置
-auto F = add(2.0f * A, B); // CPU 标量乘加
+配置使用方项目时，将 `build/install` 加入 `CMAKE_PREFIX_PATH`。
 
-// GPU 热循环可复用输出矩阵并异步提交
-cudaStream_t stream = nullptr;
-DenseMatrix<float, Device::GPU> C_gpu(A_gpu.rows(), B_gpu.cols());
-gemmAsync(A_gpu, B_gpu, C_gpu, stream);
-PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
+### 作为源码子目录使用
+
+```cmake
+set(PLAMATRIX_BUILD_TESTS OFF CACHE BOOL "")
+set(PLAMATRIX_BUILD_BENCHMARKS OFF CACHE BOOL "")
+add_subdirectory(external/plamatrix)
+target_link_libraries(my_target PRIVATE plamatrix::plamatrix)
 ```
 
-### 高级运算
-```cpp
-auto [U, S, Vt] = svd(A);           // 奇异值分解
-auto [Q, R] = qr(A);                // QR 分解
-auto eig = eigh(A);                 // 对称特征值
-auto X = solve(A, b);               // 线性求解 Ax = b
+PlaMatrix 的公开头文件位于 [`include/plamatrix/`](include/plamatrix/)，聚合入口是
+`<plamatrix/plamatrix.h>`。
 
-// 每行 [xx, xy, xz, yy, yz, zz]，返回 N x 3 特征值和 N x 9 特征向量
-auto eig3 = symmetricEigh3x3Batched(compact_symmetric_matrices);
+## 构建选项
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `PLAMATRIX_WITH_CUDA` | 检测到 Toolkit 时 `ON` | CUDA、cuBLAS、cuSOLVER 和 cuSPARSE 路径 |
+| `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 目标架构列表 |
+| `PLAMATRIX_WITH_OPENCL` | `ON` | OpenCL 1.2；未显式指定且依赖缺失时自动关闭 |
+| `PLAMATRIX_WITH_VULKAN` | `OFF` | Vulkan 1.1 Compute 和 SPIR-V shader |
+| `PLAMATRIX_USE_FLOAT` | `ON` | 构建 float32 显式实例化 |
+| `PLAMATRIX_USE_DOUBLE` | `ON` | 构建 float64 显式实例化 |
+| `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建 Google Test 测试 |
+| `PLAMATRIX_BUILD_BENCHMARKS` | `OFF` | 构建性能和后端对比工具 |
+
+独立顶层构建兼容 `BUILD_TESTS` / `BUILD_BENCHMARKS` 短名。作为子项目时应使用带
+`PLAMATRIX_` 前缀的选项，避免污染父项目配置。
+
+运行时设备选择：
+
+| 环境变量 | 作用 |
+|----------|------|
+| `PLAMATRIX_OPENCL_DEVICE_INDEX` | 选择枚举得到的 OpenCL GPU；`-1` 表示自动选择 |
+| `PLAMATRIX_OPENCL_DEVICE` | 按厂商和设备名的子串选择 OpenCL GPU |
+| `PLAMATRIX_VULKAN_DEVICE_INDEX` | 选择 Vulkan 物理设备，默认 `0` |
+| `PLAMATRIX_VULKAN_SPMV` | `auto`、`scalar` 或 `subgroup`，用于覆盖 Vulkan SpMV 策略 |
+
+## 测试与基准
+
+### 测试
+
+```bash
+cmake --build build/cpu --parallel
+ctest --test-dir build/cpu --output-on-failure
 ```
 
-### 索引与紧缩
-```cpp
-auto offsets = exclusiveScan(counts);       // 按列优先线性顺序扫描
-auto picked = gatherRows(points, indices);  // 保留 indices 顺序和重复项
-scatterRows(values, indices, output);       // 重复目标由最低源行获胜
-auto compacted = compactRows(points, mask); // 非零 mask，稳定返回精确行数
+测试按模块拆分为密集运算、稀疏运算、分解、索引、归约、优化、OpenCL/Vulkan 运行时和集成测试。
+GPU 专属测试只应在相应后端和可用设备上报告通过；跳过测试不代表该设备路径已验证。
+
+### 通用算子基准
+
+```bash
+./build/cpu/benchmark/plamatrix_benchmark --list
+./build/cpu/benchmark/plamatrix_benchmark \
+  --mode cpu --size small --case gemm,spmv,pcg \
+  --output build/cpu/benchmark-report.md
 ```
 
-GPU 同步重载会等待给定 stream 并报告设备端错误。异步 indexing 和批量 3x3 特征分解使用
-调用方持有的 workspace；等待 stream 后必须调用对应 `checkStatus()`。归约异步接口没有
-`checkStatus()`，但同样要求输入、输出和 workspace 在 stream 完成前保持有效。
+### OpenCL/Vulkan CSR-PCG 对比
 
-### 点云运算
-```cpp
-Vec3<double> a(std::array<double, 3>{1.0, 2.0, 3.0});
-Vec3<double> b{4.0, 5.0, 6.0};
-auto unit_normal = normalized(cross(a, b), 1.0e-12);
-bool valid = isFinite(unit_normal);
+```bash
+cmake -S . -B build/vulkan \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPLAMATRIX_WITH_CUDA=OFF \
+  -DPLAMATRIX_WITH_OPENCL=ON \
+  -DPLAMATRIX_WITH_VULKAN=ON \
+  -DPLAMATRIX_BUILD_TESTS=ON \
+  -DPLAMATRIX_BUILD_BENCHMARKS=ON
+cmake --build build/vulkan --parallel
 
-auto R = rotationMatrix(axis, angle);    // Rodrigues 旋转矩阵
-auto T = rigidTransform(R, translation); // 4×4 刚体变换
-auto pts_t = transformPoints(T, points); // 批量点变换
-auto cov = covarianceMatrix(points);     // 协方差矩阵
-
-// GPU 点云热循环可复用输出矩阵并异步提交
-DenseMatrix<float, Device::GPU> pts_out(pts_gpu.rows(), 3);
-DenseMatrix<float, Device::GPU> cov_out(3, 3);
-GpuCovarianceWorkspace<float> cov_workspace;
-transformPointsAsync(T_gpu, pts_gpu, pts_out, stream);
-covarianceMatrixAsync(pts_gpu, cov_out, cov_workspace, stream);
+./build/vulkan/benchmark/plamatrix_backend_compare --suite --convergence-interval 8
+./build/vulkan/benchmark/plamatrix_backend_compare \
+  --matrix-market /path/to/damped-positive-definite.mtx \
+  --convergence-interval 8
 ```
 
-### 设备传输
-```cpp
-auto A_gpu = A_cpu.toGpu();  // CPU → GPU (触发 cudaMemcpy)
-auto A_cpu = A_gpu.toCpu();  // GPU → CPU (触发 cudaMemcpy)
-auto pinned = DenseMatrix<float, Device::CPU>::pinned(A_cpu.rows(), A_cpu.cols());
-auto B_gpu = pinned.toGpuAsync(stream); // 异步传输，调用方负责同步 stream
+内置套件包含一维三对角、二维/三维 stencil、BA Schur 相机块图和 MVS visibility 图。
+MatrixMarket 输入必须是非空方阵，并且应为正定矩阵或已完成 LM damping。
+
+性能结论应同时记录硬件、驱动、构建类型、矩阵维度、`nnz` 和完整命令。`gpu_ms` 是 Vulkan
+timestamp 得到的设备执行时间，`warm_median_ms` 是包含提交、同步和传输的热路径端到端时间；
+两者不能互相替代。测量时应关闭其他 CPU/GPU 重负载，并交替运行待比较版本。
+
+Vulkan PCG 当前会批量提交迭代，将标量递推和收敛状态保留在 GPU；长行 CSR 可自动选择
+subgroup-per-row SpMV。小解向量会在状态批次中同步回读，大解向量使用独立最终回读，
+以避免多批次重复传输。实现和统计字段见[架构文档](docs/architecture.md)与
+[编译指南](docs/build.md)。
+
+## 开发者指南
+
+开始修改前建议按以下顺序阅读：
+
+1. [`docs/architecture.md`](docs/architecture.md)：模块边界、存储布局、设备路径和内存语义；
+2. 对应的 [`docs/api/`](docs/api/) 文档和公开头文件；
+3. 同模块测试，确认边界条件和异常语义；
+4. [`docs/contributing.md`](docs/contributing.md)：代码风格、验证矩阵和 PR 清单。
+
+项目目录：
+
+```text
+plamatrix/
+├── include/plamatrix/   公开 API、模板和容器
+├── src/                 CPU、CUDA、OpenCL、Vulkan 实现
+├── test/                单元测试、集成测试和参考数据
+├── benchmark/           通用算子与后端对比工具
+├── docs/api/            按模块组织的 API 文档
+├── docs/examples/       可编译示例
+└── cmake/               安装包配置
 ```
 
-会分配返回值的部分异步归约和索引 API 使用 stream-ordered GPU 内存。此类矩阵保留创建
-stream 的所有权信息；stream 完成后应在销毁 stream 前调用 `closeAsyncAllocation()`。
-移动矩阵会转移该规则，移动后的源对象变为 `0 x 0`。
+提交改动时：
 
-高频 GPU 临时矩阵可显式开启内存池，减少同尺寸 `DenseMatrix<Device::GPU>` 反复分配成本：
+- 保持 CPU-only 构建可用，并为新增 CUDA 类型/API 提供明确的无 CUDA 行为；
+- 修改公开接口、设备语义或 CMake 选项时同步更新文档；
+- 数值测试使用与误差来源匹配的容差，不通过放宽容差隐藏问题；
+- 性能改动同时提供正确性测试、复现命令和测量环境；
+- 只格式化本次修改的代码，避免把无关重排混入功能提交。
 
-```cpp
-GpuAllocator<float>::setMemoryPoolEnabled(true);
-// ... GPU pipeline / benchmark ...
-GpuAllocator<float>::releaseMemoryPool();
-GpuAllocator<float>::setMemoryPoolEnabled(false);
-```
+## 当前边界
+
+- OpenCL/Vulkan 目前只提供专用求解路径，没有通用 `DenseMatrix`、GEMM、SVD 或 QR 后端；
+- Vulkan PCG 目前只支持 float32；
+- CPU/OpenCL/Vulkan 与 CUDA 的设备所有权模型不同，跨后端调用会产生显式上传和下载；
+- GPU 单元素 `getValue()` / `setValue()` 适合测试和调试，不应放在热循环中；
+- 异步 API 要求输入、输出、workspace 和 stream 在操作完成前保持有效；
+- 当前开发和性能验证以 Linux/GCC 为主，其他平台的结果应按实际环境单独报告。
 
 ## 文档
 
-- [快速入门](docs/index.md)
+- [文档首页](docs/index.md)
 - [编译指南](docs/build.md)
 - [DenseMatrix API](docs/api/dense-matrix.md)
-- [稀疏矩阵 API](docs/api/sparse-matrix.md)
+- [稀疏矩阵与迭代求解](docs/api/sparse-matrix.md)
 - [线性代数 API](docs/api/linear-algebra.md)
 - [非线性优化 API](docs/api/optimization.md)
-- [三维向量与点云运算 API](docs/api/point-cloud.md)
-- [贡献指南](docs/contributing.md)
+- [三维向量与点云运算](docs/api/point-cloud.md)
+- [性能记录](docs/performance-bottlenecks.md)
 
-## 项目结构
+## 贡献与许可证
 
-```
-plamatrix/
-├── include/plamatrix/     # 头文件 (模板 + 声明)
-│   ├── core/              # 基础类型、内存分配、错误处理
-│   ├── dense/             # DenseMatrix + 基本运算
-│   ├── sparse/            # COOMatrix / CSRMatrix
-│   └── ops/               # gemm, svd, solve, 点云运算
-├── src/                   # 源文件 (.cpp / .cu)
-├── test/                  # 单元测试 + 集成测试
-├── benchmark/             # 统一基准测试程序
-└── docs/                  # 中文文档
-```
+欢迎提交可复现的 bug 报告、测试、文档和性能改进。较大的接口或后端改动建议先创建 issue，说明使用
+场景、目标设备、兼容性影响和验证计划。Pull request 应写明行为变化、测试命令，以及尚未验证的平台。
+详细流程见[贡献指南](docs/contributing.md)。
 
-## 许可证
-
-MIT
+PlaMatrix 使用 [MIT License](LICENSE)。
