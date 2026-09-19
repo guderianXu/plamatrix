@@ -199,7 +199,8 @@ GPU 状态缓冲区，按 `convergenceCheckInterval` 批量提交；`command_sub
 与端到端时间的差值可用于判断瓶颈是否仍在主机提交和 fence wait。
 支持 subgroup arithmetic 的设备会在 CSR 平均行长达到 `max(16, subgroupSize / 2)` 时自动使用
 subgroup-per-row SpMV；短行 CSR 使用 scalar-per-row 内核。上传、初始残差与容差初始化和首批 PCG
-迭代共享一次提交；单批求解的 `command_submissions` 为一次状态提交加一次结果下载提交。
+迭代共享一次提交。解向量不超过 64 KiB 时，最终解回读也合并进批次提交；更大向量继续单独下载，
+避免在多个收敛批次中重复回读完整结果。
 `PLAMATRIX_VULKAN_SPMV=auto|scalar|subgroup` 可覆盖自动选择，
 其中强制 `subgroup` 在设备不支持时会返回明确错误。
 

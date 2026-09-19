@@ -22,6 +22,7 @@ namespace plamatrix::vulkan
     {
 
         constexpr std::uint32_t kLocalSize = 128;
+        constexpr std::size_t kFusedSolutionReadbackMaxBytes = 64 * 1024;
 
         void validateOptions(const IterativeSolverOptions& options)
         {
@@ -375,6 +376,8 @@ namespace plamatrix::vulkan
         const std::lock_guard<std::mutex> solveLock(solveMutex);
         const std::size_t count = static_cast<std::size_t>(matrix.rows());
         const std::size_t nnz = static_cast<std::size_t>(matrix.nnz());
+        const std::size_t solutionBytes = count * sizeof(float);
+        const bool fuseSolutionReadback = solutionBytes <= kFusedSolutionReadbackMaxBytes;
         std::vector<std::uint32_t> rowOffsets(count + 1);
         std::vector<std::uint32_t> columns(nnz);
         for (std::size_t i = 0; i < rowOffsets.size(); ++i)
@@ -574,6 +577,8 @@ namespace plamatrix::vulkan
                     break;
             }
 
+            if (fuseSolutionReadback)
+                context.copy(solutionBuffer, solutionReadback, solutionBytes);
             context.copy(*buffers.state, *buffers.stateReadback, sizeof(PcgStateHost));
             context.submitAndWait();
             PcgStateHost state{};
@@ -590,10 +595,13 @@ namespace plamatrix::vulkan
             firstBatch = false;
         }
 
-        context.begin();
-        context.copy(solutionBuffer, solutionReadback, count * sizeof(float));
-        context.submitAndWait();
-        copyFromBuffer(solutionReadback, solution.data(), count * sizeof(float));
+        if (!fuseSolutionReadback)
+        {
+            context.begin();
+            context.copy(solutionBuffer, solutionReadback, solutionBytes);
+            context.submitAndWait();
+        }
+        copyFromBuffer(solutionReadback, solution.data(), solutionBytes);
         report.commandSubmissions = context.submissionCount();
         report.descriptorSetAllocations = context.descriptorSetAllocations() - descriptorSetsBefore;
         report.gpuMilliseconds = context.gpuMilliseconds();

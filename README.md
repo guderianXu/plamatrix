@@ -148,8 +148,8 @@ buffer 依赖屏障数量以及冷启动时 descriptor set 的创建数量；Ope
 的差值可用于区分 GPU 执行和主机提交/等待开销。
 Vulkan 会在设备支持 subgroup arithmetic 且 CSR 平均行长达到 `max(16, subgroupSize / 2)` 时自动选择
 subgroup-per-row SpMV；短行矩阵继续使用 scalar-per-row 内核。上传、初始残差与容差初始化、首批 PCG
-迭代记录在同一个 command buffer 中，只在批次边界读取 GPU 状态；单批求解只需一次状态提交和一次结果
-下载提交。可设置
+迭代记录在同一个 command buffer 中，只在批次边界读取 GPU 状态。对不超过 64 KiB 的解向量，结果回读
+也合并到批次提交中；更大的解向量保留独立最终下载，避免批量收敛检查重复传输大块数据。可设置
 `PLAMATRIX_VULKAN_SPMV=auto|scalar|subgroup` 固定策略，用于复现实验或设备调优。
 
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、

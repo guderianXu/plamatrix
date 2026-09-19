@@ -24,8 +24,8 @@ command buffer，以减少显式 queue submit 和 fence wait。命令上下文�
 Vulkan timestamp 和每个 buffer 的读写状态，GPU 时间与端到端时间分开统计，并将屏障限制在实际存在写后读/写依赖的 storage buffer 上。
 CSR SpMV 同时提供 scalar-per-row 和 subgroup-per-row 内核；运行时根据 subgroup arithmetic 能力和平均行长
 选择实现，避免短行稀疏矩阵浪费 subgroup lane。输入上传、初始残差与容差初始化和首批迭代在同一个
-command buffer 中完成，通过 transfer-to-compute buffer barrier 保持依赖；单批求解只保留一次状态读取和
-一次最终解读取。
+command buffer 中完成，通过 transfer-to-compute buffer barrier 保持依赖。小于或等于 64 KiB 的解向量在
+批次末与状态一起回读，省去最终提交；大向量使用独立最终回读，避免每个收敛批次都传输完整解。
 Vulkan 与 OpenCL 的比较基准同时覆盖二维/三维 stencil、
 BA Schur 相机块图和 MVS visibility 图，并可通过 MatrixMarket 载入已阻尼的真实 CSR 数据。
 
