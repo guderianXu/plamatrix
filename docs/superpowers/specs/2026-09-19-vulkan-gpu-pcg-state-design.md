@@ -18,6 +18,8 @@ Add a small device-local state buffer for the PCG scalar values:
 - `alpha`: current step size.
 - `beta`: next direction coefficient.
 - `residualSquared`: latest checked residual norm squared.
+- `toleranceSquared`: convergence threshold derived on the device.
+- `initialResidualSquared`: immutable residual norm used by the public report.
 - `flags`: converged and numerical-breakdown bits.
 - `iterations`: device-side iteration counter used by convergence handling.
 
@@ -25,7 +27,7 @@ Extend the Vulkan pipeline set with scalar state update shaders. The reduction p
 
 The solver records a batch of iterations in one command buffer. It submits the batch at the configured convergence interval, copies the state buffer to a small host staging buffer, and checks the converged/breakdown flags. A converged flag causes subsequent recorded vector updates to become no-ops, so a batch can finish safely without changing the solution after convergence. At the end of each batch, the host reports the actual iteration count and residual from the state buffer. The final solution copy remains a single host readback.
 
-The initial residual still requires one synchronization because it is part of the public report and determines the tolerance. The solver must continue to reject non-finite or non-positive scalar values; failures are represented by the breakdown flag and converted to the existing `std::runtime_error` messages after the batch is read back.
+The initial residual, derived tolerance, and initially-converged decision are stored in the device state before the first iteration batch. Upload, initialization, and that first batch share one command submission, while the batch-boundary readback still preserves the public report. The solver must continue to reject non-finite or non-positive scalar values; failures are represented by the breakdown flag and converted to the existing `std::runtime_error` messages after the batch is read back.
 
 ## Compatibility and behavior
 
@@ -51,6 +53,7 @@ Add Vulkan tests for:
 2. `convergenceCheckInterval = 1` and a larger interval produce matching solutions and reports within the existing float tolerance.
 3. A zero or invalid denominator sets the breakdown path and raises the expected exception.
 4. The command-submission count decreases when the interval is larger than one.
+5. Initially converged and zero-iteration solves preserve their report and solution semantics.
 
 Run the existing Vulkan and CPU full test suites, the no-OpenCL Vulkan build, and the realistic sparse benchmark suite. Record command submissions and warm medians before and after the change.
 

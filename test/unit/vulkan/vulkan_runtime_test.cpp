@@ -17,7 +17,8 @@ namespace plamatrix::vulkan
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         Runtime& runtime = Runtime::instance();
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_state_init", 1, sizeof(float) * 2));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_state_init", 2, sizeof(float) * 2));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_rho_init", 2, 0));
         EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_alpha", 2, 0));
         EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_beta", 2, 0));
         EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_convergence", 2, 0));
@@ -106,7 +107,7 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
         EXPECT_GT(vulkan_report.commandSubmissions, 0u);
-        EXPECT_LE(vulkan_report.commandSubmissions, 3u);
+        EXPECT_LE(vulkan_report.commandSubmissions, 2u);
         for (Index row = 0; row < 2; ++row)
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }
@@ -209,6 +210,57 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(report.converged);
         EXPECT_EQ(report.iterations, 1);
         EXPECT_NEAR(solution(0, 0), 1.0f, 1.0e-5f);
+    }
+
+    TEST(VulkanSolver, ReportsInitiallyConvergedStateWithoutIteration)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        matrix.rowOffsets()[0] = 0;
+        matrix.rowOffsets()[1] = 1;
+        matrix.colIndices()[0] = 0;
+        matrix.values()[0] = 4.0f;
+        DenseMatrix<float, Device::CPU> rhs(1, 1);
+        DenseMatrix<float, Device::CPU> solution(1, 1);
+        rhs(0, 0) = 4.0f;
+        solution(0, 0) = 1.0f;
+        IterativeSolverOptions options;
+        options.maxIterations = 8;
+        options.relativeTolerance = 1.0e-6;
+        options.requireConvergence = true;
+        options.convergenceCheckInterval = 4;
+        const auto report = pcg(matrix, rhs, solution, options);
+        EXPECT_TRUE(report.converged);
+        EXPECT_EQ(report.iterations, 0);
+        EXPECT_EQ(report.initialResidual, 0.0);
+        EXPECT_EQ(report.finalResidual, 0.0);
+        EXPECT_LE(report.commandSubmissions, 2u);
+        EXPECT_NEAR(solution(0, 0), 1.0f, 1.0e-6f);
+    }
+
+    TEST(VulkanSolver, ReportsInitialResidualWhenIterationsAreDisabled)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        matrix.rowOffsets()[0] = 0;
+        matrix.rowOffsets()[1] = 1;
+        matrix.colIndices()[0] = 0;
+        matrix.values()[0] = 4.0f;
+        DenseMatrix<float, Device::CPU> rhs(1, 1);
+        DenseMatrix<float, Device::CPU> solution(1, 1);
+        rhs(0, 0) = 4.0f;
+        solution(0, 0) = 0.0f;
+        IterativeSolverOptions options;
+        options.maxIterations = 0;
+        options.relativeTolerance = 1.0e-6;
+        const auto report = pcg(matrix, rhs, solution, options);
+        EXPECT_FALSE(report.converged);
+        EXPECT_EQ(report.iterations, 0);
+        EXPECT_NEAR(report.initialResidual, 4.0, 1.0e-6);
+        EXPECT_EQ(report.finalResidual, report.initialResidual);
+        EXPECT_EQ(solution(0, 0), 0.0f);
     }
 
     TEST(VulkanSolver, ReportsDeviceScalarBreakdown)

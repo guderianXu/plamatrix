@@ -107,7 +107,8 @@ namespace plamatrix::vulkan
 
         struct StateInitPush
         {
-            float toleranceSquared;
+            float relativeToleranceSquared;
+            float absoluteToleranceSquared;
         };
 
         struct IterationPush
@@ -122,11 +123,12 @@ namespace plamatrix::vulkan
             float beta = 0.0f;
             float residualSquared = 0.0f;
             float toleranceSquared = 0.0f;
+            float initialResidualSquared = 0.0f;
             std::uint32_t flags = 0;
             std::uint32_t iterations = 0;
         };
 
-        static_assert(sizeof(PcgStateHost) == sizeof(float) * 5 + sizeof(std::uint32_t) * 2);
+        static_assert(sizeof(PcgStateHost) == sizeof(float) * 6 + sizeof(std::uint32_t) * 2);
 
         constexpr std::uint32_t kConvergedFlag = 1u;
         constexpr std::uint32_t kBreakdownFlag = 2u;
@@ -182,6 +184,7 @@ namespace plamatrix::vulkan
                             2,
                             sizeof(StateInitPush),
                             {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
+                  rhoInit(runtime, "pcg_rho_init", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
                   alpha(runtime, "pcg_alpha", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
                   beta(runtime, "pcg_beta", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
                   convergence(runtime,
@@ -218,6 +221,7 @@ namespace plamatrix::vulkan
             ComputePipeline direction;
             ComputePipeline reduction;
             ComputePipeline stateInit;
+            ComputePipeline rhoInit;
             ComputePipeline alpha;
             ComputePipeline beta;
             ComputePipeline convergence;
@@ -249,7 +253,6 @@ namespace plamatrix::vulkan
             std::unique_ptr<Buffer> solutionUpload;
             std::unique_ptr<Buffer> inverseUpload;
             std::unique_ptr<Buffer> onesUpload;
-            std::unique_ptr<Buffer> reductionReadback;
             std::unique_ptr<Buffer> solutionReadback;
             std::unique_ptr<CommandContext> context;
 
@@ -307,7 +310,6 @@ namespace plamatrix::vulkan
                 solutionUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
                 inverseUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
                 onesUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
-                reductionReadback = std::make_unique<Buffer>(runtime, floatBytes, stagingDestinationUsage);
                 solutionReadback = std::make_unique<Buffer>(runtime, count * floatBytes, stagingDestinationUsage);
                 context = std::make_unique<CommandContext>(runtime);
             }
@@ -406,7 +408,6 @@ namespace plamatrix::vulkan
         Buffer& solutionUpload = *buffers.solutionUpload;
         Buffer& inverseUpload = *buffers.inverseUpload;
         Buffer& onesUpload = *buffers.onesUpload;
-        Buffer& reductionReadback = *buffers.reductionReadback;
         Buffer& solutionReadback = *buffers.solutionReadback;
         auto copyToBuffer = [](Buffer& buffer, const void* source, std::size_t bytes)
         {
@@ -473,50 +474,36 @@ namespace plamatrix::vulkan
                                               partialBBuffer,
                                               onesBuffer,
                                               count);
-        context.copy(*initialResidual, reductionReadback, sizeof(float));
-        context.submitAndWait();
-
-        float initialResidualSquared = 0.0f;
-        copyFromBuffer(reductionReadback, &initialResidualSquared, sizeof(initialResidualSquared));
-        if (!std::isfinite(initialResidualSquared) || initialResidualSquared < 0.0f)
-            throw std::runtime_error("Vulkan PCG produced an invalid initial residual");
-        report.initialResidual = std::sqrt(static_cast<double>(initialResidualSquared));
-        report.finalResidual = report.initialResidual;
-        const double tolerance =
-            std::max(options.absoluteTolerance, options.relativeTolerance * report.initialResidual);
-        report.converged = report.finalResidual <= tolerance;
+        const StateInitPush stateInitPush{static_cast<float>(options.relativeTolerance * options.relativeTolerance),
+                                          static_cast<float>(options.absoluteTolerance * options.absoluteTolerance)};
+        dispatch(context,
+                 pipelines.stateInit,
+                 {buffers.state.get(), initialResidual},
+                 1,
+                 &stateInitPush,
+                 sizeof(stateInitPush));
+        Buffer* initialRho = dispatchDot(context,
+                                         pipelines.reduction,
+                                         residualBuffer,
+                                         transformedBuffer,
+                                         partialABuffer,
+                                         partialBBuffer,
+                                         onesBuffer,
+                                         count);
+        dispatch(context, pipelines.rhoInit, {buffers.state.get(), initialRho}, 1, nullptr, 0);
 
         int completedIterations = 0;
-        bool stateInitialized = false;
-        while (!report.converged && completedIterations < options.maxIterations)
+        bool firstBatch = true;
+        while (firstBatch || (!report.converged && completedIterations < options.maxIterations))
         {
-            context.begin();
-            const bool needsDirectionUpdate = stateInitialized;
-            if (!stateInitialized)
-            {
-                Buffer* initialRho = dispatchDot(context,
-                                                 pipelines.reduction,
-                                                 residualBuffer,
-                                                 transformedBuffer,
-                                                 partialABuffer,
-                                                 partialBBuffer,
-                                                 onesBuffer,
-                                                 count);
-                const StateInitPush stateInitPush{static_cast<float>(tolerance * tolerance)};
-                dispatch(context,
-                         pipelines.stateInit,
-                         {buffers.state.get(), initialRho},
-                         1,
-                         &stateInitPush,
-                         sizeof(stateInitPush));
-                stateInitialized = true;
-            }
+            if (!firstBatch)
+                context.begin();
 
             const int batchLimit =
                 std::min(options.convergenceCheckInterval, options.maxIterations - completedIterations);
             for (int batchIteration = 0; batchIteration < batchLimit; ++batchIteration)
             {
-                if (needsDirectionUpdate || batchIteration > 0)
+                if (completedIterations > 0)
                 {
                     dispatch(context,
                              pipelines.jacobi,
@@ -596,9 +583,11 @@ namespace plamatrix::vulkan
                     "Vulkan PCG breakdown in device scalar recurrence: rho=" + std::to_string(state.rho) +
                     " alpha=" + std::to_string(state.alpha) + " beta=" + std::to_string(state.beta) +
                     " residual=" + std::to_string(state.residualSquared) + " flags=" + std::to_string(state.flags));
+            report.initialResidual = std::sqrt(static_cast<double>(state.initialResidualSquared));
             report.iterations = static_cast<int>(state.iterations);
             report.finalResidual = std::sqrt(static_cast<double>(state.residualSquared));
             report.converged = (state.flags & kConvergedFlag) != 0u;
+            firstBatch = false;
         }
 
         context.begin();

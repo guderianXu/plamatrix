@@ -57,6 +57,7 @@ if(PLAMATRIX_WITH_VULKAN)
         direction
         dot_reduce
         pcg_state_init
+        pcg_rho_init
         pcg_alpha
         pcg_beta
         pcg_convergence)

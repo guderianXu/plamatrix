@@ -11,20 +11,16 @@ layout(std430, binding = 0) buffer State
     uint flags;
     uint iterations;
 } state;
-layout(std430, binding = 1) readonly buffer Residual { float values[]; } residual;
-layout(push_constant) uniform Params { uint iterations; } params;
+layout(std430, binding = 1) readonly buffer InitialRho { float values[]; } initial_rho;
 void main()
 {
     if ((state.flags & 3u) != 0u)
         return;
-    float value = residual.values[0];
-    state.residual_squared = value;
-    state.iterations = params.iterations;
-    if (isnan(value) || isinf(value) || value < 0.0)
+    float rho = initial_rho.values[0];
+    if (isnan(rho) || isinf(rho) || rho <= 0.0)
     {
         state.flags |= 2u;
         return;
     }
-    if (value <= state.tolerance_squared)
-        state.flags |= 1u;
+    state.rho = rho;
 }
