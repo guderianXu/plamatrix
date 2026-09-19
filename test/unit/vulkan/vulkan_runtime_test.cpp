@@ -86,6 +86,49 @@ namespace plamatrix::vulkan
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }
 
+    TEST(VulkanSolver, HandlesReductionTileBoundary)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        constexpr Index size = 257;
+        CSRMatrix<float, Device::CPU> matrix(size, size, 3 * size - 2);
+        Index offset = 0;
+        for (Index row = 0; row < size; ++row)
+        {
+            matrix.rowOffsets()[row] = offset;
+            if (row > 0)
+            {
+                matrix.colIndices()[offset] = row - 1;
+                matrix.values()[offset++] = 1.0f;
+            }
+            matrix.colIndices()[offset] = row;
+            matrix.values()[offset++] = 4.0f;
+            if (row + 1 < size)
+            {
+                matrix.colIndices()[offset] = row + 1;
+                matrix.values()[offset++] = 1.0f;
+            }
+        }
+        matrix.rowOffsets()[size] = offset;
+        DenseMatrix<float, Device::CPU> rhs(size, 1);
+        DenseMatrix<float, Device::CPU> expected(size, 1);
+        DenseMatrix<float, Device::CPU> actual(size, 1);
+        rhs.fill(1.0f);
+        expected.fill(0.0f);
+        actual.fill(0.0f);
+        IterativeSolverOptions options;
+        options.maxIterations = 100;
+        options.relativeTolerance = 1.0e-5;
+        options.requireConvergence = true;
+        const auto cpu_report = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto vulkan_report = pcg(matrix, rhs, actual, options);
+        EXPECT_TRUE(cpu_report.converged);
+        EXPECT_TRUE(vulkan_report.converged);
+        EXPECT_EQ(cpu_report.iterations, vulkan_report.iterations);
+        for (Index row = 0; row < size; ++row)
+            EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
+    }
+
     TEST(VulkanExecution, ReusesCommandContextAcrossBatches)
     {
         if (!hasUsableVulkanDevice())

@@ -49,7 +49,7 @@ endif()
 
 if(PLAMATRIX_WITH_VULKAN)
     set(_PLAMATRIX_VULKAN_SHADER_NAMES
-        residual_init
+        initialize
         spmv
         jacobi
         update

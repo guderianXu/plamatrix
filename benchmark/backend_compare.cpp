@@ -6,55 +6,20 @@
 #include <string>
 #include <vector>
 
+#include "backend_scenarios.h"
 #include "plamatrix/opencl/iterative_solver.h"
 #include "plamatrix/opencl/runtime.h"
 #include "plamatrix/vulkan/iterative_solver.h"
 #include "plamatrix/vulkan/runtime.h"
 
 using namespace plamatrix;
+using namespace plamatrix::benchmark;
 
 namespace
 {
 
-    struct Fixture
-    {
-        CSRMatrix<float, Device::CPU> matrix;
-        DenseMatrix<float, Device::CPU> rhs;
-
-        explicit Fixture(Index size) : matrix(size, size, size == 1 ? 1 : 3 * size - 2), rhs(size, 1)
-        {
-            std::vector<Index> rows(static_cast<std::size_t>(size + 1));
-            std::vector<Index> columns;
-            std::vector<float> values;
-            columns.reserve(static_cast<std::size_t>(matrix.nnz()));
-            values.reserve(static_cast<std::size_t>(matrix.nnz()));
-            for (Index row = 0; row < size; ++row)
-            {
-                rows[static_cast<std::size_t>(row)] = static_cast<Index>(columns.size());
-                if (row > 0)
-                {
-                    columns.push_back(row - 1);
-                    values.push_back(-1.0f);
-                }
-                columns.push_back(row);
-                values.push_back(4.0f);
-                if (row + 1 < size)
-                {
-                    columns.push_back(row + 1);
-                    values.push_back(-1.0f);
-                }
-                rhs(row, 0) = 1.0f;
-            }
-            rows.back() = static_cast<Index>(columns.size());
-            std::copy(rows.begin(), rows.end(), matrix.rowOffsets());
-            std::copy(columns.begin(), columns.end(), matrix.colIndices());
-            std::copy(values.begin(), values.end(), matrix.values());
-            matrix.validateStructure();
-        }
-    };
-
     template <typename Solve>
-    void runCase(const char* backend, const std::string& device, const Fixture& fixture, Solve solve)
+    void runCase(const char* backend, const std::string& device, const BackendFixture& fixture, Solve solve)
     {
         IterativeSolverOptions options;
         options.maxIterations = 200;
@@ -84,9 +49,10 @@ namespace
             if (trial == 4)
             {
                 std::sort(timings.begin(), timings.end());
-                std::cout << backend << ',' << device << ',' << fixture.matrix.rows() << ',' << report.iterations << ','
-                          << std::setprecision(9) << report.initialResidual << ',' << report.finalResidual << ','
-                          << report.commandSubmissions << ',' << coldReport.iterations << ',' << coldMilliseconds << ','
+                std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
+                          << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
+                          << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
+                          << ',' << coldReport.iterations << ',' << coldMilliseconds << ','
                           << timings[timings.size() / 2] << '\n';
             }
         }
@@ -96,55 +62,86 @@ namespace
 
 int main(int argc, char** argv)
 {
+    std::string scenario = "tridiagonal";
     std::vector<Index> sizes;
-    if (argc <= 1)
+    std::string matrixMarketPath;
+    bool runSuite = false;
+    for (int index = 1; index < argc; ++index)
     {
-        sizes.push_back(4096);
-    }
-    else if (std::string(argv[1]) == "--help")
-    {
-        std::cout << "usage: plamatrix_backend_compare [SIZE] | --sizes N,N,... | --suite\n"
-                     "  --suite uses 4096,16384,65536,262144,1048576\n";
-        return 0;
-    }
-    else if (std::string(argv[1]) == "--suite")
-    {
-        sizes = {4096, 16384, 65536, 262144, 1048576};
-    }
-    else if (std::string(argv[1]) == "--sizes")
-    {
-        if (argc < 3)
+        const std::string argument = argv[index];
+        if (argument == "--help")
         {
-            std::cerr << "--sizes requires a comma-separated list\n";
-            return 2;
+            std::cout << "usage: plamatrix_backend_compare [SIZE]\n"
+                         "       plamatrix_backend_compare --case NAME --sizes N,N,...\n"
+                         "       plamatrix_backend_compare --suite\n"
+                         "       plamatrix_backend_compare --matrix-market PATH\n"
+                         "cases: tridiagonal, stencil2d, stencil3d, ba_schur, mvs_visibility\n"
+                         "--suite runs all representative cases; BA sizes are camera counts, other 2D/3D sizes are "
+                         "side lengths.\n";
+            return 0;
         }
-        std::stringstream values(argv[2]);
-        std::string token;
-        while (std::getline(values, token, ','))
+        if (argument == "--suite")
         {
-            const Index size = static_cast<Index>(std::stoll(token));
+            runSuite = true;
+            continue;
+        }
+        if (argument == "--case" || argument == "--sizes" || argument == "--matrix-market")
+        {
+            if (++index >= argc)
+            {
+                std::cerr << argument << " requires a value\n";
+                return 2;
+            }
+            const std::string value = argv[index];
+            if (argument == "--case")
+            {
+                scenario = value;
+            }
+            else if (argument == "--matrix-market")
+            {
+                matrixMarketPath = value;
+            }
+            else
+            {
+                std::stringstream values(value);
+                std::string token;
+                while (std::getline(values, token, ','))
+                {
+                    const Index size = static_cast<Index>(std::stoll(token));
+                    if (size <= 0)
+                    {
+                        std::cerr << "sizes must be positive\n";
+                        return 2;
+                    }
+                    sizes.push_back(size);
+                }
+            }
+            continue;
+        }
+        if (!argument.empty() && argument.front() != '-')
+        {
+            const Index size = static_cast<Index>(std::stoll(argument));
             if (size <= 0)
             {
-                std::cerr << "sizes must be positive\n";
+                std::cerr << "size must be positive\n";
                 return 2;
             }
             sizes.push_back(size);
+            continue;
         }
-    }
-    else
-    {
-        sizes.push_back(static_cast<Index>(std::stoll(argv[1])));
-    }
-    if (sizes.empty())
-    {
-        std::cerr << "at least one size is required\n";
+        std::cerr << "unknown argument: " << argument << '\n';
         return 2;
     }
-    std::cout << "backend,device,size,iterations,initial_residual,final_residual,command_submissions,cold_iterations,"
-                 "cold_ms,warm_median_ms\n";
-    for (const Index size : sizes)
+
+    if (!matrixMarketPath.empty() && runSuite)
     {
-        const Fixture fixture(size);
+        std::cerr << "--matrix-market cannot be combined with --suite\n";
+        return 2;
+    }
+    std::cout << "scenario,backend,device,dimension,nnz,iterations,initial_residual,final_residual,command_submissions,"
+                 "cold_iterations,cold_ms,warm_median_ms\n";
+    auto runFixture = [](const BackendFixture& fixture)
+    {
         if (opencl::hasUsableOpenClDevice())
         {
             runCase("opencl",
@@ -169,6 +166,23 @@ int main(int argc, char** argv)
         {
             std::cerr << "vulkan,skipped,no usable Vulkan device\n";
         }
+    };
+    if (!matrixMarketPath.empty())
+    {
+        runFixture(loadMatrixMarketFixture(matrixMarketPath));
+        return 0;
+    }
+    if (runSuite)
+    {
+        for (const auto& [suiteScenario, suiteSize] : backendSuite())
+            runFixture(makeBackendFixture(suiteScenario, suiteSize));
+        return 0;
+    }
+    if (sizes.empty())
+        sizes.push_back(4096);
+    for (const Index size : sizes)
+    {
+        runFixture(makeBackendFixture(scenario, size));
     }
     return 0;
 }

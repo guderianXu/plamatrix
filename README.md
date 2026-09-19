@@ -119,10 +119,30 @@ target_link_libraries(my_project plamatrix::plamatrix)
 ./benchmark/plamatrix_backend_compare --suite
 # 自定义规模
 ./benchmark/plamatrix_backend_compare --sizes 4096,16384,65536,262144,1048576
+# 二维五点、三维七点 stencil
+./benchmark/plamatrix_backend_compare --case stencil2d --sizes 64,128,256
+./benchmark/plamatrix_backend_compare --case stencil3d --sizes 16,24,32
+# BA Schur 相机块拓扑（参数为相机数量，每个相机 6 个变量）
+./benchmark/plamatrix_backend_compare --case ba_schur --sizes 32,64,128,256
+# MVS 空间邻域 + 跨视图可见性拓扑（参数为影像边长）
+./benchmark/plamatrix_backend_compare --case mvs_visibility --sizes 64,128,256
+# 直接比较真实的、已经阻尼为正定的 CSR MatrixMarket 文件
+./benchmark/plamatrix_backend_compare --matrix-market /path/to/ba_schur.mtx
 ```
 
-该基准还会输出 Vulkan 的 `command_submissions`，用于确认多个 compute dispatch 是否被合并到
-阶段级 command buffer；OpenCL 的该列固定为 `0`，仅表示当前未暴露同等统计。
+`--suite` 会依次运行一维三对角、二维/三维 stencil、BA Schur 相机块图和 MVS visibility 图，
+输出中的 `dimension` 是展开后的标量维度，`nnz` 是实际 CSR 非零元数量。`ba_schur` 的参数是相机数，
+每个相机展开为 6 个标量变量；其它二维/三维场景的参数是网格边长。内置 BA/MVS 场景保持了 PlaScan
+中常见的稀疏拓扑和不规则行长度，所有内置场景使用确定性的非均匀右端项，避免全 1 向量形成过于容易的
+特征方向；矩阵数值仍是确定性合成值。要测量真实工程数据，把已经完成阻尼、适合
+Jacobi-PCG 的 CSR 矩阵导出为 MatrixMarket coordinate real general/symmetric 文件后使用
+`--matrix-market`。当前 MatrixMarket 输入必须是非空方阵，且矩阵应为正定或经过 LM damping。
+PlaScan 当前 MVS 主链不持久化 CSR 文件，因此 `mvs_visibility` 用的是同样的空间邻域和跨视图连接形态；
+真实 MVS 数据应通过 MatrixMarket 入口接入。
+
+该基准还会输出 Vulkan 的 `command_submissions`，用于观察显式 queue submit/fence wait 的数量；OpenCL
+的该列固定为 `0`，仅表示当前未暴露同等统计。`cold_ms` 包含首次工作区和 shader 路径，
+`warm_median_ms` 是工作区复用后的端到端 PCG 时间。
 
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
 CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含可批量执行的主机收敛检查，因而

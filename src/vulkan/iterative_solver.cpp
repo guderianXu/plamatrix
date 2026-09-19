@@ -68,6 +68,11 @@ namespace plamatrix::vulkan
             return std::max<std::size_t>(1, (count + kLocalSize - 1) / kLocalSize);
         }
 
+        std::size_t reductionGroupsFor(std::size_t count)
+        {
+            return std::max<std::size_t>(1, (count + kLocalSize * 2 - 1) / (kLocalSize * 2));
+        }
+
         struct CountPush
         {
             std::uint32_t count;
@@ -82,15 +87,14 @@ namespace plamatrix::vulkan
         struct PipelineSet
         {
             explicit PipelineSet(Runtime& runtime)
-                : residualInit(runtime, "residual_init", 3, sizeof(CountPush)),
-                  spmv(runtime, "spmv", 5, sizeof(CountPush)), jacobi(runtime, "jacobi", 3, sizeof(CountPush)),
-                  update(runtime, "update", 4, sizeof(ScalePush)),
+                : initialize(runtime, "initialize", 6, sizeof(CountPush)), spmv(runtime, "spmv", 5, sizeof(CountPush)),
+                  jacobi(runtime, "jacobi", 3, sizeof(CountPush)), update(runtime, "update", 4, sizeof(ScalePush)),
                   direction(runtime, "direction", 2, sizeof(ScalePush)),
                   reduction(runtime, "dot_reduce", 3, sizeof(CountPush))
             {
             }
 
-            ComputePipeline residualInit;
+            ComputePipeline initialize;
             ComputePipeline spmv;
             ComputePipeline jacobi;
             ComputePipeline update;
@@ -139,7 +143,7 @@ namespace plamatrix::vulkan
                 const VkBufferUsageFlags stagingDestinationUsage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
                 const VkBufferUsageFlags partialUsage =
                     storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-                const std::size_t partialCount = groupsFor(count);
+                const std::size_t partialCount = reductionGroupsFor(count);
 
                 row = std::make_unique<Buffer>(
                     runtime, (count + 1) * uintBytes, deviceInputUsage, BufferMemory::DeviceLocal);
@@ -203,14 +207,14 @@ namespace plamatrix::vulkan
                    Buffer& readback,
                    std::size_t count)
         {
-            std::size_t remaining = groupsFor(count);
+            std::size_t remaining = reductionGroupsFor(count);
             Buffer* current = &partialA;
             Buffer* next = &partialB;
             CountPush push{static_cast<std::uint32_t>(count)};
             dispatch(context, pipeline, {&left, &right, current}, remaining, &push, sizeof(push));
             while (remaining > 1)
             {
-                const std::size_t nextGroups = groupsFor(remaining);
+                const std::size_t nextGroups = reductionGroupsFor(remaining);
                 push.count = static_cast<std::uint32_t>(remaining);
                 dispatch(context, pipeline, {current, &ones, next}, nextGroups, &push, sizeof(push));
                 remaining = nextGroups;
@@ -330,25 +334,13 @@ namespace plamatrix::vulkan
                  groupsFor(count),
                  &countPush,
                  sizeof(countPush));
-        dispatch(context,
-                 pipelines.residualInit,
-                 {&rhsBuffer, &matrixDirectionBuffer, &residualBuffer},
-                 groupsFor(count),
-                 &countPush,
-                 sizeof(countPush));
-        dispatch(context,
-                 pipelines.jacobi,
-                 {&residualBuffer, &inverseBuffer, &transformedBuffer},
-                 groupsFor(count),
-                 &countPush,
-                 sizeof(countPush));
-        ScalePush zeroBeta{static_cast<std::uint32_t>(count), 0.0f};
-        dispatch(context,
-                 pipelines.direction,
-                 {&directionBuffer, &transformedBuffer},
-                 groupsFor(count),
-                 &zeroBeta,
-                 sizeof(zeroBeta));
+        dispatch(
+            context,
+            pipelines.initialize,
+            {&rhsBuffer, &matrixDirectionBuffer, &inverseBuffer, &residualBuffer, &transformedBuffer, &directionBuffer},
+            groupsFor(count),
+            &countPush,
+            sizeof(countPush));
 
         IterativeSolverReport report;
         const double residualSquared = dot(context,

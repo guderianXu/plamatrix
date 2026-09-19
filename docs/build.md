@@ -189,11 +189,35 @@ PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare 4096
 PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare --suite
 ```
 
-对比程序使用同一份 float32 三对角 SPD CSR 矩阵，输出 OpenCL/Vulkan 的设备名、迭代次数、
-初始/最终残差、端到端 PCG 中位时间和 Vulkan 的 `command_submissions`。该列用于观察提交
-批处理是否生效；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现
-float32 PCG，结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。`--suite` 会依次测试
-4096、16384、65536、262144 和 1048576 阶系统；也可以用 `--sizes N,N,...` 自定义规模。
+对比程序输出 OpenCL/Vulkan 的设备名、实际 CSR 维度和非零元数、迭代次数、初始/最终残差、
+端到端 PCG 中位时间和 Vulkan 的 `command_submissions`。该列用于观察显式 queue submit/fence
+wait 的数量；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现 float32 PCG，
+结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。
+
+除了默认三对角系统，还可以运行更接近 PlaScan 数据形态的场景：
+
+```bash
+./benchmark/plamatrix_backend_compare --case stencil2d --sizes 64,128,256
+./benchmark/plamatrix_backend_compare --case stencil3d --sizes 16,24,32
+./benchmark/plamatrix_backend_compare --case ba_schur --sizes 32,64,128,256
+./benchmark/plamatrix_backend_compare --case mvs_visibility --sizes 64,128,256
+```
+
+其中 `ba_schur` 的参数是相机数量，每个相机展开为 6 个变量；其它二维/三维场景的参数是网格边长。
+内置 BA/MVS 场景是保持实际稀疏拓扑、不规则行长度和正定数值性质的确定性合成数据，并使用非均匀右端项
+避免全 1 向量形成过于容易的特征方向。对真实工程数据，
+将已经完成 LM damping 的 BA Schur 或 MVS CSR 导出为 MatrixMarket coordinate real general/symmetric
+文件，然后运行：
+
+```bash
+./benchmark/plamatrix_backend_compare --matrix-market /path/to/real_schur.mtx
+```
+
+PlaScan 当前 MVS 主链不持久化 CSR 文件，所以 `mvs_visibility` 是可重复的拓扑代理；真实 MVS CSR
+应通过 MatrixMarket 入口接入。
+
+`--suite` 会运行上述五类场景的代表性规模；`cold_ms` 包含首次 shader/工作区路径，
+`warm_median_ms` 是复用工作区后的端到端 PCG 时间。
 
 ### 3.3 常用构建组合
 

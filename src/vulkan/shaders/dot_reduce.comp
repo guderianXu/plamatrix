@@ -8,8 +8,10 @@ shared float partial[128];
 void main()
 {
     uint local = gl_LocalInvocationID.x;
-    uint index = gl_GlobalInvocationID.x;
+    uint index = gl_WorkGroupID.x * gl_WorkGroupSize.x * 2 + local;
     partial[local] = index < params.count ? left_values[index] * right_values[index] : 0.0;
+    if (index + gl_WorkGroupSize.x < params.count)
+        partial[local] += left_values[index + gl_WorkGroupSize.x] * right_values[index + gl_WorkGroupSize.x];
     barrier();
     for (uint stride = 64; stride > 0; stride >>= 1)
     {

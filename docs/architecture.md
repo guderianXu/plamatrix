@@ -16,6 +16,9 @@ GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 
 以 GLSL/SPIR-V 实现 SpMV、Jacobi、向量更新和点积归约，并通过同一基准程序与 OpenCL 对比。
 Vulkan 求解器为每种矩阵规模复用 device-local CSR/向量工作区，使用 host-visible staging buffer
 完成输入上传和结果下载；命令上下文同时复用 descriptor pool、command buffer 和 fence。
+初始化阶段把残差、Jacobi 变换和方向向量合并为一个 dispatch，点积归约每个 invocation 处理两个
+元素，以减少 kernel 和显式提交数量。Vulkan 与 OpenCL 的比较基准同时覆盖二维/三维 stencil、
+BA Schur 相机块图和 MVS visibility 图，并可通过 MatrixMarket 载入已阻尼的真实 CSR 数据。
 
 ## 1. 整体架构
 
