@@ -3,6 +3,7 @@
 #ifdef PLAMATRIX_WITH_VULKAN
 
 #include <array>
+#include <limits>
 #include <vector>
 
 namespace plamatrix::vulkan
@@ -168,6 +169,187 @@ namespace plamatrix::vulkan
             vkDestroyDescriptorPool(_runtime->device(), _pool, nullptr);
         _runtime = nullptr;
         _pool = VK_NULL_HANDLE;
+    }
+
+    void DescriptorPool::resetForReuse()
+    {
+        if (_runtime && _pool)
+            checkVk(vkResetDescriptorPool(_runtime->device(), _pool, 0), "vkResetDescriptorPool");
+    }
+
+    CommandContext::CommandContext(Runtime& runtime, std::uint32_t maxSets, std::uint32_t storageBufferDescriptors)
+        : _runtime(&runtime), _descriptorPool(runtime, maxSets, storageBufferDescriptors)
+    {
+        VkCommandBufferAllocateInfo allocation{};
+        allocation.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocation.commandPool = runtime.commandPool();
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocation.commandBufferCount = 1;
+        checkVk(vkAllocateCommandBuffers(runtime.device(), &allocation, &_commandBuffer), "vkAllocateCommandBuffers");
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        try
+        {
+            checkVk(vkCreateFence(runtime.device(), &fenceInfo, nullptr, &_fence), "vkCreateFence");
+        }
+        catch (...)
+        {
+            vkFreeCommandBuffers(runtime.device(), runtime.commandPool(), 1, &_commandBuffer);
+            _commandBuffer = VK_NULL_HANDLE;
+            throw;
+        }
+    }
+
+    CommandContext::~CommandContext() noexcept
+    {
+        reset();
+    }
+
+    CommandContext::CommandContext(CommandContext&& other) noexcept
+        : _runtime(std::exchange(other._runtime, nullptr)), _descriptorPool(std::move(other._descriptorPool)),
+          _commandBuffer(std::exchange(other._commandBuffer, VK_NULL_HANDLE)),
+          _fence(std::exchange(other._fence, VK_NULL_HANDLE)), _recording(std::exchange(other._recording, false)),
+          _pendingDispatches(std::exchange(other._pendingDispatches, 0)),
+          _submissionCount(std::exchange(other._submissionCount, 0))
+    {
+    }
+
+    CommandContext& CommandContext::operator=(CommandContext&& other) noexcept
+    {
+        if (this != &other)
+        {
+            reset();
+            _runtime = std::exchange(other._runtime, nullptr);
+            _descriptorPool = std::move(other._descriptorPool);
+            _commandBuffer = std::exchange(other._commandBuffer, VK_NULL_HANDLE);
+            _fence = std::exchange(other._fence, VK_NULL_HANDLE);
+            _recording = std::exchange(other._recording, false);
+            _pendingDispatches = std::exchange(other._pendingDispatches, 0);
+            _submissionCount = std::exchange(other._submissionCount, 0);
+        }
+        return *this;
+    }
+
+    void CommandContext::begin()
+    {
+        if (!_runtime || !_commandBuffer || !_fence)
+            throw std::runtime_error("Vulkan command context is not initialized");
+        if (_recording)
+            throw std::logic_error("Vulkan command context is already recording");
+        _descriptorPool.resetForReuse();
+        checkVk(vkResetCommandBuffer(_commandBuffer, 0), "vkResetCommandBuffer");
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        checkVk(vkBeginCommandBuffer(_commandBuffer, &beginInfo), "vkBeginCommandBuffer");
+        _pendingDispatches = 0;
+        _recording = true;
+    }
+
+    void CommandContext::dispatch(const ComputePipeline& pipeline,
+                                  const std::vector<Buffer*>& buffers,
+                                  std::size_t groups,
+                                  const void* pushData,
+                                  std::uint32_t pushSize)
+    {
+        if (!_recording)
+            throw std::logic_error("Vulkan command context is not recording");
+        if (groups == 0 || groups > std::numeric_limits<std::uint32_t>::max())
+            throw std::invalid_argument("Vulkan dispatch group count is out of range");
+
+        VkDescriptorSetAllocateInfo allocation{};
+        allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocation.descriptorPool = _descriptorPool.handle();
+        allocation.descriptorSetCount = 1;
+        const VkDescriptorSetLayout layout = pipeline.descriptorLayout();
+        allocation.pSetLayouts = &layout;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        checkVk(vkAllocateDescriptorSets(_runtime->device(), &allocation, &descriptorSet), "vkAllocateDescriptorSets");
+
+        std::vector<VkDescriptorBufferInfo> infos(buffers.size());
+        std::vector<VkWriteDescriptorSet> writes(buffers.size());
+        for (std::size_t index = 0; index < buffers.size(); ++index)
+        {
+            if (!buffers[index] || buffers[index]->handle() == VK_NULL_HANDLE)
+                throw std::invalid_argument("Vulkan dispatch received an empty buffer");
+            infos[index].buffer = buffers[index]->handle();
+            infos[index].offset = 0;
+            infos[index].range = buffers[index]->size();
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = descriptorSet;
+            writes[index].dstBinding = static_cast<std::uint32_t>(index);
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[index].pBufferInfo = &infos[index];
+        }
+        vkUpdateDescriptorSets(
+            _runtime->device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(_commandBuffer,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0,
+                             1,
+                             &barrier,
+                             0,
+                             nullptr,
+                             0,
+                             nullptr);
+        vkCmdBindPipeline(_commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline());
+        vkCmdBindDescriptorSets(
+            _commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout(), 0, 1, &descriptorSet, 0, nullptr);
+        if (pushSize != 0)
+            vkCmdPushConstants(_commandBuffer, pipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, pushSize, pushData);
+        vkCmdDispatch(_commandBuffer, static_cast<std::uint32_t>(groups), 1, 1);
+        ++_pendingDispatches;
+    }
+
+    void CommandContext::submitAndWait()
+    {
+        if (!_recording)
+            throw std::logic_error("Vulkan command context is not recording");
+        try
+        {
+            checkVk(vkEndCommandBuffer(_commandBuffer), "vkEndCommandBuffer");
+            checkVk(vkResetFences(_runtime->device(), 1, &_fence), "vkResetFences");
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &_commandBuffer;
+            checkVk(vkQueueSubmit(_runtime->queue(), 1, &submit, _fence), "vkQueueSubmit");
+            checkVk(vkWaitForFences(_runtime->device(), 1, &_fence, VK_TRUE, std::numeric_limits<std::uint64_t>::max()),
+                    "vkWaitForFences");
+            _recording = false;
+            ++_submissionCount;
+        }
+        catch (...)
+        {
+            _recording = false;
+            throw;
+        }
+    }
+
+    void CommandContext::reset() noexcept
+    {
+        if (!_runtime)
+            return;
+        if (_recording)
+            vkDeviceWaitIdle(_runtime->device());
+        if (_fence)
+            vkDestroyFence(_runtime->device(), _fence, nullptr);
+        if (_commandBuffer)
+            vkFreeCommandBuffers(_runtime->device(), _runtime->commandPool(), 1, &_commandBuffer);
+        _fence = VK_NULL_HANDLE;
+        _commandBuffer = VK_NULL_HANDLE;
+        _recording = false;
+        _pendingDispatches = 0;
+        _submissionCount = 0;
+        _runtime = nullptr;
     }
 
 } // namespace plamatrix::vulkan

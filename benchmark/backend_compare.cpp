@@ -85,8 +85,8 @@ namespace
                 std::sort(timings.begin(), timings.end());
                 std::cout << backend << ',' << device << ',' << fixture.matrix.rows() << ',' << report.iterations << ','
                           << std::setprecision(9) << report.initialResidual << ',' << report.finalResidual << ','
-                          << coldReport.iterations << ',' << coldMilliseconds << ',' << timings[timings.size() / 2]
-                          << '\n';
+                          << report.commandSubmissions << ',' << coldReport.iterations << ',' << coldMilliseconds << ','
+                          << timings[timings.size() / 2] << '\n';
             }
         }
     }
@@ -102,8 +102,8 @@ int main(int argc, char** argv)
         return 2;
     }
     const Fixture fixture(size);
-    std::cout
-        << "backend,device,size,iterations,initial_residual,final_residual,cold_iterations,cold_ms,warm_median_ms\n";
+    std::cout << "backend,device,size,iterations,initial_residual,final_residual,command_submissions,cold_iterations,"
+                 "cold_ms,warm_median_ms\n";
     if (opencl::hasUsableOpenClDevice())
     {
         runCase("opencl",

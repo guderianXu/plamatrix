@@ -188,8 +188,9 @@ PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare 4096
 ```
 
 对比程序使用同一份 float32 三对角 SPD CSR 矩阵，输出 OpenCL/Vulkan 的设备名、迭代次数、
-初始/最终残差和端到端 PCG 中位时间。Vulkan 第一阶段只实现 float32 PCG，结果不代表其他
-算子（例如 GEMM 或 SVD）的后端性能。
+初始/最终残差、端到端 PCG 中位时间和 Vulkan 的 `command_submissions`。该列用于观察提交
+批处理是否生效；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现
+float32 PCG，结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。
 
 ### 3.3 常用构建组合
 

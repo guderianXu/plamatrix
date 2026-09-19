@@ -96,66 +96,17 @@ namespace plamatrix::vulkan
             ComputePipeline reduction;
         };
 
-        void dispatch(Runtime& runtime,
+        void dispatch(CommandContext& context,
                       const ComputePipeline& pipeline,
                       const std::vector<Buffer*>& buffers,
                       std::size_t groups,
                       const void* pushData,
                       std::uint32_t pushSize)
         {
-            DescriptorPool descriptorPool(runtime, 1, static_cast<std::uint32_t>(buffers.size()));
-            VkDescriptorSetAllocateInfo allocation{};
-            allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            allocation.descriptorPool = descriptorPool.handle();
-            allocation.descriptorSetCount = 1;
-            const VkDescriptorSetLayout layout = pipeline.descriptorLayout();
-            allocation.pSetLayouts = &layout;
-            VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-            if (vkAllocateDescriptorSets(runtime.device(), &allocation, &descriptorSet) != VK_SUCCESS)
-                throw std::runtime_error("Vulkan vkAllocateDescriptorSets failed");
-
-            std::vector<VkDescriptorBufferInfo> infos(buffers.size());
-            std::vector<VkWriteDescriptorSet> writes(buffers.size());
-            for (std::size_t index = 0; index < buffers.size(); ++index)
-            {
-                infos[index].buffer = buffers[index]->handle();
-                infos[index].offset = 0;
-                infos[index].range = buffers[index]->size();
-                writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[index].dstSet = descriptorSet;
-                writes[index].dstBinding = static_cast<std::uint32_t>(index);
-                writes[index].descriptorCount = 1;
-                writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                writes[index].pBufferInfo = &infos[index];
-            }
-            vkUpdateDescriptorSets(
-                runtime.device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-            const VkCommandBuffer command = runtime.beginCommandBuffer();
-            VkMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            vkCmdPipelineBarrier(command,
-                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                 0,
-                                 1,
-                                 &barrier,
-                                 0,
-                                 nullptr,
-                                 0,
-                                 nullptr);
-            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline());
-            vkCmdBindDescriptorSets(
-                command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout(), 0, 1, &descriptorSet, 0, nullptr);
-            if (pushSize != 0)
-                vkCmdPushConstants(command, pipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, pushSize, pushData);
-            vkCmdDispatch(command, static_cast<std::uint32_t>(groups), 1, 1);
-            runtime.submitAndWait(command);
+            context.dispatch(pipeline, buffers, groups, pushData, pushSize);
         }
 
-        double dot(Runtime& runtime,
+        double dot(CommandContext& context,
                    const ComputePipeline& pipeline,
                    Buffer& left,
                    Buffer& right,
@@ -168,15 +119,16 @@ namespace plamatrix::vulkan
             Buffer* current = &partialA;
             Buffer* next = &partialB;
             CountPush push{static_cast<std::uint32_t>(count)};
-            dispatch(runtime, pipeline, {&left, &right, current}, remaining, &push, sizeof(push));
+            dispatch(context, pipeline, {&left, &right, current}, remaining, &push, sizeof(push));
             while (remaining > 1)
             {
                 const std::size_t nextGroups = groupsFor(remaining);
                 push.count = static_cast<std::uint32_t>(remaining);
-                dispatch(runtime, pipeline, {current, &ones, next}, nextGroups, &push, sizeof(push));
+                dispatch(context, pipeline, {current, &ones, next}, nextGroups, &push, sizeof(push));
                 remaining = nextGroups;
                 std::swap(current, next);
             }
+            context.submitAndWait();
             const float value = *static_cast<const float*>(current->map());
             current->unmap();
             return static_cast<double>(value);
@@ -260,27 +212,29 @@ namespace plamatrix::vulkan
         copyToBuffer(matrixDirectionBuffer, zeros.data(), count * sizeof(float));
 
         static PipelineSet pipelines(runtime);
+        CommandContext context(runtime);
         const CountPush countPush{static_cast<std::uint32_t>(count)};
-        dispatch(runtime,
+        context.begin();
+        dispatch(context,
                  pipelines.spmv,
                  {&rowBuffer, &columnBuffer, &valueBuffer, &solutionBuffer, &matrixDirectionBuffer},
                  groupsFor(count),
                  &countPush,
                  sizeof(countPush));
-        dispatch(runtime,
+        dispatch(context,
                  pipelines.residualInit,
                  {&rhsBuffer, &matrixDirectionBuffer, &residualBuffer},
                  groupsFor(count),
                  &countPush,
                  sizeof(countPush));
-        dispatch(runtime,
+        dispatch(context,
                  pipelines.jacobi,
                  {&residualBuffer, &inverseBuffer, &transformedBuffer},
                  groupsFor(count),
                  &countPush,
                  sizeof(countPush));
         ScalePush zeroBeta{static_cast<std::uint32_t>(count), 0.0f};
-        dispatch(runtime,
+        dispatch(context,
                  pipelines.direction,
                  {&directionBuffer, &transformedBuffer},
                  groupsFor(count),
@@ -288,7 +242,7 @@ namespace plamatrix::vulkan
                  sizeof(zeroBeta));
 
         IterativeSolverReport report;
-        const double residualSquared = dot(runtime,
+        const double residualSquared = dot(context,
                                            pipelines.reduction,
                                            residualBuffer,
                                            residualBuffer,
@@ -301,7 +255,8 @@ namespace plamatrix::vulkan
         const double tolerance =
             std::max(options.absoluteTolerance, options.relativeTolerance * report.initialResidual);
         report.converged = report.finalResidual <= tolerance;
-        double rho = dot(runtime,
+        context.begin();
+        double rho = dot(context,
                          pipelines.reduction,
                          residualBuffer,
                          transformedBuffer,
@@ -314,13 +269,14 @@ namespace plamatrix::vulkan
         {
             if (!std::isfinite(rho) || rho <= 0.0)
                 throw std::runtime_error("Vulkan PCG breakdown in residual");
-            dispatch(runtime,
+            context.begin();
+            dispatch(context,
                      pipelines.spmv,
                      {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
                      groupsFor(count),
                      &countPush,
                      sizeof(countPush));
-            const double denominator = dot(runtime,
+            const double denominator = dot(context,
                                            pipelines.reduction,
                                            directionBuffer,
                                            matrixDirectionBuffer,
@@ -332,7 +288,8 @@ namespace plamatrix::vulkan
                 throw std::runtime_error("Vulkan PCG breakdown in matrix-direction product");
             const float alpha = static_cast<float>(rho / denominator);
             ScalePush updatePush{static_cast<std::uint32_t>(count), alpha};
-            dispatch(runtime,
+            context.begin();
+            dispatch(context,
                      pipelines.update,
                      {&solutionBuffer, &residualBuffer, &directionBuffer, &matrixDirectionBuffer},
                      groupsFor(count),
@@ -343,7 +300,7 @@ namespace plamatrix::vulkan
                 report.iterations % options.convergenceCheckInterval == 0 || report.iterations == options.maxIterations;
             if (check)
             {
-                const double residualNow = dot(runtime,
+                const double residualNow = dot(context,
                                                pipelines.reduction,
                                                residualBuffer,
                                                residualBuffer,
@@ -356,13 +313,16 @@ namespace plamatrix::vulkan
             }
             if (report.converged)
                 break;
-            dispatch(runtime,
+
+            if (check)
+                context.begin();
+            dispatch(context,
                      pipelines.jacobi,
                      {&residualBuffer, &inverseBuffer, &transformedBuffer},
                      groupsFor(count),
                      &countPush,
                      sizeof(countPush));
-            const double nextRho = dot(runtime,
+            const double nextRho = dot(context,
                                        pipelines.reduction,
                                        residualBuffer,
                                        transformedBuffer,
@@ -373,16 +333,19 @@ namespace plamatrix::vulkan
             if (!std::isfinite(nextRho) || nextRho <= 0.0)
                 throw std::runtime_error("Vulkan PCG breakdown in direction update");
             ScalePush directionPush{static_cast<std::uint32_t>(count), static_cast<float>(nextRho / rho)};
-            dispatch(runtime,
+            context.begin();
+            dispatch(context,
                      pipelines.direction,
                      {&directionBuffer, &transformedBuffer},
                      groupsFor(count),
                      &directionPush,
                      sizeof(directionPush));
+            context.submitAndWait();
             rho = nextRho;
         }
 
         copyFromBuffer(solutionBuffer, solution.data(), count * sizeof(float));
+        report.commandSubmissions = context.submissionCount();
         return report;
     }
 

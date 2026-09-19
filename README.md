@@ -117,6 +117,9 @@ target_link_libraries(my_project plamatrix::plamatrix)
 ./benchmark/plamatrix_backend_compare 4096
 ```
 
+该基准还会输出 Vulkan 的 `command_submissions`，用于确认多个 compute dispatch 是否被合并到
+阶段级 command buffer；OpenCL 的该列固定为 `0`，仅表示当前未暴露同等统计。
+
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
 CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含可批量执行的主机收敛检查，因而
 `kernel_only_ms` 对这两行表示完整 GPU 求解时间。

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/sparse/csr_matrix.h"
 #include "plamatrix/sparse/sparse_ops.h"
@@ -26,6 +28,8 @@ namespace plamatrix
         int iterations = 0;
         double initialResidual = 0.0;
         double finalResidual = 0.0;
+        /// Number of backend command submissions when the backend exposes this diagnostic.
+        std::uint32_t commandSubmissions = 0;
     };
 
     /// Move-only reusable storage for CUDA CG/PCG solves.
