@@ -185,12 +185,15 @@ cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DPLAMATRIX_WITH_OPENCL=ON \
   -DPLAMATRIX_WITH_VULKAN=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
 cmake --build . -j$(nproc)
 PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare 4096
+# 多规模大矩阵套件
+PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare --suite
 ```
 
 对比程序使用同一份 float32 三对角 SPD CSR 矩阵，输出 OpenCL/Vulkan 的设备名、迭代次数、
 初始/最终残差、端到端 PCG 中位时间和 Vulkan 的 `command_submissions`。该列用于观察提交
 批处理是否生效；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现
-float32 PCG，结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。
+float32 PCG，结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。`--suite` 会依次测试
+4096、16384、65536、262144 和 1048576 阶系统；也可以用 `--sizes N,N,...` 自定义规模。
 
 ### 3.3 常用构建组合
 

@@ -2,6 +2,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -95,38 +96,79 @@ namespace
 
 int main(int argc, char** argv)
 {
-    const Index size = argc > 1 ? static_cast<Index>(std::stoll(argv[1])) : 4096;
-    if (size <= 0)
+    std::vector<Index> sizes;
+    if (argc <= 1)
     {
-        std::cerr << "size must be positive\n";
+        sizes.push_back(4096);
+    }
+    else if (std::string(argv[1]) == "--help")
+    {
+        std::cout << "usage: plamatrix_backend_compare [SIZE] | --sizes N,N,... | --suite\n"
+                     "  --suite uses 4096,16384,65536,262144,1048576\n";
+        return 0;
+    }
+    else if (std::string(argv[1]) == "--suite")
+    {
+        sizes = {4096, 16384, 65536, 262144, 1048576};
+    }
+    else if (std::string(argv[1]) == "--sizes")
+    {
+        if (argc < 3)
+        {
+            std::cerr << "--sizes requires a comma-separated list\n";
+            return 2;
+        }
+        std::stringstream values(argv[2]);
+        std::string token;
+        while (std::getline(values, token, ','))
+        {
+            const Index size = static_cast<Index>(std::stoll(token));
+            if (size <= 0)
+            {
+                std::cerr << "sizes must be positive\n";
+                return 2;
+            }
+            sizes.push_back(size);
+        }
+    }
+    else
+    {
+        sizes.push_back(static_cast<Index>(std::stoll(argv[1])));
+    }
+    if (sizes.empty())
+    {
+        std::cerr << "at least one size is required\n";
         return 2;
     }
-    const Fixture fixture(size);
     std::cout << "backend,device,size,iterations,initial_residual,final_residual,command_submissions,cold_iterations,"
                  "cold_ms,warm_median_ms\n";
-    if (opencl::hasUsableOpenClDevice())
+    for (const Index size : sizes)
     {
-        runCase("opencl",
-                opencl::selectedOpenClDeviceName(),
-                fixture,
-                [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
-                { return opencl::pcg(matrix, rhs, solution, options); });
-    }
-    else
-    {
-        std::cerr << "opencl,skipped,no usable OpenCL device\n";
-    }
-    if (vulkan::hasUsableVulkanDevice())
-    {
-        runCase("vulkan",
-                vulkan::selectedVulkanDeviceName(),
-                fixture,
-                [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
-                { return vulkan::pcg(matrix, rhs, solution, options); });
-    }
-    else
-    {
-        std::cerr << "vulkan,skipped,no usable Vulkan device\n";
+        const Fixture fixture(size);
+        if (opencl::hasUsableOpenClDevice())
+        {
+            runCase("opencl",
+                    opencl::selectedOpenClDeviceName(),
+                    fixture,
+                    [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
+                    { return opencl::pcg(matrix, rhs, solution, options); });
+        }
+        else
+        {
+            std::cerr << "opencl,skipped,no usable OpenCL device\n";
+        }
+        if (vulkan::hasUsableVulkanDevice())
+        {
+            runCase("vulkan",
+                    vulkan::selectedVulkanDeviceName(),
+                    fixture,
+                    [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
+                    { return vulkan::pcg(matrix, rhs, solution, options); });
+        }
+        else
+        {
+            std::cerr << "vulkan,skipped,no usable Vulkan device\n";
+        }
     }
     return 0;
 }

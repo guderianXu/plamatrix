@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -96,6 +98,91 @@ namespace plamatrix::vulkan
             ComputePipeline reduction;
         };
 
+        struct PcgBuffers
+        {
+            const std::size_t count;
+            const std::size_t nnz;
+            std::unique_ptr<Buffer> row;
+            std::unique_ptr<Buffer> column;
+            std::unique_ptr<Buffer> value;
+            std::unique_ptr<Buffer> rhs;
+            std::unique_ptr<Buffer> solution;
+            std::unique_ptr<Buffer> residual;
+            std::unique_ptr<Buffer> transformed;
+            std::unique_ptr<Buffer> direction;
+            std::unique_ptr<Buffer> matrixDirection;
+            std::unique_ptr<Buffer> inverse;
+            std::unique_ptr<Buffer> ones;
+            std::unique_ptr<Buffer> partialA;
+            std::unique_ptr<Buffer> partialB;
+            std::unique_ptr<Buffer> rowUpload;
+            std::unique_ptr<Buffer> columnUpload;
+            std::unique_ptr<Buffer> valueUpload;
+            std::unique_ptr<Buffer> rhsUpload;
+            std::unique_ptr<Buffer> solutionUpload;
+            std::unique_ptr<Buffer> inverseUpload;
+            std::unique_ptr<Buffer> onesUpload;
+            std::unique_ptr<Buffer> reductionReadback;
+            std::unique_ptr<Buffer> solutionReadback;
+            std::unique_ptr<CommandContext> context;
+
+            PcgBuffers(Runtime& runtime, std::size_t countValue, std::size_t nnzValue)
+                : count(countValue), nnz(nnzValue)
+            {
+                const VkDeviceSize uintBytes = static_cast<VkDeviceSize>(sizeof(std::uint32_t));
+                const VkDeviceSize floatBytes = static_cast<VkDeviceSize>(sizeof(float));
+                const VkBufferUsageFlags storageUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                const VkBufferUsageFlags deviceInputUsage = storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                const VkBufferUsageFlags deviceOutputUsage =
+                    storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                const VkBufferUsageFlags stagingSourceUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                const VkBufferUsageFlags stagingDestinationUsage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                const VkBufferUsageFlags partialUsage =
+                    storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                const std::size_t partialCount = groupsFor(count);
+
+                row = std::make_unique<Buffer>(
+                    runtime, (count + 1) * uintBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                column = std::make_unique<Buffer>(
+                    runtime, std::max<std::size_t>(1, nnz) * uintBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                value = std::make_unique<Buffer>(
+                    runtime, std::max<std::size_t>(1, nnz) * floatBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                rhs =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                solution =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, deviceOutputUsage, BufferMemory::DeviceLocal);
+                residual =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, storageUsage, BufferMemory::DeviceLocal);
+                transformed =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, storageUsage, BufferMemory::DeviceLocal);
+                direction =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, storageUsage, BufferMemory::DeviceLocal);
+                matrixDirection =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, storageUsage, BufferMemory::DeviceLocal);
+                inverse =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                ones =
+                    std::make_unique<Buffer>(runtime, count * floatBytes, deviceInputUsage, BufferMemory::DeviceLocal);
+                partialA = std::make_unique<Buffer>(
+                    runtime, partialCount * floatBytes, partialUsage, BufferMemory::DeviceLocal);
+                partialB = std::make_unique<Buffer>(
+                    runtime, partialCount * floatBytes, partialUsage, BufferMemory::DeviceLocal);
+
+                rowUpload = std::make_unique<Buffer>(runtime, (count + 1) * uintBytes, stagingSourceUsage);
+                columnUpload =
+                    std::make_unique<Buffer>(runtime, std::max<std::size_t>(1, nnz) * uintBytes, stagingSourceUsage);
+                valueUpload =
+                    std::make_unique<Buffer>(runtime, std::max<std::size_t>(1, nnz) * floatBytes, stagingSourceUsage);
+                rhsUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
+                solutionUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
+                inverseUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
+                onesUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
+                reductionReadback = std::make_unique<Buffer>(runtime, floatBytes, stagingDestinationUsage);
+                solutionReadback = std::make_unique<Buffer>(runtime, count * floatBytes, stagingDestinationUsage);
+                context = std::make_unique<CommandContext>(runtime);
+            }
+        };
+
         void dispatch(CommandContext& context,
                       const ComputePipeline& pipeline,
                       const std::vector<Buffer*>& buffers,
@@ -113,6 +200,7 @@ namespace plamatrix::vulkan
                    Buffer& partialA,
                    Buffer& partialB,
                    Buffer& ones,
+                   Buffer& readback,
                    std::size_t count)
         {
             std::size_t remaining = groupsFor(count);
@@ -128,9 +216,10 @@ namespace plamatrix::vulkan
                 remaining = nextGroups;
                 std::swap(current, next);
             }
+            context.copy(*current, readback, sizeof(float));
             context.submitAndWait();
-            const float value = *static_cast<const float*>(current->map());
-            current->unmap();
+            const float value = *static_cast<const float*>(readback.map());
+            readback.unmap();
             return static_cast<double>(value);
         }
 
@@ -155,6 +244,8 @@ namespace plamatrix::vulkan
         }
 
         Runtime& runtime = Runtime::instance();
+        static std::mutex solveMutex;
+        const std::lock_guard<std::mutex> solveLock(solveMutex);
         const std::size_t count = static_cast<std::size_t>(matrix.rows());
         const std::size_t nnz = static_cast<std::size_t>(matrix.nnz());
         std::vector<std::uint32_t> rowOffsets(count + 1);
@@ -166,23 +257,32 @@ namespace plamatrix::vulkan
         const auto inverse = inverseDiagonal(matrix, options.useJacobiPreconditioner);
         std::vector<float> ones(count, 1.0f);
 
-        const VkDeviceSize uintBytes = static_cast<VkDeviceSize>(sizeof(std::uint32_t));
-        const VkDeviceSize floatBytes = static_cast<VkDeviceSize>(sizeof(float));
-        Buffer rowBuffer(runtime, (count + 1) * uintBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer columnBuffer(runtime, std::max<std::size_t>(1, nnz) * uintBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer valueBuffer(runtime, std::max<std::size_t>(1, nnz) * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer rhsBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer solutionBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer residualBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer transformedBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer directionBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer matrixDirectionBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer inverseBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer onesBuffer(runtime, count * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        const std::size_t partialCount = groupsFor(count);
-        Buffer partialABuffer(runtime, partialCount * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        Buffer partialBBuffer(runtime, partialCount * floatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-
+        static std::unique_ptr<PcgBuffers> workspace;
+        if (!workspace || workspace->count != count || workspace->nnz != nnz)
+            workspace = std::make_unique<PcgBuffers>(runtime, count, nnz);
+        PcgBuffers& buffers = *workspace;
+        Buffer& rowBuffer = *buffers.row;
+        Buffer& columnBuffer = *buffers.column;
+        Buffer& valueBuffer = *buffers.value;
+        Buffer& rhsBuffer = *buffers.rhs;
+        Buffer& solutionBuffer = *buffers.solution;
+        Buffer& residualBuffer = *buffers.residual;
+        Buffer& transformedBuffer = *buffers.transformed;
+        Buffer& directionBuffer = *buffers.direction;
+        Buffer& matrixDirectionBuffer = *buffers.matrixDirection;
+        Buffer& inverseBuffer = *buffers.inverse;
+        Buffer& onesBuffer = *buffers.ones;
+        Buffer& partialABuffer = *buffers.partialA;
+        Buffer& partialBBuffer = *buffers.partialB;
+        Buffer& rowUpload = *buffers.rowUpload;
+        Buffer& columnUpload = *buffers.columnUpload;
+        Buffer& valueUpload = *buffers.valueUpload;
+        Buffer& rhsUpload = *buffers.rhsUpload;
+        Buffer& solutionUpload = *buffers.solutionUpload;
+        Buffer& inverseUpload = *buffers.inverseUpload;
+        Buffer& onesUpload = *buffers.onesUpload;
+        Buffer& reductionReadback = *buffers.reductionReadback;
+        Buffer& solutionReadback = *buffers.solutionReadback;
         auto copyToBuffer = [](Buffer& buffer, const void* source, std::size_t bytes)
         {
             void* destination = buffer.map();
@@ -195,24 +295,33 @@ namespace plamatrix::vulkan
             std::memcpy(destination, source, bytes);
             buffer.unmap();
         };
-        copyToBuffer(rowBuffer, rowOffsets.data(), rowOffsets.size() * sizeof(std::uint32_t));
+        copyToBuffer(rowUpload, rowOffsets.data(), rowOffsets.size() * sizeof(std::uint32_t));
         if (nnz != 0)
         {
-            copyToBuffer(columnBuffer, columns.data(), columns.size() * sizeof(std::uint32_t));
-            copyToBuffer(valueBuffer, matrix.values(), nnz * sizeof(float));
+            copyToBuffer(columnUpload, columns.data(), columns.size() * sizeof(std::uint32_t));
+            copyToBuffer(valueUpload, matrix.values(), nnz * sizeof(float));
         }
-        copyToBuffer(rhsBuffer, rhs.data(), count * sizeof(float));
-        copyToBuffer(solutionBuffer, solution.data(), count * sizeof(float));
-        copyToBuffer(inverseBuffer, inverse.data(), count * sizeof(float));
-        copyToBuffer(onesBuffer, ones.data(), count * sizeof(float));
-        std::vector<float> zeros(count, 0.0f);
-        copyToBuffer(residualBuffer, zeros.data(), count * sizeof(float));
-        copyToBuffer(transformedBuffer, zeros.data(), count * sizeof(float));
-        copyToBuffer(directionBuffer, zeros.data(), count * sizeof(float));
-        copyToBuffer(matrixDirectionBuffer, zeros.data(), count * sizeof(float));
+        copyToBuffer(rhsUpload, rhs.data(), count * sizeof(float));
+        copyToBuffer(solutionUpload, solution.data(), count * sizeof(float));
+        copyToBuffer(inverseUpload, inverse.data(), count * sizeof(float));
+        copyToBuffer(onesUpload, ones.data(), count * sizeof(float));
 
         static PipelineSet pipelines(runtime);
-        CommandContext context(runtime);
+        CommandContext& context = *buffers.context;
+        context.resetSubmissionCount();
+        context.begin();
+        context.copy(rowUpload, rowBuffer, rowOffsets.size() * sizeof(std::uint32_t));
+        if (nnz != 0)
+        {
+            context.copy(columnUpload, columnBuffer, columns.size() * sizeof(std::uint32_t));
+            context.copy(valueUpload, valueBuffer, nnz * sizeof(float));
+        }
+        context.copy(rhsUpload, rhsBuffer, count * sizeof(float));
+        context.copy(solutionUpload, solutionBuffer, count * sizeof(float));
+        context.copy(inverseUpload, inverseBuffer, count * sizeof(float));
+        context.copy(onesUpload, onesBuffer, count * sizeof(float));
+        context.submitAndWait();
+
         const CountPush countPush{static_cast<std::uint32_t>(count)};
         context.begin();
         dispatch(context,
@@ -249,6 +358,7 @@ namespace plamatrix::vulkan
                                            partialABuffer,
                                            partialBBuffer,
                                            onesBuffer,
+                                           reductionReadback,
                                            count);
         report.initialResidual = std::sqrt(residualSquared);
         report.finalResidual = report.initialResidual;
@@ -263,6 +373,7 @@ namespace plamatrix::vulkan
                          partialABuffer,
                          partialBBuffer,
                          onesBuffer,
+                         reductionReadback,
                          count);
 
         for (int iteration = 0; !report.converged && iteration < options.maxIterations; ++iteration)
@@ -283,6 +394,7 @@ namespace plamatrix::vulkan
                                            partialABuffer,
                                            partialBBuffer,
                                            onesBuffer,
+                                           reductionReadback,
                                            count);
             if (!std::isfinite(denominator) || denominator <= 0.0)
                 throw std::runtime_error("Vulkan PCG breakdown in matrix-direction product");
@@ -307,6 +419,7 @@ namespace plamatrix::vulkan
                                                partialABuffer,
                                                partialBBuffer,
                                                onesBuffer,
+                                               reductionReadback,
                                                count);
                 report.finalResidual = std::sqrt(residualNow);
                 report.converged = std::isfinite(report.finalResidual) && report.finalResidual <= tolerance;
@@ -329,6 +442,7 @@ namespace plamatrix::vulkan
                                        partialABuffer,
                                        partialBBuffer,
                                        onesBuffer,
+                                       reductionReadback,
                                        count);
             if (!std::isfinite(nextRho) || nextRho <= 0.0)
                 throw std::runtime_error("Vulkan PCG breakdown in direction update");
@@ -344,7 +458,10 @@ namespace plamatrix::vulkan
             rho = nextRho;
         }
 
-        copyFromBuffer(solutionBuffer, solution.data(), count * sizeof(float));
+        context.begin();
+        context.copy(solutionBuffer, solutionReadback, count * sizeof(float));
+        context.submitAndWait();
+        copyFromBuffer(solutionReadback, solution.data(), count * sizeof(float));
         report.commandSubmissions = context.submissionCount();
         return report;
     }

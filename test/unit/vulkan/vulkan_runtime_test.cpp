@@ -100,4 +100,25 @@ namespace plamatrix::vulkan
         context.submitAndWait();
     }
 
+    TEST(VulkanExecution, CopiesBetweenHostAndDeviceLocalBuffers)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        Runtime& runtime = Runtime::instance();
+        Buffer source(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, BufferMemory::HostVisible);
+        Buffer device(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, BufferMemory::DeviceLocal);
+        Buffer result(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, BufferMemory::HostVisible);
+        *static_cast<float*>(source.map()) = 42.5f;
+        source.unmap();
+        CommandContext context(runtime);
+        context.begin();
+        context.copy(source, device, sizeof(float));
+        context.submitAndWait();
+        context.begin();
+        context.copy(device, result, sizeof(float));
+        context.submitAndWait();
+        EXPECT_FLOAT_EQ(*static_cast<const float*>(result.map()), 42.5f);
+        result.unmap();
+    }
+
 } // namespace plamatrix::vulkan

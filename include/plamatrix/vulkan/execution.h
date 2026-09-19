@@ -87,7 +87,12 @@ namespace plamatrix::vulkan
                       std::size_t groups,
                       const void* pushData,
                       std::uint32_t pushSize);
+        void copy(const Buffer& source, Buffer& destination, VkDeviceSize size);
         void submitAndWait();
+        void resetSubmissionCount() noexcept
+        {
+            _submissionCount = 0;
+        }
         std::uint32_t pendingDispatchCount() const noexcept
         {
             return _pendingDispatches;

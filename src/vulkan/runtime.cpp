@@ -286,7 +286,8 @@ namespace plamatrix::vulkan
         }
     }
 
-    Buffer::Buffer(Runtime& runtime, VkDeviceSize size, VkBufferUsageFlags usage) : _runtime(&runtime), _size(size)
+    Buffer::Buffer(Runtime& runtime, VkDeviceSize size, VkBufferUsageFlags usage, BufferMemory memory)
+        : _runtime(&runtime), _size(size), _hostVisible(memory == BufferMemory::HostVisible)
     {
         if (size == 0)
             throw std::invalid_argument("Vulkan buffer size must be greater than zero");
@@ -301,8 +302,11 @@ namespace plamatrix::vulkan
         VkMemoryAllocateInfo allocation{};
         allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = runtime.findMemoryType(
-            requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const VkMemoryPropertyFlags properties =
+            memory == BufferMemory::HostVisible
+                ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        allocation.memoryTypeIndex = runtime.findMemoryType(requirements.memoryTypeBits, properties);
         try
         {
             checkVk(vkAllocateMemory(runtime.device(), &allocation, nullptr, &_memory), "vkAllocateMemory");
@@ -322,7 +326,8 @@ namespace plamatrix::vulkan
 
     Buffer::Buffer(Buffer&& other) noexcept
         : _runtime(std::exchange(other._runtime, nullptr)), _buffer(std::exchange(other._buffer, VK_NULL_HANDLE)),
-          _memory(std::exchange(other._memory, VK_NULL_HANDLE)), _size(std::exchange(other._size, 0))
+          _memory(std::exchange(other._memory, VK_NULL_HANDLE)), _size(std::exchange(other._size, 0)),
+          _hostVisible(std::exchange(other._hostVisible, false))
     {
     }
 
@@ -335,12 +340,15 @@ namespace plamatrix::vulkan
             _buffer = std::exchange(other._buffer, VK_NULL_HANDLE);
             _memory = std::exchange(other._memory, VK_NULL_HANDLE);
             _size = std::exchange(other._size, 0);
+            _hostVisible = std::exchange(other._hostVisible, false);
         }
         return *this;
     }
 
     void* Buffer::map()
     {
+        if (!_hostVisible)
+            throw std::logic_error("Vulkan device-local buffer cannot be mapped");
         void* data = nullptr;
         checkVk(vkMapMemory(_runtime->device(), _memory, 0, _size, 0, &data), "vkMapMemory");
         return data;
@@ -365,6 +373,7 @@ namespace plamatrix::vulkan
         _buffer = VK_NULL_HANDLE;
         _memory = VK_NULL_HANDLE;
         _size = 0;
+        _hostVisible = false;
     }
 
 } // namespace plamatrix::vulkan

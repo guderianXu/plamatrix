@@ -28,11 +28,20 @@ namespace plamatrix::vulkan
 
     class Runtime;
 
+    enum class BufferMemory
+    {
+        HostVisible,
+        DeviceLocal
+    };
+
     class Buffer
     {
     public:
         Buffer() = default;
-        Buffer(Runtime& runtime, VkDeviceSize size, VkBufferUsageFlags usage);
+        Buffer(Runtime& runtime,
+               VkDeviceSize size,
+               VkBufferUsageFlags usage,
+               BufferMemory memory = BufferMemory::HostVisible);
         ~Buffer() noexcept;
         Buffer(const Buffer&) = delete;
         Buffer& operator=(const Buffer&) = delete;
@@ -49,6 +58,10 @@ namespace plamatrix::vulkan
         }
         void* map();
         void unmap() noexcept;
+        bool hostVisible() const noexcept
+        {
+            return _hostVisible;
+        }
 
     private:
         void reset() noexcept;
@@ -56,6 +69,7 @@ namespace plamatrix::vulkan
         VkBuffer _buffer = VK_NULL_HANDLE;
         VkDeviceMemory _memory = VK_NULL_HANDLE;
         VkDeviceSize _size = 0;
+        bool _hostVisible = false;
     };
 
     class Runtime

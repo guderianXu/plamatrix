@@ -309,6 +309,17 @@ namespace plamatrix::vulkan
         ++_pendingDispatches;
     }
 
+    void CommandContext::copy(const Buffer& source, Buffer& destination, VkDeviceSize size)
+    {
+        if (!_recording)
+            throw std::logic_error("Vulkan command context is not recording");
+        if (size == 0 || size > source.size() || size > destination.size())
+            throw std::invalid_argument("Vulkan buffer copy size is out of range");
+        VkBufferCopy region{};
+        region.size = size;
+        vkCmdCopyBuffer(_commandBuffer, source.handle(), destination.handle(), 1, &region);
+    }
+
     void CommandContext::submitAndWait()
     {
         if (!_recording)

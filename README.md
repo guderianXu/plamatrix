@@ -115,6 +115,10 @@ target_link_libraries(my_project plamatrix::plamatrix)
 
 # OpenCL/Vulkan 相同 CSR-PCG 工作负载对比（参数为矩阵规模）
 ./benchmark/plamatrix_backend_compare 4096
+# 多规模大矩阵套件
+./benchmark/plamatrix_backend_compare --suite
+# 自定义规模
+./benchmark/plamatrix_backend_compare --sizes 4096,16384,65536,262144,1048576
 ```
 
 该基准还会输出 Vulkan 的 `command_submissions`，用于确认多个 compute dispatch 是否被合并到
