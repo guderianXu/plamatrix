@@ -312,6 +312,7 @@ namespace plamatrix::vulkan
 
         static PipelineSet pipelines(runtime);
         CommandContext& context = *buffers.context;
+        const std::uint32_t descriptorSetsBefore = context.descriptorSetAllocations();
         context.resetSubmissionCount();
         context.begin();
         context.copy(rowUpload, rowBuffer, rowOffsets.size() * sizeof(std::uint32_t));
@@ -455,6 +456,7 @@ namespace plamatrix::vulkan
         context.submitAndWait();
         copyFromBuffer(solutionReadback, solution.data(), count * sizeof(float));
         report.commandSubmissions = context.submissionCount();
+        report.descriptorSetAllocations = context.descriptorSetAllocations() - descriptorSetsBefore;
         return report;
     }
 

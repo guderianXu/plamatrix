@@ -30,6 +30,8 @@ namespace plamatrix
         double finalResidual = 0.0;
         /// Number of backend command submissions when the backend exposes this diagnostic.
         std::uint32_t commandSubmissions = 0;
+        /// Number of descriptor sets allocated during the solve when the backend exposes this diagnostic.
+        std::uint32_t descriptorSetAllocations = 0;
     };
 
     /// Move-only reusable storage for CUDA CG/PCG solves.

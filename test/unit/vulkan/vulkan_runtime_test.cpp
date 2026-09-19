@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include <gtest/gtest.h>
 
@@ -141,6 +142,27 @@ namespace plamatrix::vulkan
         context.begin();
         EXPECT_EQ(context.pendingDispatchCount(), 0u);
         context.submitAndWait();
+    }
+
+    TEST(VulkanExecution, ReusesDescriptorSetsAcrossBatches)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        Runtime& runtime = Runtime::instance();
+        ComputePipeline pipeline(runtime, "jacobi", 3, sizeof(std::uint32_t));
+        Buffer residual(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer inverse(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer transformed(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const std::uint32_t count = 1;
+        CommandContext context(runtime);
+        context.begin();
+        context.dispatch(pipeline, {&residual, &inverse, &transformed}, 1, &count, sizeof(count));
+        context.submitAndWait();
+        EXPECT_EQ(context.descriptorSetAllocations(), 1u);
+        context.begin();
+        context.dispatch(pipeline, {&residual, &inverse, &transformed}, 1, &count, sizeof(count));
+        context.submitAndWait();
+        EXPECT_EQ(context.descriptorSetAllocations(), 1u);
     }
 
     TEST(VulkanExecution, CopiesBetweenHostAndDeviceLocalBuffers)

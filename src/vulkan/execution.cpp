@@ -2,6 +2,7 @@
 
 #ifdef PLAMATRIX_WITH_VULKAN
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <vector>
@@ -211,7 +212,9 @@ namespace plamatrix::vulkan
           _commandBuffer(std::exchange(other._commandBuffer, VK_NULL_HANDLE)),
           _fence(std::exchange(other._fence, VK_NULL_HANDLE)), _recording(std::exchange(other._recording, false)),
           _pendingDispatches(std::exchange(other._pendingDispatches, 0)),
-          _submissionCount(std::exchange(other._submissionCount, 0))
+          _submissionCount(std::exchange(other._submissionCount, 0)),
+          _descriptorSetAllocations(std::exchange(other._descriptorSetAllocations, 0)),
+          _descriptorSets(std::move(other._descriptorSets))
     {
     }
 
@@ -227,6 +230,8 @@ namespace plamatrix::vulkan
             _recording = std::exchange(other._recording, false);
             _pendingDispatches = std::exchange(other._pendingDispatches, 0);
             _submissionCount = std::exchange(other._submissionCount, 0);
+            _descriptorSetAllocations = std::exchange(other._descriptorSetAllocations, 0);
+            _descriptorSets = std::move(other._descriptorSets);
         }
         return *this;
     }
@@ -237,7 +242,6 @@ namespace plamatrix::vulkan
             throw std::runtime_error("Vulkan command context is not initialized");
         if (_recording)
             throw std::logic_error("Vulkan command context is already recording");
-        _descriptorPool.resetForReuse();
         checkVk(vkResetCommandBuffer(_commandBuffer, 0), "vkResetCommandBuffer");
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -258,33 +262,53 @@ namespace plamatrix::vulkan
         if (groups == 0 || groups > std::numeric_limits<std::uint32_t>::max())
             throw std::invalid_argument("Vulkan dispatch group count is out of range");
 
-        VkDescriptorSetAllocateInfo allocation{};
-        allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocation.descriptorPool = _descriptorPool.handle();
-        allocation.descriptorSetCount = 1;
         const VkDescriptorSetLayout layout = pipeline.descriptorLayout();
-        allocation.pSetLayouts = &layout;
-        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-        checkVk(vkAllocateDescriptorSets(_runtime->device(), &allocation, &descriptorSet), "vkAllocateDescriptorSets");
-
-        std::vector<VkDescriptorBufferInfo> infos(buffers.size());
-        std::vector<VkWriteDescriptorSet> writes(buffers.size());
+        std::vector<VkBuffer> handles;
+        handles.reserve(buffers.size());
         for (std::size_t index = 0; index < buffers.size(); ++index)
         {
             if (!buffers[index] || buffers[index]->handle() == VK_NULL_HANDLE)
                 throw std::invalid_argument("Vulkan dispatch received an empty buffer");
-            infos[index].buffer = buffers[index]->handle();
-            infos[index].offset = 0;
-            infos[index].range = buffers[index]->size();
-            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[index].dstSet = descriptorSet;
-            writes[index].dstBinding = static_cast<std::uint32_t>(index);
-            writes[index].descriptorCount = 1;
-            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[index].pBufferInfo = &infos[index];
+            handles.push_back(buffers[index]->handle());
         }
-        vkUpdateDescriptorSets(
-            _runtime->device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        const auto cached = std::find_if(_descriptorSets.begin(),
+                                         _descriptorSets.end(),
+                                         [&](const CachedDescriptorSet& entry)
+                                         { return entry.layout == layout && entry.buffers == handles; });
+        if (cached != _descriptorSets.end())
+        {
+            descriptorSet = cached->set;
+        }
+        else
+        {
+            VkDescriptorSetAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocation.descriptorPool = _descriptorPool.handle();
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &layout;
+            checkVk(vkAllocateDescriptorSets(_runtime->device(), &allocation, &descriptorSet),
+                    "vkAllocateDescriptorSets");
+
+            std::vector<VkDescriptorBufferInfo> infos(buffers.size());
+            std::vector<VkWriteDescriptorSet> writes(buffers.size());
+            for (std::size_t index = 0; index < buffers.size(); ++index)
+            {
+                infos[index].buffer = handles[index];
+                infos[index].offset = 0;
+                infos[index].range = buffers[index]->size();
+                writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[index].dstSet = descriptorSet;
+                writes[index].dstBinding = static_cast<std::uint32_t>(index);
+                writes[index].descriptorCount = 1;
+                writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[index].pBufferInfo = &infos[index];
+            }
+            vkUpdateDescriptorSets(
+                _runtime->device(), static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            _descriptorSets.push_back(CachedDescriptorSet{layout, std::move(handles), descriptorSet});
+            ++_descriptorSetAllocations;
+        }
 
         VkMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -360,6 +384,8 @@ namespace plamatrix::vulkan
         _recording = false;
         _pendingDispatches = 0;
         _submissionCount = 0;
+        _descriptorSetAllocations = 0;
+        _descriptorSets.clear();
         _runtime = nullptr;
     }
 

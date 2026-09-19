@@ -190,8 +190,8 @@ PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare --suite
 ```
 
 对比程序输出 OpenCL/Vulkan 的设备名、实际 CSR 维度和非零元数、迭代次数、初始/最终残差、
-端到端 PCG 中位时间和 Vulkan 的 `command_submissions`。该列用于观察显式 queue submit/fence
-wait 的数量；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现 float32 PCG，
+端到端 PCG 中位时间、Vulkan 的 `command_submissions` 和 `cold_descriptor_set_allocations`。这些列用于
+观察显式 queue submit/fence wait 以及冷启动 descriptor set 创建数量；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现 float32 PCG，
 结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。
 
 除了默认三对角系统，还可以运行更接近 PlaScan 数据形态的场景：

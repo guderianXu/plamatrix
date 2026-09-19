@@ -52,8 +52,8 @@ namespace
                 std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
                           << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
                           << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
-                          << ',' << coldReport.iterations << ',' << coldMilliseconds << ','
-                          << timings[timings.size() / 2] << '\n';
+                          << ',' << coldReport.descriptorSetAllocations << ',' << coldReport.iterations << ','
+                          << coldMilliseconds << ',' << timings[timings.size() / 2] << '\n';
             }
         }
     }
@@ -139,7 +139,7 @@ int main(int argc, char** argv)
         return 2;
     }
     std::cout << "scenario,backend,device,dimension,nnz,iterations,initial_residual,final_residual,command_submissions,"
-                 "cold_iterations,cold_ms,warm_median_ms\n";
+                 "cold_descriptor_set_allocations,cold_iterations,cold_ms,warm_median_ms\n";
     auto runFixture = [](const BackendFixture& fixture)
     {
         if (opencl::hasUsableOpenClDevice())

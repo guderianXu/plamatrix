@@ -101,8 +101,19 @@ namespace plamatrix::vulkan
         {
             return _submissionCount;
         }
+        std::uint32_t descriptorSetAllocations() const noexcept
+        {
+            return _descriptorSetAllocations;
+        }
 
     private:
+        struct CachedDescriptorSet
+        {
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            std::vector<VkBuffer> buffers;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+        };
+
         void reset() noexcept;
         Runtime* _runtime = nullptr;
         DescriptorPool _descriptorPool;
@@ -111,6 +122,8 @@ namespace plamatrix::vulkan
         bool _recording = false;
         std::uint32_t _pendingDispatches = 0;
         std::uint32_t _submissionCount = 0;
+        std::uint32_t _descriptorSetAllocations = 0;
+        std::vector<CachedDescriptorSet> _descriptorSets;
     };
 
 } // namespace plamatrix::vulkan
