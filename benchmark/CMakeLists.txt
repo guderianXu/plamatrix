@@ -24,6 +24,12 @@ else()
     target_compile_definitions(plamatrix_benchmark PRIVATE PLAMATRIX_NO_CUDA=1)
 endif()
 
+if(PLAMATRIX_WITH_VULKAN)
+    add_executable(plamatrix_backend_compare backend_compare.cpp)
+    target_link_libraries(plamatrix_backend_compare PRIVATE plamatrix)
+    target_include_directories(plamatrix_backend_compare PRIVATE ${PROJECT_SOURCE_DIR})
+endif()
+
 if(PLAMATRIX_BUILD_TESTS)
     add_executable(plamatrix_benchmark_report_test
         report_writer_test.cpp

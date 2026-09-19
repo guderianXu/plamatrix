@@ -47,6 +47,38 @@ else()
     )
 endif()
 
+if(PLAMATRIX_WITH_VULKAN)
+    set(_PLAMATRIX_VULKAN_SHADER_NAMES
+        residual_init
+        spmv
+        jacobi
+        update
+        direction
+        dot_reduce)
+    set(_PLAMATRIX_VULKAN_SHADER_OUTPUTS)
+    foreach(_shader_name IN LISTS _PLAMATRIX_VULKAN_SHADER_NAMES)
+        set(_shader_input "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/${_shader_name}.comp")
+        set(_shader_output "${CMAKE_CURRENT_BINARY_DIR}/../vulkan-shaders/${_shader_name}.spv")
+        add_custom_command(
+            OUTPUT "${_shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/../vulkan-shaders"
+            COMMAND ${PLAMATRIX_GLSLANG_VALIDATOR} -V "${_shader_input}" -o "${_shader_output}"
+            DEPENDS "${_shader_input}"
+            VERBATIM)
+        list(APPEND _PLAMATRIX_VULKAN_SHADER_OUTPUTS "${_shader_output}")
+    endforeach()
+    add_custom_target(plamatrix_vulkan_shaders DEPENDS ${_PLAMATRIX_VULKAN_SHADER_OUTPUTS})
+    add_dependencies(plamatrix plamatrix_vulkan_shaders)
+    target_sources(plamatrix PRIVATE
+        vulkan/runtime.cpp
+        vulkan/execution.cpp
+        vulkan/iterative_solver.cpp)
+    install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/../vulkan-shaders/"
+        DESTINATION share/plamatrix/vulkan-shaders)
+else()
+    target_sources(plamatrix PRIVATE vulkan/iterative_solver_stub.cpp)
+endif()
+
 # ---- GPU / CUDA sources (only when CUDA is enabled) ----
 if(PLAMATRIX_WITH_CUDA)
     target_sources(plamatrix PRIVATE

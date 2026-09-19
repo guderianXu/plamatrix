@@ -167,12 +167,29 @@ cmake --build . -j$(nproc)
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | GPU 加速，无 NVIDIA GPU 设为 `OFF` |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 架构目标。可设为具体值如 `80`(A100)、`86`(RTX3090)、`89`(RTX4090) |
 | `PLAMATRIX_WITH_OPENCL` | `ON` | OpenCL 1.2 执行后端，依赖缺失时自动关闭 |
+| `PLAMATRIX_WITH_VULKAN` | `OFF` | Vulkan 1.1 Compute 后端；显式开启时需要 Vulkan SDK/loader 与 `glslangValidator` |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 `float` (32-bit) 实例化 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 `double` (64-bit) 实例化 |
 | `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 (需要 Google Test) |
 | `PLAMATRIX_BUILD_BENCHMARKS` | `OFF` | 构建性能基准测试 |
 
 独立顶层构建时仍兼容 `BUILD_TESTS` / `BUILD_BENCHMARKS` 短名；作为 `add_subdirectory()` 子项目集成时应使用 `PLAMATRIX_BUILD_*` 选项。
+
+### 3.4 Vulkan Compute 构建与 OpenCL 对比
+
+Vulkan 后端只使用 Compute API，不需要窗口系统。配置时 GLSL shader 会由
+`glslangValidator` 编译成 SPIR-V：
+
+```bash
+cmake .. -DPLAMATRIX_WITH_CUDA=OFF -DPLAMATRIX_WITH_OPENCL=ON \
+  -DPLAMATRIX_WITH_VULKAN=ON -DPLAMATRIX_BUILD_BENCHMARKS=ON
+cmake --build . -j$(nproc)
+PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare 4096
+```
+
+对比程序使用同一份 float32 三对角 SPD CSR 矩阵，输出 OpenCL/Vulkan 的设备名、迭代次数、
+初始/最终残差和端到端 PCG 中位时间。Vulkan 第一阶段只实现 float32 PCG，结果不代表其他
+算子（例如 GEMM 或 SVD）的后端性能。
 
 ### 3.3 常用构建组合
 

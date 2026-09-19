@@ -37,6 +37,8 @@
 #ifdef PLAMATRIX_WITH_OPENCL
 #include "plamatrix/opencl/execution.h"
 #endif
+#include "plamatrix/vulkan/runtime.h"
+#include "plamatrix/vulkan/iterative_solver.h"
 #include "plamatrix/dense/dense_matrix.h"
 #include "plamatrix/dense/dense_ops.h"
 #include "plamatrix/dense/elementwise.h"

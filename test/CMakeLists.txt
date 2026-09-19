@@ -42,6 +42,17 @@ gtest_discover_tests(plamatrix_opencl_tests
 
 add_dependencies(plamatrix_tests plamatrix_opencl_tests)
 
+if(PLAMATRIX_WITH_VULKAN)
+    add_executable(plamatrix_vulkan_tests
+        unit/vulkan/vulkan_runtime_test.cpp
+    )
+    target_link_libraries(plamatrix_vulkan_tests PRIVATE plamatrix GTest::gtest_main)
+    gtest_discover_tests(plamatrix_vulkan_tests
+        TEST_PREFIX plamatrix.
+        DISCOVERY_MODE PRE_TEST)
+    add_dependencies(plamatrix_tests plamatrix_vulkan_tests)
+endif()
+
 set(PLAMATRIX_SPARSE_TEST_SOURCES
     unit/sparse/csr_matrix_test.cpp
     unit/sparse/iterative_solver_test.cpp

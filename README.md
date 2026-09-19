@@ -1,7 +1,7 @@
 # PlaMatrix
 
 面向点云处理的高性能矩阵运算库，支持 CPU 多线程 (OpenMP)、CUDA GPU 加速，以及可选的 OpenCL
-运行时与通用执行资源。
+和 Vulkan Compute 运行时。
 
 ## 特性
 
@@ -17,13 +17,15 @@
 - **双精度**：模板化 `float` / `double`，编译期设备绑定 `Device::CPU` / `Device::GPU`
 - **OpenCL 执行与稀疏求解**：GPU 枚举与选择、共享 context、queue/buffer/kernel RAII、program cache，
   以及一次上传 CPU-owned CSR 系统的 Jacobi-PCG
+- **Vulkan Compute 稀疏求解**：可选 Vulkan 1.1 Compute runtime、SPIR-V shader 和 float32 CPU-owned CSR
+  Jacobi-PCG，可与 OpenCL 使用相同输入和收敛条件进行对比
 - **通用块优化**：Huber、二分块法方程、LM 阻尼、可复用 Schur CSR pattern 和块图最小度符号分析，
   多 primary 残差与直接交叉块，以及 CPU/CUDA/OpenCL 块 Jacobi-PCG；CUDA/OpenCL 在设备端装配
   Schur 数值，CPU 可选择原生稀疏或稠密直接求解
 - **统一基准测试**：一键运行三层测试 (串行 / OpenMP / CUDA)，自动生成 Markdown 性能报告
 
-> `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL PCG 接受 CPU-owned CSR 和向量，
-> 在一次调用内上传并求解。GEMM、SVD 和通用 OpenCL 矩阵容器尚未提供。
+> `DenseMatrix` / `CSRMatrix` 的持久设备语义仍是 CPU/CUDA；OpenCL/Vulkan PCG 接受 CPU-owned CSR
+> 和向量，在一次调用内上传并求解。GEMM、SVD 和通用 OpenCL/Vulkan 矩阵容器尚未提供。
 
 ## 快速开始
 
@@ -48,6 +50,7 @@ cmake --build . -j$(nproc)
 | `PLAMATRIX_WITH_CUDA` | 自动检测 | 启用 CUDA GPU 加速 |
 | `PLAMATRIX_CUDA_ARCHITECTURES` | `75;86;89` | CUDA 计算能力目标 |
 | `PLAMATRIX_WITH_OPENCL` | `ON` | 启用 OpenCL 执行基础；OpenCL 1.2 SDK/loader 未找到且未显式要求时自动关闭 |
+| `PLAMATRIX_WITH_VULKAN` | `OFF` | 启用 Vulkan 1.1 Compute；需要 Vulkan SDK/loader 和 `glslangValidator` |
 | `PLAMATRIX_USE_FLOAT` | `ON` | 启用 float32 支持 |
 | `PLAMATRIX_USE_DOUBLE` | `ON` | 启用 float64 支持 |
 | `PLAMATRIX_BUILD_TESTS` | `OFF` | 构建单元测试 |
@@ -109,6 +112,9 @@ target_link_libraries(my_project plamatrix::plamatrix)
 # 稀疏转换、乘法和迭代求解专项
 ./benchmark/plamatrix_benchmark --mode all --size smoke \
   --case coo_to_csr,spmv,spmm,cg,pcg
+
+# OpenCL/Vulkan 相同 CSR-PCG 工作负载对比（参数为矩阵规模）
+./benchmark/plamatrix_backend_compare 4096
 ```
 
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、

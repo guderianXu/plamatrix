@@ -12,7 +12,8 @@ GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 
 
 在结果会被完整覆盖的路径中，CPU/GPU 输出矩阵使用未初始化存储；块布局的尺寸乘法会先做
 溢出检查。OpenCL PCG 支持通过 `convergenceCheckInterval` 降低残差回读频率，编译程序缓存
-有固定容量上限，避免长期运行时无界增长。
+有固定容量上限，避免长期运行时无界增长。Vulkan Compute 后端沿用 CPU-owned CSR PCG 接口，
+以 GLSL/SPIR-V 实现 SpMV、Jacobi、向量更新和点积归约，并通过同一基准程序与 OpenCL 对比。
 
 ## 1. 整体架构
 

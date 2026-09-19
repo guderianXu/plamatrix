@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer Residual { float residual[]; };
+layout(std430, binding = 1) readonly buffer InverseDiagonal { float inverse_diagonal[]; };
+layout(std430, binding = 2) buffer Transformed { float transformed[]; };
+layout(push_constant) uniform Params { uint count; } params;
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i < params.count) transformed[i] = residual[i] * inverse_diagonal[i];
+}

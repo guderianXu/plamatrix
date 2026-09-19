@@ -1,0 +1,20 @@
+#version 450
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer Left { float left_values[]; };
+layout(std430, binding = 1) readonly buffer Right { float right_values[]; };
+layout(std430, binding = 2) buffer Output { float output_values[]; };
+layout(push_constant) uniform Params { uint count; } params;
+shared float partial[128];
+void main()
+{
+    uint local = gl_LocalInvocationID.x;
+    uint index = gl_GlobalInvocationID.x;
+    partial[local] = index < params.count ? left_values[index] * right_values[index] : 0.0;
+    barrier();
+    for (uint stride = 64; stride > 0; stride >>= 1)
+    {
+        if (local < stride) partial[local] += partial[local + stride];
+        barrier();
+    }
+    if (local == 0) output_values[gl_WorkGroupID.x] = partial[0];
+}

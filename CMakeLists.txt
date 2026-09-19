@@ -20,6 +20,12 @@ if(DEFINED PLAMATRIX_WITH_OPENCL)
 endif()
 option(PLAMATRIX_WITH_OPENCL "Build the OpenCL runtime and execution backend" ON)
 
+set(_PLAMATRIX_WITH_VULKAN_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_WITH_VULKAN)
+    set(_PLAMATRIX_WITH_VULKAN_USER_DEFINED ON)
+endif()
+option(PLAMATRIX_WITH_VULKAN "Build the Vulkan Compute backend" OFF)
+
 set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_BUILD_TESTS)
     set(_PLAMATRIX_BUILD_TESTS_USER_DEFINED ON)
@@ -138,6 +144,19 @@ if(PLAMATRIX_WITH_OPENCL)
     endif()
 endif()
 
+# ---- Optional Vulkan Compute backend ----
+if(PLAMATRIX_WITH_VULKAN)
+    find_package(Vulkan 1.1 QUIET)
+    find_program(PLAMATRIX_GLSLANG_VALIDATOR glslangValidator)
+    if(NOT Vulkan_FOUND OR NOT PLAMATRIX_GLSLANG_VALIDATOR)
+        if(_PLAMATRIX_WITH_VULKAN_USER_DEFINED)
+            message(FATAL_ERROR "PLAMATRIX_WITH_VULKAN=ON requires Vulkan 1.1 headers/loader and glslangValidator")
+        endif()
+        message(STATUS "PlaMatrix Vulkan disabled because Vulkan 1.1 or glslangValidator was not found")
+        set(PLAMATRIX_WITH_VULKAN OFF CACHE BOOL "Build the Vulkan Compute backend" FORCE)
+    endif()
+endif()
+
 # ---- OpenMP (always required for C++ CPU paths) ----
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 
@@ -188,6 +207,16 @@ if(PLAMATRIX_WITH_OPENCL)
     )
 else()
     target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_OPENCL=1)
+endif()
+
+if(PLAMATRIX_WITH_VULKAN)
+    target_link_libraries(plamatrix PUBLIC Vulkan::Vulkan)
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_WITH_VULKAN=1)
+    set(PLAMATRIX_VULKAN_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/vulkan-shaders")
+    target_compile_definitions(plamatrix PUBLIC
+        PLAMATRIX_VULKAN_SHADER_DIR=\"${PLAMATRIX_VULKAN_SHADER_DIR}\")
+else()
+    target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_VULKAN=1)
 endif()
 
 target_compile_definitions(plamatrix
@@ -250,6 +279,7 @@ if(PLAMATRIX_WITH_CUDA)
     message(STATUS "  CUDA arch:       ${PLAMATRIX_CUDA_ARCHITECTURES}")
 endif()
 message(STATUS "  OpenCL support:  ${PLAMATRIX_WITH_OPENCL}")
+message(STATUS "  Vulkan support:  ${PLAMATRIX_WITH_VULKAN}")
 message(STATUS "  Float32 support: ${PLAMATRIX_USE_FLOAT}")
 message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
 message(STATUS "  CPU linalg:      native")

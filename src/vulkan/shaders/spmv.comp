@@ -1,0 +1,17 @@
+#version 450
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer RowOffsets { uint row_offsets[]; };
+layout(std430, binding = 1) readonly buffer ColumnIndices { uint column_indices[]; };
+layout(std430, binding = 2) readonly buffer Values { float values[]; };
+layout(std430, binding = 3) readonly buffer Input { float input_values[]; };
+layout(std430, binding = 4) buffer Output { float output_values[]; };
+layout(push_constant) uniform Params { uint rows; } params;
+void main()
+{
+    uint row = gl_GlobalInvocationID.x;
+    if (row >= params.rows) return;
+    float sum = 0.0;
+    for (uint k = row_offsets[row]; k < row_offsets[row + 1]; ++k)
+        sum += values[k] * input_values[column_indices[k]];
+    output_values[row] = sum;
+}
