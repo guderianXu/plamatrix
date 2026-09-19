@@ -155,6 +155,7 @@ namespace plamatrix::vulkan
             VkPhysicalDeviceProperties properties{};
             vkGetPhysicalDeviceProperties(_physicalDevice, &properties);
             _deviceName = properties.deviceName;
+            _timestampPeriodNanoseconds = properties.limits.timestampPeriod;
 
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo queue_info{};

@@ -19,12 +19,17 @@ namespace
 {
 
     template <typename Solve>
-    void runCase(const char* backend, const std::string& device, const BackendFixture& fixture, Solve solve)
+    void runCase(const char* backend,
+                 const std::string& device,
+                 const BackendFixture& fixture,
+                 int convergenceCheckInterval,
+                 Solve solve)
     {
         IterativeSolverOptions options;
         options.maxIterations = 200;
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
+        options.convergenceCheckInterval = convergenceCheckInterval;
         DenseMatrix<float, Device::CPU> solution(fixture.matrix.rows(), 1);
         solution.fill(0.0f);
         solution.fill(0.0f);
@@ -52,7 +57,8 @@ namespace
                 std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
                           << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
                           << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
-                          << ',' << coldReport.descriptorSetAllocations << ',' << coldReport.iterations << ','
+                          << ',' << report.gpuMilliseconds << ',' << report.barrierCount << ','
+                          << coldReport.descriptorSetAllocations << ',' << coldReport.iterations << ','
                           << coldMilliseconds << ',' << timings[timings.size() / 2] << '\n';
             }
         }
@@ -66,6 +72,7 @@ int main(int argc, char** argv)
     std::vector<Index> sizes;
     std::string matrixMarketPath;
     bool runSuite = false;
+    int convergenceCheckInterval = 1;
     for (int index = 1; index < argc; ++index)
     {
         const std::string argument = argv[index];
@@ -75,6 +82,7 @@ int main(int argc, char** argv)
                          "       plamatrix_backend_compare --case NAME --sizes N,N,...\n"
                          "       plamatrix_backend_compare --suite\n"
                          "       plamatrix_backend_compare --matrix-market PATH\n"
+                         "       --convergence-interval N batches PCG convergence checks.\n"
                          "cases: tridiagonal, stencil2d, stencil3d, ba_schur, mvs_visibility\n"
                          "--suite runs all representative cases; BA sizes are camera counts, other 2D/3D sizes are "
                          "side lengths.\n";
@@ -85,7 +93,8 @@ int main(int argc, char** argv)
             runSuite = true;
             continue;
         }
-        if (argument == "--case" || argument == "--sizes" || argument == "--matrix-market")
+        if (argument == "--case" || argument == "--sizes" || argument == "--matrix-market" ||
+            argument == "--convergence-interval")
         {
             if (++index >= argc)
             {
@@ -100,6 +109,15 @@ int main(int argc, char** argv)
             else if (argument == "--matrix-market")
             {
                 matrixMarketPath = value;
+            }
+            else if (argument == "--convergence-interval")
+            {
+                convergenceCheckInterval = std::stoi(value);
+                if (convergenceCheckInterval <= 0)
+                {
+                    std::cerr << "convergence interval must be positive\n";
+                    return 2;
+                }
             }
             else
             {
@@ -139,14 +157,15 @@ int main(int argc, char** argv)
         return 2;
     }
     std::cout << "scenario,backend,device,dimension,nnz,iterations,initial_residual,final_residual,command_submissions,"
-                 "cold_descriptor_set_allocations,cold_iterations,cold_ms,warm_median_ms\n";
-    auto runFixture = [](const BackendFixture& fixture)
+                 "gpu_ms,barrier_count,cold_descriptor_set_allocations,cold_iterations,cold_ms,warm_median_ms\n";
+    auto runFixture = [convergenceCheckInterval](const BackendFixture& fixture)
     {
         if (opencl::hasUsableOpenClDevice())
         {
             runCase("opencl",
                     opencl::selectedOpenClDeviceName(),
                     fixture,
+                    convergenceCheckInterval,
                     [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
                     { return opencl::pcg(matrix, rhs, solution, options); });
         }
@@ -159,6 +178,7 @@ int main(int argc, char** argv)
             runCase("vulkan",
                     vulkan::selectedVulkanDeviceName(),
                     fixture,
+                    convergenceCheckInterval,
                     [](const auto& matrix, const auto& rhs, auto& solution, const auto& options)
                     { return vulkan::pcg(matrix, rhs, solution, options); });
         }

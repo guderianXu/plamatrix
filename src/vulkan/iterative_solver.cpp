@@ -107,12 +107,61 @@ namespace plamatrix::vulkan
         struct PipelineSet
         {
             explicit PipelineSet(Runtime& runtime)
-                : initialize(runtime, "initialize", 6, sizeof(CountPush)), spmv(runtime, "spmv", 5, sizeof(CountPush)),
-                  jacobi(runtime, "jacobi", 3, sizeof(CountPush)), update(runtime, "update", 5, sizeof(CountPush)),
-                  direction(runtime, "direction", 3, sizeof(CountPush)),
-                  reduction(runtime, "dot_reduce", 3, sizeof(CountPush)),
-                  stateInit(runtime, "pcg_state_init", 2, sizeof(StateInitPush)), alpha(runtime, "pcg_alpha", 2, 0),
-                  beta(runtime, "pcg_beta", 2, 0), convergence(runtime, "pcg_convergence", 2, sizeof(IterationPush))
+                : initialize(runtime,
+                             "initialize",
+                             6,
+                             sizeof(CountPush),
+                             {VK_ACCESS_SHADER_READ_BIT,
+                              VK_ACCESS_SHADER_READ_BIT,
+                              VK_ACCESS_SHADER_READ_BIT,
+                              VK_ACCESS_SHADER_WRITE_BIT,
+                              VK_ACCESS_SHADER_WRITE_BIT,
+                              VK_ACCESS_SHADER_WRITE_BIT}),
+                  spmv(runtime,
+                       "spmv",
+                       5,
+                       sizeof(CountPush),
+                       {VK_ACCESS_SHADER_READ_BIT,
+                        VK_ACCESS_SHADER_READ_BIT,
+                        VK_ACCESS_SHADER_READ_BIT,
+                        VK_ACCESS_SHADER_READ_BIT,
+                        VK_ACCESS_SHADER_WRITE_BIT}),
+                  jacobi(runtime,
+                         "jacobi",
+                         3,
+                         sizeof(CountPush),
+                         {VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT}),
+                  update(runtime,
+                         "update",
+                         5,
+                         sizeof(CountPush),
+                         {VK_ACCESS_SHADER_WRITE_BIT,
+                          VK_ACCESS_SHADER_WRITE_BIT,
+                          VK_ACCESS_SHADER_READ_BIT,
+                          VK_ACCESS_SHADER_READ_BIT,
+                          VK_ACCESS_SHADER_READ_BIT}),
+                  direction(runtime,
+                            "direction",
+                            3,
+                            sizeof(CountPush),
+                            {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT}),
+                  reduction(runtime,
+                            "dot_reduce",
+                            3,
+                            sizeof(CountPush),
+                            {VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT}),
+                  stateInit(runtime,
+                            "pcg_state_init",
+                            2,
+                            sizeof(StateInitPush),
+                            {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
+                  alpha(runtime, "pcg_alpha", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
+                  beta(runtime, "pcg_beta", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
+                  convergence(runtime,
+                              "pcg_convergence",
+                              2,
+                              sizeof(IterationPush),
+                              {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT})
             {
             }
 
@@ -511,6 +560,8 @@ namespace plamatrix::vulkan
         copyFromBuffer(solutionReadback, solution.data(), count * sizeof(float));
         report.commandSubmissions = context.submissionCount();
         report.descriptorSetAllocations = context.descriptorSetAllocations() - descriptorSetsBefore;
+        report.gpuMilliseconds = context.gpuMilliseconds();
+        report.barrierCount = context.barrierCount();
         return report;
     }
 

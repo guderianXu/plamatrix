@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include "plamatrix/vulkan/runtime.h"
@@ -19,7 +20,8 @@ namespace plamatrix::vulkan
         ComputePipeline(Runtime& runtime,
                         const char* shaderName,
                         std::uint32_t bindingCount,
-                        std::uint32_t pushConstantSize);
+                        std::uint32_t pushConstantSize,
+                        std::vector<VkAccessFlags> accessMasks = {});
         ~ComputePipeline() noexcept;
         ComputePipeline(const ComputePipeline&) = delete;
         ComputePipeline& operator=(const ComputePipeline&) = delete;
@@ -38,6 +40,11 @@ namespace plamatrix::vulkan
         {
             return _descriptorLayout;
         }
+        VkAccessFlags accessMask(std::uint32_t binding) const noexcept
+        {
+            return binding < _accessMasks.size() ? _accessMasks[binding]
+                                                 : VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        }
 
     private:
         void reset() noexcept;
@@ -45,6 +52,7 @@ namespace plamatrix::vulkan
         VkDescriptorSetLayout _descriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout _layout = VK_NULL_HANDLE;
         VkPipeline _pipeline = VK_NULL_HANDLE;
+        std::vector<VkAccessFlags> _accessMasks;
     };
 
     class DescriptorPool
@@ -92,6 +100,8 @@ namespace plamatrix::vulkan
         void resetSubmissionCount() noexcept
         {
             _submissionCount = 0;
+            _barrierCount = 0;
+            _gpuMilliseconds = 0.0;
         }
         std::uint32_t pendingDispatchCount() const noexcept
         {
@@ -104,6 +114,14 @@ namespace plamatrix::vulkan
         std::uint32_t descriptorSetAllocations() const noexcept
         {
             return _descriptorSetAllocations;
+        }
+        std::uint32_t barrierCount() const noexcept
+        {
+            return _barrierCount;
+        }
+        double gpuMilliseconds() const noexcept
+        {
+            return _gpuMilliseconds;
         }
 
     private:
@@ -119,10 +137,14 @@ namespace plamatrix::vulkan
         DescriptorPool _descriptorPool;
         VkCommandBuffer _commandBuffer = VK_NULL_HANDLE;
         VkFence _fence = VK_NULL_HANDLE;
+        VkQueryPool _timestampQueryPool = VK_NULL_HANDLE;
         bool _recording = false;
         std::uint32_t _pendingDispatches = 0;
         std::uint32_t _submissionCount = 0;
         std::uint32_t _descriptorSetAllocations = 0;
+        std::uint32_t _barrierCount = 0;
+        double _gpuMilliseconds = 0.0;
+        std::unordered_map<VkBuffer, VkAccessFlags> _bufferAccess;
         std::vector<CachedDescriptorSet> _descriptorSets;
     };
 

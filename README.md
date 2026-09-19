@@ -140,10 +140,12 @@ Jacobi-PCG 的 CSR 矩阵导出为 MatrixMarket coordinate real general/symmetri
 PlaScan 当前 MVS 主链不持久化 CSR 文件，因此 `mvs_visibility` 用的是同样的空间邻域和跨视图连接形态；
 真实 MVS 数据应通过 MatrixMarket 入口接入。
 
-该基准还会输出 Vulkan 的 `command_submissions` 和 `cold_descriptor_set_allocations`，分别用于观察显式
-queue submit/fence wait 以及冷启动时 descriptor set 的创建数量；OpenCL
-的该列固定为 `0`，仅表示当前未暴露同等统计。`cold_ms` 包含首次工作区和 shader 路径，
-`warm_median_ms` 是工作区复用后的端到端 PCG 时间。
+该基准还会输出 Vulkan 的 `command_submissions`、`gpu_ms`、`barrier_count` 和
+`cold_descriptor_set_allocations`，分别用于观察显式 queue submit/fence wait、GPU 实际执行时间、记录的
+buffer 依赖屏障数量以及冷启动时 descriptor set 的创建数量；OpenCL 的该列固定为 `0`，仅表示当前未暴露
+同等统计。`cold_ms` 包含首次工作区和 shader 路径，`warm_median_ms` 是工作区复用后的端到端 PCG 时间。
+使用 `--convergence-interval N` 可以批量执行 N 次 PCG 迭代后再检查收敛；`gpu_ms` 与 `warm_median_ms`
+的差值可用于区分 GPU 执行和主机提交/等待开销。
 
 CUDA 算子基准复用输出矩阵和 workspace，并分别记录冷分配、热 workspace、
 CUDA event/求解总时间和传输时间。自适应 CG/PCG 包含可批量执行的主机收敛检查，因而

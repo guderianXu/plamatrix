@@ -100,6 +100,10 @@ namespace plamatrix::vulkan
         {
             return _queueFamily;
         }
+        float timestampPeriodNanoseconds() const noexcept
+        {
+            return _timestampPeriodNanoseconds;
+        }
         VkCommandPool commandPool() const noexcept
         {
             return _commandPool;
@@ -123,6 +127,7 @@ namespace plamatrix::vulkan
         VkQueue _queue = VK_NULL_HANDLE;
         VkCommandPool _commandPool = VK_NULL_HANDLE;
         std::uint32_t _queueFamily = 0;
+        float _timestampPeriodNanoseconds = 0.0f;
         std::string _deviceName;
     };
 

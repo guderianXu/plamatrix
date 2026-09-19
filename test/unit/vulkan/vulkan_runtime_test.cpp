@@ -263,6 +263,24 @@ namespace plamatrix::vulkan
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }
 
+    TEST(VulkanExecution, ReportsGpuTimestampForSubmission)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        Runtime& runtime = Runtime::instance();
+        ComputePipeline pipeline(runtime, "jacobi", 3, sizeof(std::uint32_t));
+        Buffer residual(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer inverse(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer transformed(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const std::uint32_t count = 1;
+        CommandContext context(runtime);
+        context.begin();
+        context.dispatch(pipeline, {&residual, &inverse, &transformed}, 1, &count, sizeof(count));
+        context.submitAndWait();
+        EXPECT_GE(context.gpuMilliseconds(), 0.0);
+        EXPECT_GT(context.submissionCount(), 0u);
+    }
+
     TEST(VulkanExecution, ReusesCommandContextAcrossBatches)
     {
         if (!hasUsableVulkanDevice())

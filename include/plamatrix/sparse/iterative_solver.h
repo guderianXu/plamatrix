@@ -32,6 +32,10 @@ namespace plamatrix
         std::uint32_t commandSubmissions = 0;
         /// Number of descriptor sets allocated during the solve when the backend exposes this diagnostic.
         std::uint32_t descriptorSetAllocations = 0;
+        /// GPU execution time accumulated by Vulkan when timestamp queries are available.
+        double gpuMilliseconds = 0.0;
+        /// Number of Vulkan buffer dependency barriers recorded for the solve.
+        std::uint32_t barrierCount = 0;
     };
 
     /// Move-only reusable storage for CUDA CG/PCG solves.
