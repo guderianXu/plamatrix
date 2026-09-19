@@ -36,6 +36,8 @@ namespace plamatrix
         double gpuMilliseconds = 0.0;
         /// Number of Vulkan buffer dependency barriers recorded for the solve.
         std::uint32_t barrierCount = 0;
+        /// Whether Vulkan selected the subgroup-per-row CSR SpMV kernel.
+        bool subgroupSpmv = false;
     };
 
     /// Move-only reusable storage for CUDA CG/PCG solves.

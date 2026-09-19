@@ -54,10 +54,12 @@ namespace
             if (trial == 4)
             {
                 std::sort(timings.begin(), timings.end());
+                const char* spmvKernel =
+                    std::string(backend) == "vulkan" ? (report.subgroupSpmv ? "subgroup" : "scalar") : "n/a";
                 std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
                           << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
                           << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
-                          << ',' << report.gpuMilliseconds << ',' << report.barrierCount << ','
+                          << ',' << report.gpuMilliseconds << ',' << report.barrierCount << ',' << spmvKernel << ','
                           << coldReport.descriptorSetAllocations << ',' << coldReport.iterations << ','
                           << coldMilliseconds << ',' << timings[timings.size() / 2] << '\n';
             }
@@ -157,7 +159,8 @@ int main(int argc, char** argv)
         return 2;
     }
     std::cout << "scenario,backend,device,dimension,nnz,iterations,initial_residual,final_residual,command_submissions,"
-                 "gpu_ms,barrier_count,cold_descriptor_set_allocations,cold_iterations,cold_ms,warm_median_ms\n";
+                 "gpu_ms,barrier_count,spmv_kernel,cold_descriptor_set_allocations,cold_iterations,cold_ms,"
+                 "warm_median_ms\n";
     auto runFixture = [convergenceCheckInterval](const BackendFixture& fixture)
     {
         if (opencl::hasUsableOpenClDevice())

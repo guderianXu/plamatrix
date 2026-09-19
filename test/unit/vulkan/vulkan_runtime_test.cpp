@@ -33,6 +33,18 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(devices.front().hasComputeQueue);
     }
 
+    TEST(VulkanRuntime, ReportsSubgroupArithmeticCapabilities)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        const Runtime& runtime = Runtime::instance();
+        if (runtime.supportsSubgroupArithmetic())
+        {
+            EXPECT_GT(runtime.subgroupSize(), 0u);
+            EXPECT_EQ(128u % runtime.subgroupSize(), 0u);
+        }
+    }
+
     TEST(VulkanSolver, MatchesCpuPcg)
     {
         if (!hasUsableVulkanDevice())
@@ -94,7 +106,7 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
         EXPECT_GT(vulkan_report.commandSubmissions, 0u);
-        EXPECT_LE(vulkan_report.commandSubmissions, 5u);
+        EXPECT_LE(vulkan_report.commandSubmissions, 3u);
         for (Index row = 0; row < 2; ++row)
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }
@@ -259,6 +271,45 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
         EXPECT_EQ(cpu_report.iterations, vulkan_report.iterations);
+        for (Index row = 0; row < size; ++row)
+            EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
+    }
+
+    TEST(VulkanSolver, UsesSubgroupSpmvForLongRows)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        if (!Runtime::instance().supportsSubgroupArithmetic())
+            GTEST_SKIP() << "Selected Vulkan device has no compute subgroup arithmetic";
+        constexpr Index size = 65;
+        CSRMatrix<float, Device::CPU> matrix(size, size, size * size);
+        for (Index row = 0; row < size; ++row)
+        {
+            matrix.rowOffsets()[row] = row * size;
+            for (Index column = 0; column < size; ++column)
+            {
+                const Index entry = row * size + column;
+                matrix.colIndices()[entry] = column;
+                matrix.values()[entry] = row == column ? 66.0f : 1.0f;
+            }
+        }
+        matrix.rowOffsets()[size] = size * size;
+        DenseMatrix<float, Device::CPU> rhs(size, 1);
+        DenseMatrix<float, Device::CPU> expected(size, 1);
+        DenseMatrix<float, Device::CPU> actual(size, 1);
+        for (Index row = 0; row < size; ++row)
+            rhs(row, 0) = 1.0f + static_cast<float>(row % 7);
+        expected.fill(0.0f);
+        actual.fill(0.0f);
+        IterativeSolverOptions options;
+        options.maxIterations = 32;
+        options.relativeTolerance = 1.0e-5;
+        options.requireConvergence = true;
+        const auto cpuReport = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto vulkanReport = pcg(matrix, rhs, actual, options);
+        EXPECT_TRUE(cpuReport.converged);
+        EXPECT_TRUE(vulkanReport.converged);
+        EXPECT_TRUE(vulkanReport.subgroupSpmv);
         for (Index row = 0; row < size; ++row)
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }

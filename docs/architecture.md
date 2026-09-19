@@ -21,6 +21,9 @@ Vulkan 求解器为每种矩阵规模复用 device-local CSR/向量工作区，�
 元素；PCG 的 rho/alpha/beta、残差范数和收敛标志保存在 device-local 状态缓冲区，按
 `convergenceCheckInterval` 批量提交并只在批次边界读取状态，以减少显式 fence 等待。命令上下文同时记录
 Vulkan timestamp 和每个 buffer 的读写状态，GPU 时间与端到端时间分开统计，并将屏障限制在实际存在写后读/写依赖的 storage buffer 上。
+CSR SpMV 同时提供 scalar-per-row 和 subgroup-per-row 内核；运行时根据 subgroup arithmetic 能力和平均行长
+选择实现，避免短行稀疏矩阵浪费 subgroup lane。输入上传和初始残差计算在同一个 command buffer 中完成，
+通过 transfer-to-compute buffer barrier 保持依赖，并减少一次主机提交和 fence wait。
 Vulkan 与 OpenCL 的比较基准同时覆盖二维/三维 stencil、
 BA Schur 相机块图和 MVS visibility 图，并可通过 MatrixMarket 载入已阻尼的真实 CSR 数据。
 

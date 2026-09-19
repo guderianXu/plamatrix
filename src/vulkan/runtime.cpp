@@ -156,6 +156,22 @@ namespace plamatrix::vulkan
             vkGetPhysicalDeviceProperties(_physicalDevice, &properties);
             _deviceName = properties.deviceName;
             _timestampPeriodNanoseconds = properties.limits.timestampPeriod;
+            if (properties.apiVersion >= VK_API_VERSION_1_1)
+            {
+                VkPhysicalDeviceSubgroupProperties subgroupProperties{};
+                subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+                VkPhysicalDeviceProperties2 properties2{};
+                properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+                properties2.pNext = &subgroupProperties;
+                vkGetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+                _subgroupSize = subgroupProperties.subgroupSize;
+                constexpr VkSubgroupFeatureFlags requiredSubgroupOperations =
+                    VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT;
+                _supportsSubgroupArithmetic = (subgroupProperties.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
+                                              (subgroupProperties.supportedOperations & requiredSubgroupOperations) ==
+                                                  requiredSubgroupOperations &&
+                                              _subgroupSize != 0 && 128u % _subgroupSize == 0;
+            }
 
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo queue_info{};

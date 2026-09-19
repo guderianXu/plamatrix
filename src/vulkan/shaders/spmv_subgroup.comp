@@ -1,0 +1,23 @@
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer RowOffsets { uint row_offsets[]; };
+layout(std430, binding = 1) readonly buffer ColumnIndices { uint column_indices[]; };
+layout(std430, binding = 2) readonly buffer Values { float values[]; };
+layout(std430, binding = 3) readonly buffer Input { float input_values[]; };
+layout(std430, binding = 4) buffer Output { float output_values[]; };
+layout(push_constant) uniform Params { uint rows; } params;
+void main()
+{
+    uint row = gl_WorkGroupID.x * gl_NumSubgroups + gl_SubgroupID;
+    if (row >= params.rows) return;
+    float sum = 0.0;
+    for (uint entry = row_offsets[row] + gl_SubgroupInvocationID;
+         entry < row_offsets[row + 1];
+         entry += gl_SubgroupSize)
+    {
+        sum += values[entry] * input_values[column_indices[entry]];
+    }
+    sum = subgroupAdd(sum);
+    if (subgroupElect()) output_values[row] = sum;
+}

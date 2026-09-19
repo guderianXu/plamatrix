@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -71,6 +72,32 @@ namespace plamatrix::vulkan
         std::size_t reductionGroupsFor(std::size_t count)
         {
             return std::max<std::size_t>(1, (count + kLocalSize * 2 - 1) / (kLocalSize * 2));
+        }
+
+        bool shouldUseSubgroupSpmv(const Runtime& runtime, std::size_t rows, std::size_t nnz)
+        {
+            const char* mode = std::getenv("PLAMATRIX_VULKAN_SPMV");
+            if (mode && std::strcmp(mode, "scalar") == 0)
+                return false;
+            if (mode && std::strcmp(mode, "subgroup") == 0)
+            {
+                if (!runtime.supportsSubgroupArithmetic())
+                    throw std::runtime_error(
+                        "PLAMATRIX_VULKAN_SPMV=subgroup requires compute subgroup arithmetic support");
+                return true;
+            }
+            if (mode && std::strcmp(mode, "auto") != 0)
+                throw std::invalid_argument("PLAMATRIX_VULKAN_SPMV must be auto, scalar, or subgroup");
+            const std::size_t minimumAverageRowLength = std::max<std::size_t>(16, runtime.subgroupSize() / 2);
+            return runtime.supportsSubgroupArithmetic() && rows != 0 && nnz / rows >= minimumAverageRowLength;
+        }
+
+        std::size_t spmvGroupsFor(const Runtime& runtime, std::size_t rows, bool subgroup)
+        {
+            if (!subgroup)
+                return groupsFor(rows);
+            const std::size_t rowsPerGroup = kLocalSize / runtime.subgroupSize();
+            return std::max<std::size_t>(1, (rows + rowsPerGroup - 1) / rowsPerGroup);
         }
 
         struct CountPush
@@ -163,10 +190,29 @@ namespace plamatrix::vulkan
                               sizeof(IterationPush),
                               {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT})
             {
+                if (runtime.supportsSubgroupArithmetic())
+                {
+                    spmvSubgroup =
+                        std::make_unique<ComputePipeline>(runtime,
+                                                          "spmv_subgroup",
+                                                          5,
+                                                          sizeof(CountPush),
+                                                          std::vector<VkAccessFlags>{VK_ACCESS_SHADER_READ_BIT,
+                                                                                     VK_ACCESS_SHADER_READ_BIT,
+                                                                                     VK_ACCESS_SHADER_READ_BIT,
+                                                                                     VK_ACCESS_SHADER_READ_BIT,
+                                                                                     VK_ACCESS_SHADER_WRITE_BIT});
+                }
+            }
+
+            const ComputePipeline& spmvPipeline(bool subgroup) const
+            {
+                return subgroup ? *spmvSubgroup : spmv;
             }
 
             ComputePipeline initialize;
             ComputePipeline spmv;
+            std::unique_ptr<ComputePipeline> spmvSubgroup;
             ComputePipeline jacobi;
             ComputePipeline update;
             ComputePipeline direction;
@@ -386,6 +432,9 @@ namespace plamatrix::vulkan
         copyToBuffer(onesUpload, ones.data(), count * sizeof(float));
 
         static PipelineSet pipelines(runtime);
+        const bool useSubgroupSpmv = shouldUseSubgroupSpmv(runtime, count, nnz);
+        const ComputePipeline& spmvPipeline = pipelines.spmvPipeline(useSubgroupSpmv);
+        const std::size_t spmvGroups = spmvGroupsFor(runtime, count, useSubgroupSpmv);
         CommandContext& context = *buffers.context;
         const std::uint32_t descriptorSetsBefore = context.descriptorSetAllocations();
         context.resetSubmissionCount();
@@ -400,15 +449,13 @@ namespace plamatrix::vulkan
         context.copy(solutionUpload, solutionBuffer, count * sizeof(float));
         context.copy(inverseUpload, inverseBuffer, count * sizeof(float));
         context.copy(onesUpload, onesBuffer, count * sizeof(float));
-        context.submitAndWait();
 
         const CountPush countPush{static_cast<std::uint32_t>(count)};
         IterativeSolverReport report;
-        context.begin();
         dispatch(context,
-                 pipelines.spmv,
+                 spmvPipeline,
                  {&rowBuffer, &columnBuffer, &valueBuffer, &solutionBuffer, &matrixDirectionBuffer},
-                 groupsFor(count),
+                 spmvGroups,
                  &countPush,
                  sizeof(countPush));
         dispatch(
@@ -495,9 +542,9 @@ namespace plamatrix::vulkan
                 }
 
                 dispatch(context,
-                         pipelines.spmv,
+                         spmvPipeline,
                          {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
-                         groupsFor(count),
+                         spmvGroups,
                          &countPush,
                          sizeof(countPush));
                 Buffer* denominator = dispatchDot(context,
@@ -562,6 +609,7 @@ namespace plamatrix::vulkan
         report.descriptorSetAllocations = context.descriptorSetAllocations() - descriptorSetsBefore;
         report.gpuMilliseconds = context.gpuMilliseconds();
         report.barrierCount = context.barrierCount();
+        report.subgroupSpmv = useSubgroupSpmv;
         return report;
     }
 

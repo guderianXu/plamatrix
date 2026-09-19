@@ -104,6 +104,14 @@ namespace plamatrix::vulkan
         {
             return _timestampPeriodNanoseconds;
         }
+        bool supportsSubgroupArithmetic() const noexcept
+        {
+            return _supportsSubgroupArithmetic;
+        }
+        std::uint32_t subgroupSize() const noexcept
+        {
+            return _subgroupSize;
+        }
         VkCommandPool commandPool() const noexcept
         {
             return _commandPool;
@@ -128,6 +136,8 @@ namespace plamatrix::vulkan
         VkCommandPool _commandPool = VK_NULL_HANDLE;
         std::uint32_t _queueFamily = 0;
         float _timestampPeriodNanoseconds = 0.0f;
+        std::uint32_t _subgroupSize = 0;
+        bool _supportsSubgroupArithmetic = false;
         std::string _deviceName;
     };
 

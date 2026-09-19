@@ -51,6 +51,7 @@ if(PLAMATRIX_WITH_VULKAN)
     set(_PLAMATRIX_VULKAN_SHADER_NAMES
         initialize
         spmv
+        spmv_subgroup
         jacobi
         update
         direction
@@ -66,7 +67,7 @@ if(PLAMATRIX_WITH_VULKAN)
         add_custom_command(
             OUTPUT "${_shader_output}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/../vulkan-shaders"
-            COMMAND ${PLAMATRIX_GLSLANG_VALIDATOR} -V "${_shader_input}" -o "${_shader_output}"
+            COMMAND ${PLAMATRIX_GLSLANG_VALIDATOR} -V --target-env vulkan1.1 "${_shader_input}" -o "${_shader_output}"
             DEPENDS "${_shader_input}"
             VERBATIM)
         list(APPEND _PLAMATRIX_VULKAN_SHADER_OUTPUTS "${_shader_output}")
