@@ -18,7 +18,8 @@ Vulkan 求解器为每种矩阵规模复用 device-local CSR/向量工作区，�
 完成输入上传和结果下载；命令上下文同时复用 descriptor pool、command buffer 和 fence。
 相同 pipeline 与 buffer 绑定组合的 descriptor set 也会跨 solve 缓存，热路径不再重复分配和更新 descriptor。
 初始化阶段把残差、Jacobi 变换和方向向量合并为一个 dispatch，点积归约每个 invocation 处理两个
-元素，以减少 kernel 和显式提交数量。Vulkan 与 OpenCL 的比较基准同时覆盖二维/三维 stencil、
+元素；PCG 的 rho/alpha/beta、残差范数和收敛标志保存在 device-local 状态缓冲区，按
+`convergenceCheckInterval` 批量提交并只在批次边界读取状态，以减少显式 fence 等待。Vulkan 与 OpenCL 的比较基准同时覆盖二维/三维 stencil、
 BA Schur 相机块图和 MVS visibility 图，并可通过 MatrixMarket 载入已阻尼的真实 CSR 数据。
 
 ## 1. 整体架构

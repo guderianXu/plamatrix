@@ -1,0 +1,29 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer State
+{
+    float rho;
+    float alpha;
+    float beta;
+    float residual_squared;
+    float tolerance_squared;
+    uint flags;
+    uint iterations;
+} state;
+layout(std430, binding = 1) readonly buffer Residual { float values[]; } residual;
+layout(push_constant) uniform Params { uint iterations; } params;
+void main()
+{
+    if ((state.flags & 3u) != 0u)
+        return;
+    float value = residual.values[0];
+    state.residual_squared = value;
+    state.iterations = params.iterations;
+    if (isnan(value) || isinf(value) || value < 0.0)
+    {
+        state.flags |= 2u;
+        return;
+    }
+    if (value <= state.tolerance_squared)
+        state.flags |= 1u;
+}

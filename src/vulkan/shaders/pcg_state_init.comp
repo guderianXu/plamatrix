@@ -1,0 +1,24 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer State
+{
+    float rho;
+    float alpha;
+    float beta;
+    float residual_squared;
+    float tolerance_squared;
+    uint flags;
+    uint iterations;
+} state;
+layout(std430, binding = 1) readonly buffer InitialRho { float values[]; } initial_rho;
+layout(push_constant) uniform Params { float tolerance_squared; } params;
+void main()
+{
+    state.rho = initial_rho.values[0];
+    state.alpha = 0.0;
+    state.beta = 0.0;
+    state.residual_squared = 0.0;
+    state.tolerance_squared = params.tolerance_squared;
+    state.flags = 0u;
+    state.iterations = 0u;
+}

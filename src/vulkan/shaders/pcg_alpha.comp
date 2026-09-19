@@ -1,0 +1,28 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer State
+{
+    float rho;
+    float alpha;
+    float beta;
+    float residual_squared;
+    float tolerance_squared;
+    uint flags;
+    uint iterations;
+} state;
+layout(std430, binding = 1) readonly buffer Denominator { float values[]; } denominator;
+void main()
+{
+    if ((state.flags & 3u) != 0u)
+        return;
+    float rho = state.rho;
+    float value = denominator.values[0];
+    if (isnan(rho) || isinf(rho) || rho <= 0.0 || isnan(value) || isinf(value) || value <= 0.0)
+    {
+        state.flags |= 2u;
+        return;
+    }
+    state.alpha = rho / value;
+    if (isnan(state.alpha) || isinf(state.alpha))
+        state.flags |= 2u;
+}

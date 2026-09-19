@@ -12,6 +12,17 @@
 namespace plamatrix::vulkan
 {
 
+    TEST(VulkanRuntime, LoadsPcgStatePipelines)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        Runtime& runtime = Runtime::instance();
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_state_init", 1, sizeof(float) * 2));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_alpha", 2, 0));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_beta", 2, 0));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_convergence", 2, 0));
+    }
+
     TEST(VulkanRuntime, EnumeratesComputeDevice)
     {
         if (!hasUsableVulkanDevice())
@@ -83,8 +94,130 @@ namespace plamatrix::vulkan
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
         EXPECT_GT(vulkan_report.commandSubmissions, 0u);
+        EXPECT_LE(vulkan_report.commandSubmissions, 5u);
         for (Index row = 0; row < 2; ++row)
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
+    }
+
+    TEST(VulkanSolver, ResetsBatchedStateBetweenWarmSolves)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(2, 2, 4);
+        const Index row_offsets[] = {0, 2, 4};
+        const Index columns[] = {0, 1, 0, 1};
+        const float values[] = {4.0f, 1.0f, 1.0f, 3.0f};
+        std::copy(row_offsets, row_offsets + 3, matrix.rowOffsets());
+        std::copy(columns, columns + 4, matrix.colIndices());
+        std::copy(values, values + 4, matrix.values());
+        DenseMatrix<float, Device::CPU> rhsFirst(2, 1);
+        DenseMatrix<float, Device::CPU> rhsSecond(2, 1);
+        rhsFirst(0, 0) = 1.0f;
+        rhsFirst(1, 0) = 2.0f;
+        rhsSecond(0, 0) = 2.0f;
+        rhsSecond(1, 0) = 1.0f;
+        DenseMatrix<float, Device::CPU> expectedFirst(2, 1);
+        DenseMatrix<float, Device::CPU> expectedSecond(2, 1);
+        DenseMatrix<float, Device::CPU> actualFirst(2, 1);
+        DenseMatrix<float, Device::CPU> actualSecond(2, 1);
+        expectedFirst.fill(0.0f);
+        expectedSecond.fill(0.0f);
+        actualFirst.fill(0.0f);
+        actualSecond.fill(0.0f);
+        IterativeSolverOptions options;
+        options.maxIterations = 16;
+        options.relativeTolerance = 1.0e-5;
+        options.requireConvergence = true;
+        options.convergenceCheckInterval = 4;
+        const auto expectedFirstReport = plamatrix::pcg(matrix, rhsFirst, expectedFirst, options);
+        const auto expectedSecondReport = plamatrix::pcg(matrix, rhsSecond, expectedSecond, options);
+        const auto actualFirstReport = pcg(matrix, rhsFirst, actualFirst, options);
+        const auto actualSecondReport = pcg(matrix, rhsSecond, actualSecond, options);
+        EXPECT_TRUE(expectedFirstReport.converged);
+        EXPECT_TRUE(expectedSecondReport.converged);
+        EXPECT_TRUE(actualFirstReport.converged);
+        EXPECT_TRUE(actualSecondReport.converged);
+        EXPECT_LE(actualFirstReport.commandSubmissions, 8u);
+        EXPECT_LE(actualSecondReport.commandSubmissions, 8u);
+        for (Index row = 0; row < 2; ++row)
+        {
+            EXPECT_NEAR(expectedFirst(row, 0), actualFirst(row, 0), 2.0e-4f);
+            EXPECT_NEAR(expectedSecond(row, 0), actualSecond(row, 0), 2.0e-4f);
+        }
+    }
+
+    TEST(VulkanSolver, StopsAtMaxIterationsInsideBatch)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(2, 2, 4);
+        const Index row_offsets[] = {0, 2, 4};
+        const Index columns[] = {0, 1, 0, 1};
+        const float values[] = {4.0f, 1.0f, 1.0f, 3.0f};
+        std::copy(row_offsets, row_offsets + 3, matrix.rowOffsets());
+        std::copy(columns, columns + 4, matrix.colIndices());
+        std::copy(values, values + 4, matrix.values());
+        DenseMatrix<float, Device::CPU> rhs(2, 1);
+        DenseMatrix<float, Device::CPU> solution(2, 1);
+        rhs(0, 0) = 1.0f;
+        rhs(1, 0) = 2.0f;
+        solution.fill(0.0f);
+        IterativeSolverOptions options;
+        options.maxIterations = 3;
+        options.relativeTolerance = 0.0;
+        options.absoluteTolerance = 0.0;
+        options.convergenceCheckInterval = 8;
+        const auto report = pcg(matrix, rhs, solution, options);
+        EXPECT_FALSE(report.converged);
+        EXPECT_EQ(report.iterations, 3);
+        EXPECT_LE(report.commandSubmissions, 5u);
+        EXPECT_TRUE(std::isfinite(solution(0, 0)));
+        EXPECT_TRUE(std::isfinite(solution(1, 0)));
+    }
+
+    TEST(VulkanSolver, HandlesExactConvergenceAtBatchBoundary)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        matrix.rowOffsets()[0] = 0;
+        matrix.rowOffsets()[1] = 1;
+        matrix.colIndices()[0] = 0;
+        matrix.values()[0] = 4.0f;
+        DenseMatrix<float, Device::CPU> rhs(1, 1);
+        DenseMatrix<float, Device::CPU> solution(1, 1);
+        rhs(0, 0) = 4.0f;
+        solution(0, 0) = 0.0f;
+        IterativeSolverOptions options;
+        options.maxIterations = 8;
+        options.relativeTolerance = 1.0e-6;
+        options.requireConvergence = true;
+        options.convergenceCheckInterval = 4;
+        const auto report = pcg(matrix, rhs, solution, options);
+        EXPECT_TRUE(report.converged);
+        EXPECT_EQ(report.iterations, 1);
+        EXPECT_NEAR(solution(0, 0), 1.0f, 1.0e-5f);
+    }
+
+    TEST(VulkanSolver, ReportsDeviceScalarBreakdown)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        matrix.rowOffsets()[0] = 0;
+        matrix.rowOffsets()[1] = 1;
+        matrix.colIndices()[0] = 0;
+        matrix.values()[0] = -1.0f;
+        DenseMatrix<float, Device::CPU> rhs(1, 1);
+        DenseMatrix<float, Device::CPU> solution(1, 1);
+        rhs(0, 0) = 1.0f;
+        solution(0, 0) = 0.0f;
+        IterativeSolverOptions options;
+        options.maxIterations = 4;
+        options.relativeTolerance = 0.0;
+        options.absoluteTolerance = 0.0;
+        options.useJacobiPreconditioner = false;
+        EXPECT_THROW(pcg(matrix, rhs, solution, options), std::runtime_error);
     }
 
     TEST(VulkanSolver, HandlesReductionTileBoundary)

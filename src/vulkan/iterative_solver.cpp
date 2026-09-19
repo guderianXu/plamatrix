@@ -78,19 +78,41 @@ namespace plamatrix::vulkan
             std::uint32_t count;
         };
 
-        struct ScalePush
+        struct StateInitPush
         {
-            std::uint32_t count;
-            float value;
+            float toleranceSquared;
         };
+
+        struct IterationPush
+        {
+            std::uint32_t iterations;
+        };
+
+        struct PcgStateHost
+        {
+            float rho = 0.0f;
+            float alpha = 0.0f;
+            float beta = 0.0f;
+            float residualSquared = 0.0f;
+            float toleranceSquared = 0.0f;
+            std::uint32_t flags = 0;
+            std::uint32_t iterations = 0;
+        };
+
+        static_assert(sizeof(PcgStateHost) == sizeof(float) * 5 + sizeof(std::uint32_t) * 2);
+
+        constexpr std::uint32_t kConvergedFlag = 1u;
+        constexpr std::uint32_t kBreakdownFlag = 2u;
 
         struct PipelineSet
         {
             explicit PipelineSet(Runtime& runtime)
                 : initialize(runtime, "initialize", 6, sizeof(CountPush)), spmv(runtime, "spmv", 5, sizeof(CountPush)),
-                  jacobi(runtime, "jacobi", 3, sizeof(CountPush)), update(runtime, "update", 4, sizeof(ScalePush)),
-                  direction(runtime, "direction", 2, sizeof(ScalePush)),
-                  reduction(runtime, "dot_reduce", 3, sizeof(CountPush))
+                  jacobi(runtime, "jacobi", 3, sizeof(CountPush)), update(runtime, "update", 5, sizeof(CountPush)),
+                  direction(runtime, "direction", 3, sizeof(CountPush)),
+                  reduction(runtime, "dot_reduce", 3, sizeof(CountPush)),
+                  stateInit(runtime, "pcg_state_init", 2, sizeof(StateInitPush)), alpha(runtime, "pcg_alpha", 2, 0),
+                  beta(runtime, "pcg_beta", 2, 0), convergence(runtime, "pcg_convergence", 2, sizeof(IterationPush))
             {
             }
 
@@ -100,6 +122,10 @@ namespace plamatrix::vulkan
             ComputePipeline update;
             ComputePipeline direction;
             ComputePipeline reduction;
+            ComputePipeline stateInit;
+            ComputePipeline alpha;
+            ComputePipeline beta;
+            ComputePipeline convergence;
         };
 
         struct PcgBuffers
@@ -119,6 +145,8 @@ namespace plamatrix::vulkan
             std::unique_ptr<Buffer> ones;
             std::unique_ptr<Buffer> partialA;
             std::unique_ptr<Buffer> partialB;
+            std::unique_ptr<Buffer> state;
+            std::unique_ptr<Buffer> stateReadback;
             std::unique_ptr<Buffer> rowUpload;
             std::unique_ptr<Buffer> columnUpload;
             std::unique_ptr<Buffer> valueUpload;
@@ -171,6 +199,9 @@ namespace plamatrix::vulkan
                     runtime, partialCount * floatBytes, partialUsage, BufferMemory::DeviceLocal);
                 partialB = std::make_unique<Buffer>(
                     runtime, partialCount * floatBytes, partialUsage, BufferMemory::DeviceLocal);
+                state = std::make_unique<Buffer>(
+                    runtime, sizeof(PcgStateHost), deviceOutputUsage, BufferMemory::DeviceLocal);
+                stateReadback = std::make_unique<Buffer>(runtime, sizeof(PcgStateHost), stagingDestinationUsage);
 
                 rowUpload = std::make_unique<Buffer>(runtime, (count + 1) * uintBytes, stagingSourceUsage);
                 columnUpload =
@@ -197,15 +228,14 @@ namespace plamatrix::vulkan
             context.dispatch(pipeline, buffers, groups, pushData, pushSize);
         }
 
-        double dot(CommandContext& context,
-                   const ComputePipeline& pipeline,
-                   Buffer& left,
-                   Buffer& right,
-                   Buffer& partialA,
-                   Buffer& partialB,
-                   Buffer& ones,
-                   Buffer& readback,
-                   std::size_t count)
+        Buffer* dispatchDot(CommandContext& context,
+                            const ComputePipeline& pipeline,
+                            Buffer& left,
+                            Buffer& right,
+                            Buffer& partialA,
+                            Buffer& partialB,
+                            Buffer& ones,
+                            std::size_t count)
         {
             std::size_t remaining = reductionGroupsFor(count);
             Buffer* current = &partialA;
@@ -220,11 +250,7 @@ namespace plamatrix::vulkan
                 remaining = nextGroups;
                 std::swap(current, next);
             }
-            context.copy(*current, readback, sizeof(float));
-            context.submitAndWait();
-            const float value = *static_cast<const float*>(readback.map());
-            readback.unmap();
-            return static_cast<double>(value);
+            return current;
         }
 
     } // namespace
@@ -328,6 +354,7 @@ namespace plamatrix::vulkan
         context.submitAndWait();
 
         const CountPush countPush{static_cast<std::uint32_t>(count)};
+        IterativeSolverReport report;
         context.begin();
         dispatch(context,
                  pipelines.spmv,
@@ -342,119 +369,140 @@ namespace plamatrix::vulkan
             groupsFor(count),
             &countPush,
             sizeof(countPush));
+        Buffer* initialResidual = dispatchDot(context,
+                                              pipelines.reduction,
+                                              residualBuffer,
+                                              residualBuffer,
+                                              partialABuffer,
+                                              partialBBuffer,
+                                              onesBuffer,
+                                              count);
+        context.copy(*initialResidual, reductionReadback, sizeof(float));
+        context.submitAndWait();
 
-        IterativeSolverReport report;
-        const double residualSquared = dot(context,
-                                           pipelines.reduction,
-                                           residualBuffer,
-                                           residualBuffer,
-                                           partialABuffer,
-                                           partialBBuffer,
-                                           onesBuffer,
-                                           reductionReadback,
-                                           count);
-        report.initialResidual = std::sqrt(residualSquared);
+        float initialResidualSquared = 0.0f;
+        copyFromBuffer(reductionReadback, &initialResidualSquared, sizeof(initialResidualSquared));
+        if (!std::isfinite(initialResidualSquared) || initialResidualSquared < 0.0f)
+            throw std::runtime_error("Vulkan PCG produced an invalid initial residual");
+        report.initialResidual = std::sqrt(static_cast<double>(initialResidualSquared));
         report.finalResidual = report.initialResidual;
         const double tolerance =
             std::max(options.absoluteTolerance, options.relativeTolerance * report.initialResidual);
         report.converged = report.finalResidual <= tolerance;
-        context.begin();
-        double rho = dot(context,
-                         pipelines.reduction,
-                         residualBuffer,
-                         transformedBuffer,
-                         partialABuffer,
-                         partialBBuffer,
-                         onesBuffer,
-                         reductionReadback,
-                         count);
 
-        bool hasPendingDirection = false;
-        for (int iteration = 0; !report.converged && iteration < options.maxIterations; ++iteration)
+        int completedIterations = 0;
+        bool stateInitialized = false;
+        while (!report.converged && completedIterations < options.maxIterations)
         {
-            if (!std::isfinite(rho) || rho <= 0.0)
-                throw std::runtime_error("Vulkan PCG breakdown in residual");
-            if (!hasPendingDirection)
-                context.begin();
-            hasPendingDirection = false;
-            dispatch(context,
-                     pipelines.spmv,
-                     {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
-                     groupsFor(count),
-                     &countPush,
-                     sizeof(countPush));
-            const double denominator = dot(context,
-                                           pipelines.reduction,
-                                           directionBuffer,
-                                           matrixDirectionBuffer,
-                                           partialABuffer,
-                                           partialBBuffer,
-                                           onesBuffer,
-                                           reductionReadback,
-                                           count);
-            if (!std::isfinite(denominator) || denominator <= 0.0)
-                throw std::runtime_error("Vulkan PCG breakdown in matrix-direction product");
-            const float alpha = static_cast<float>(rho / denominator);
-            ScalePush updatePush{static_cast<std::uint32_t>(count), alpha};
             context.begin();
-            dispatch(context,
-                     pipelines.update,
-                     {&solutionBuffer, &residualBuffer, &directionBuffer, &matrixDirectionBuffer},
-                     groupsFor(count),
-                     &updatePush,
-                     sizeof(updatePush));
-            report.iterations = iteration + 1;
-            const bool check =
-                report.iterations % options.convergenceCheckInterval == 0 || report.iterations == options.maxIterations;
-            if (check)
+            const bool needsDirectionUpdate = stateInitialized;
+            if (!stateInitialized)
             {
-                const double residualNow = dot(context,
-                                               pipelines.reduction,
-                                               residualBuffer,
-                                               residualBuffer,
-                                               partialABuffer,
-                                               partialBBuffer,
-                                               onesBuffer,
-                                               reductionReadback,
-                                               count);
-                report.finalResidual = std::sqrt(residualNow);
-                report.converged = std::isfinite(report.finalResidual) && report.finalResidual <= tolerance;
+                Buffer* initialRho = dispatchDot(context,
+                                                 pipelines.reduction,
+                                                 residualBuffer,
+                                                 transformedBuffer,
+                                                 partialABuffer,
+                                                 partialBBuffer,
+                                                 onesBuffer,
+                                                 count);
+                const StateInitPush stateInitPush{static_cast<float>(tolerance * tolerance)};
+                dispatch(context,
+                         pipelines.stateInit,
+                         {buffers.state.get(), initialRho},
+                         1,
+                         &stateInitPush,
+                         sizeof(stateInitPush));
+                stateInitialized = true;
             }
-            if (report.converged)
-                break;
 
-            if (report.iterations >= options.maxIterations)
-                break;
+            const int batchLimit =
+                std::min(options.convergenceCheckInterval, options.maxIterations - completedIterations);
+            for (int batchIteration = 0; batchIteration < batchLimit; ++batchIteration)
+            {
+                if (needsDirectionUpdate || batchIteration > 0)
+                {
+                    dispatch(context,
+                             pipelines.jacobi,
+                             {&residualBuffer, &inverseBuffer, &transformedBuffer},
+                             groupsFor(count),
+                             &countPush,
+                             sizeof(countPush));
+                    Buffer* nextRho = dispatchDot(context,
+                                                  pipelines.reduction,
+                                                  residualBuffer,
+                                                  transformedBuffer,
+                                                  partialABuffer,
+                                                  partialBBuffer,
+                                                  onesBuffer,
+                                                  count);
+                    dispatch(context, pipelines.beta, {buffers.state.get(), nextRho}, 1, nullptr, 0);
+                    dispatch(context,
+                             pipelines.direction,
+                             {&directionBuffer, &transformedBuffer, buffers.state.get()},
+                             groupsFor(count),
+                             &countPush,
+                             sizeof(countPush));
+                }
 
-            if (check)
-                context.begin();
-            dispatch(context,
-                     pipelines.jacobi,
-                     {&residualBuffer, &inverseBuffer, &transformedBuffer},
-                     groupsFor(count),
-                     &countPush,
-                     sizeof(countPush));
-            const double nextRho = dot(context,
-                                       pipelines.reduction,
-                                       residualBuffer,
-                                       transformedBuffer,
-                                       partialABuffer,
-                                       partialBBuffer,
-                                       onesBuffer,
-                                       reductionReadback,
-                                       count);
-            if (!std::isfinite(nextRho) || nextRho <= 0.0)
-                throw std::runtime_error("Vulkan PCG breakdown in direction update");
-            ScalePush directionPush{static_cast<std::uint32_t>(count), static_cast<float>(nextRho / rho)};
-            context.begin();
-            dispatch(context,
-                     pipelines.direction,
-                     {&directionBuffer, &transformedBuffer},
-                     groupsFor(count),
-                     &directionPush,
-                     sizeof(directionPush));
-            hasPendingDirection = true;
-            rho = nextRho;
+                dispatch(context,
+                         pipelines.spmv,
+                         {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
+                         groupsFor(count),
+                         &countPush,
+                         sizeof(countPush));
+                Buffer* denominator = dispatchDot(context,
+                                                  pipelines.reduction,
+                                                  directionBuffer,
+                                                  matrixDirectionBuffer,
+                                                  partialABuffer,
+                                                  partialBBuffer,
+                                                  onesBuffer,
+                                                  count);
+                dispatch(context, pipelines.alpha, {buffers.state.get(), denominator}, 1, nullptr, 0);
+                dispatch(
+                    context,
+                    pipelines.update,
+                    {&solutionBuffer, &residualBuffer, &directionBuffer, &matrixDirectionBuffer, buffers.state.get()},
+                    groupsFor(count),
+                    &countPush,
+                    sizeof(countPush));
+                ++completedIterations;
+
+                Buffer* residualNow = dispatchDot(context,
+                                                  pipelines.reduction,
+                                                  residualBuffer,
+                                                  residualBuffer,
+                                                  partialABuffer,
+                                                  partialBBuffer,
+                                                  onesBuffer,
+                                                  count);
+                const IterationPush iterationPush{static_cast<std::uint32_t>(completedIterations)};
+                dispatch(context,
+                         pipelines.convergence,
+                         {buffers.state.get(), residualNow},
+                         1,
+                         &iterationPush,
+                         sizeof(iterationPush));
+
+                const bool finalIteration = completedIterations >= options.maxIterations;
+                const bool check = batchIteration + 1 == batchLimit || finalIteration;
+                if (check)
+                    break;
+            }
+
+            context.copy(*buffers.state, *buffers.stateReadback, sizeof(PcgStateHost));
+            context.submitAndWait();
+            PcgStateHost state{};
+            copyFromBuffer(*buffers.stateReadback, &state, sizeof(state));
+            if ((state.flags & kBreakdownFlag) != 0u)
+                throw std::runtime_error(
+                    "Vulkan PCG breakdown in device scalar recurrence: rho=" + std::to_string(state.rho) +
+                    " alpha=" + std::to_string(state.alpha) + " beta=" + std::to_string(state.beta) +
+                    " residual=" + std::to_string(state.residualSquared) + " flags=" + std::to_string(state.flags));
+            report.iterations = static_cast<int>(state.iterations);
+            report.finalResidual = std::sqrt(static_cast<double>(state.residualSquared));
+            report.converged = (state.flags & kConvergedFlag) != 0u;
         }
 
         context.begin();
