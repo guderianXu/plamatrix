@@ -98,6 +98,27 @@ TEST(GpuAllocator, allocateAsync_RejectsByteSizeOverflow)
     EXPECT_THROW(GpuAllocator<float>::allocateAsync(count, nullptr), std::overflow_error);
 }
 
+TEST(Allocator, memoryPool_RespectsConfiguredByteLimit)
+{
+    const bool previous_enabled = GpuAllocator<float>::isMemoryPoolEnabled();
+    const std::size_t previous_limit = GpuAllocator<float>::memoryPoolMaxBytes();
+    GpuAllocator<float>::releaseMemoryPool();
+    GpuAllocator<float>::setMemoryPoolEnabled(true);
+    GpuAllocator<float>::setMemoryPoolMaxBytes(128);
+
+    float* small = GpuAllocator<float>::allocate(16);
+    GpuAllocator<float>::deallocate(small, 16);
+    EXPECT_EQ(GpuAllocator<float>::cachedBytes(), 16 * sizeof(float));
+
+    float* large = GpuAllocator<float>::allocate(32);
+    GpuAllocator<float>::deallocate(large, 32);
+    EXPECT_EQ(GpuAllocator<float>::cachedBytes(), 16 * sizeof(float));
+
+    GpuAllocator<float>::releaseMemoryPool();
+    GpuAllocator<float>::setMemoryPoolMaxBytes(previous_limit);
+    GpuAllocator<float>::setMemoryPoolEnabled(previous_enabled);
+}
+
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(GpuAllocator, deallocateAsync_EnqueuesCheckedReleaseOnExplicitStream)
 {

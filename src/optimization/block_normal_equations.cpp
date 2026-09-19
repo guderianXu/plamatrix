@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "plamatrix/optimization/block_schur.h"
+#include "plamatrix/core/checked_math.h"
 
 namespace plamatrix
 {
@@ -26,13 +27,18 @@ namespace plamatrix
                 "BlockNormalEquations: block counts must be non-negative and block sizes positive");
         }
 
-        _primaryDiagonal.assign(static_cast<std::size_t>(primary_block_count * primary_block_size * primary_block_size),
-                                Scalar(0));
-        _eliminatedDiagonal.assign(
-            static_cast<std::size_t>(eliminated_block_count * eliminated_block_size * eliminated_block_size),
-            Scalar(0));
-        _primaryGradient.assign(static_cast<std::size_t>(primary_block_count * primary_block_size), Scalar(0));
-        _eliminatedGradient.assign(static_cast<std::size_t>(eliminated_block_count * eliminated_block_size), Scalar(0));
+        const Index primary_block_area = detail::checkedIndexMul(primary_block_size, primary_block_size,
+                                                                  "primary block area");
+        const Index eliminated_block_area = detail::checkedIndexMul(eliminated_block_size, eliminated_block_size,
+                                                                    "eliminated block area");
+        _primaryDiagonal.assign(static_cast<std::size_t>(detail::checkedIndexMul(
+                                         primary_block_count, primary_block_area, "primary diagonal size")), Scalar(0));
+        _eliminatedDiagonal.assign(static_cast<std::size_t>(detail::checkedIndexMul(
+                                         eliminated_block_count, eliminated_block_area, "eliminated diagonal size")), Scalar(0));
+        _primaryGradient.assign(static_cast<std::size_t>(detail::checkedIndexMul(
+                                         primary_block_count, primary_block_size, "primary gradient size")), Scalar(0));
+        _eliminatedGradient.assign(static_cast<std::size_t>(detail::checkedIndexMul(
+                                         eliminated_block_count, eliminated_block_size, "eliminated gradient size")), Scalar(0));
         _primaryAdjacency.resize(static_cast<std::size_t>(primary_block_count));
         _eliminatedAdjacency.resize(static_cast<std::size_t>(eliminated_block_count));
     }
@@ -73,20 +79,19 @@ namespace plamatrix
     template <typename Scalar>
     std::size_t BlockNormalEquations<Scalar>::findOrCreateCrossBlock(Index primary_block, Index eliminated_block)
     {
-        auto& adjacency = _eliminatedAdjacency[static_cast<std::size_t>(eliminated_block)];
-        for (const std::size_t cross_index : adjacency)
+        const auto key = std::make_pair(primary_block, eliminated_block);
+        const auto found = _crossBlockIndex.find(key);
+        if (found != _crossBlockIndex.end())
         {
-            if (_crossBlocks[cross_index].primaryBlock == primary_block)
-            {
-                return cross_index;
-            }
+            return found->second;
         }
-
+        auto& adjacency = _eliminatedAdjacency[static_cast<std::size_t>(eliminated_block)];
         CrossBlock cross;
         cross.primaryBlock = primary_block;
         cross.eliminatedBlock = eliminated_block;
         cross.values.assign(static_cast<std::size_t>(_primaryBlockSize * _eliminatedBlockSize), Scalar(0));
         _crossBlocks.push_back(std::move(cross));
+        _crossBlockIndex.emplace(key, _crossBlocks.size() - 1);
         adjacency.push_back(_crossBlocks.size() - 1);
         return _crossBlocks.size() - 1;
     }
@@ -98,20 +103,19 @@ namespace plamatrix
         {
             throw std::invalid_argument("BlockNormalEquations: primary cross blocks must be upper triangular");
         }
-        auto& adjacency = _primaryAdjacency[static_cast<std::size_t>(row_block)];
-        for (const std::size_t index : adjacency)
+        const auto key = std::make_pair(row_block, column_block);
+        const auto found = _primaryCrossBlockIndex.find(key);
+        if (found != _primaryCrossBlockIndex.end())
         {
-            const auto& cross = _primaryCrossBlocks[index];
-            if (cross.columnBlock == column_block)
-            {
-                return index;
-            }
+            return found->second;
         }
+        auto& adjacency = _primaryAdjacency[static_cast<std::size_t>(row_block)];
         PrimaryCrossBlock cross;
         cross.rowBlock = row_block;
         cross.columnBlock = column_block;
         cross.values.assign(static_cast<std::size_t>(_primaryBlockSize * _primaryBlockSize), Scalar(0));
         _primaryCrossBlocks.push_back(std::move(cross));
+        _primaryCrossBlockIndex.emplace(key, _primaryCrossBlocks.size() - 1);
         adjacency.push_back(_primaryCrossBlocks.size() - 1);
         return _primaryCrossBlocks.size() - 1;
     }

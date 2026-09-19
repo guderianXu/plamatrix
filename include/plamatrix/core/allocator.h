@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <atomic>
 #include <limits>
 #include <mutex>
 #include <sstream>
@@ -51,12 +52,22 @@ class GpuMemoryPool
 public:
     static void setEnabled(bool enabled)
     {
-        enabledFlag() = enabled;
+        enabledFlag().store(enabled, std::memory_order_release);
     }
 
     static bool isEnabled()
     {
-        return enabledFlag();
+        return enabledFlag().load(std::memory_order_acquire);
+    }
+
+    static void setMaxCachedBytes(std::size_t bytes)
+    {
+        maxCachedBytes().store(bytes, std::memory_order_release);
+    }
+
+    static std::size_t maxCachedBytesValue()
+    {
+        return maxCachedBytes().load(std::memory_order_acquire);
     }
 
     static void* acquire(std::size_t bytes)
@@ -68,8 +79,9 @@ public:
 
         if (isEnabled())
         {
+            const DeviceBytes key{currentDevice(), bytes};
             std::lock_guard<std::mutex> lock(mutex());
-            auto& blocks = freeBlocks()[bytes];
+            auto& blocks = freeBlocks()[key];
             if (!blocks.empty())
             {
                 void* ptr = blocks.back();
@@ -80,6 +92,10 @@ public:
 
         void* ptr = nullptr;
         PLAMATRIX_CHECK_CUDA(cudaMalloc(&ptr, bytes));
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            allocationDevices()[ptr] = currentDevice();
+        }
         return ptr;
     }
 
@@ -92,9 +108,20 @@ public:
 
         if (isEnabled() && bytes > 0)
         {
+            const DeviceBytes key{allocationDevice(ptr), bytes};
             std::lock_guard<std::mutex> lock(mutex());
-            freeBlocks()[bytes].push_back(ptr);
-            return;
+            const std::size_t limit = maxCachedBytesValue();
+            if (bytes <= limit && cachedBytesLocked() <= limit - bytes)
+            {
+                freeBlocks()[key].push_back(ptr);
+                return;
+            }
+            allocationDevices().erase(ptr);
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            allocationDevices().erase(ptr);
         }
 
         PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
@@ -122,6 +149,10 @@ public:
                 blocks_to_free.insert(blocks_to_free.end(), entry.second.begin(), entry.second.end());
             }
             freeBlocks().clear();
+            for (void* ptr : blocks_to_free)
+            {
+                allocationDevices().erase(ptr);
+            }
         }
 
         for (void* ptr : blocks_to_free)
@@ -144,19 +175,91 @@ public:
     static std::size_t cachedBytes()
     {
         std::lock_guard<std::mutex> lock(mutex());
+        return cachedBytesLocked();
+    }
+
+private:
+    struct DeviceBytes
+    {
+        int device = 0;
+        std::size_t bytes = 0;
+
+        bool operator==(const DeviceBytes& other) const noexcept
+        {
+            return device == other.device && bytes == other.bytes;
+        }
+    };
+
+    struct DeviceBytesHash
+    {
+        std::size_t operator()(const DeviceBytes& value) const noexcept
+        {
+            const std::size_t device_hash = std::hash<int>{}(value.device);
+            const std::size_t bytes_hash = std::hash<std::size_t>{}(value.bytes);
+            return device_hash ^ (bytes_hash + static_cast<std::size_t>(0x9e3779b9) +
+                                  (device_hash << 6) + (device_hash >> 2));
+        }
+    };
+
+    static int currentDevice()
+    {
+#ifdef PLAMATRIX_WITH_CUDA
+        int device = 0;
+        PLAMATRIX_CHECK_CUDA(cudaGetDevice(&device));
+        return device;
+#else
+        return 0;
+#endif
+    }
+
+    static int allocationDevice(void* ptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            const auto found = allocationDevices().find(ptr);
+            if (found != allocationDevices().end())
+            {
+                return found->second;
+            }
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        cudaPointerAttributes attributes{};
+        if (cudaPointerGetAttributes(&attributes, ptr) == cudaSuccess)
+        {
+            return attributes.device;
+        }
+        static_cast<void>(cudaGetLastError());
+#endif
+        return currentDevice();
+    }
+
+    static std::size_t cachedBytesLocked()
+    {
         std::size_t bytes = 0;
         for (const auto& entry : freeBlocks())
         {
-            bytes += entry.first * entry.second.size();
+            for (std::size_t index = 0; index < entry.second.size(); ++index)
+            {
+                if (bytes > std::numeric_limits<std::size_t>::max() - entry.first.bytes)
+                {
+                    return std::numeric_limits<std::size_t>::max();
+                }
+                bytes += entry.first.bytes;
+            }
         }
         return bytes;
     }
 
-private:
-    static bool& enabledFlag()
+    static std::atomic<bool>& enabledFlag()
     {
-        static bool enabled = false;
+        static std::atomic<bool> enabled{false};
         return enabled;
+    }
+
+    static std::atomic<std::size_t>& maxCachedBytes()
+    {
+        static std::atomic<std::size_t> limit{std::numeric_limits<std::size_t>::max()};
+        return limit;
     }
 
     static std::mutex& mutex()
@@ -165,10 +268,16 @@ private:
         return pool_mutex;
     }
 
-    static std::unordered_map<std::size_t, std::vector<void*>>& freeBlocks()
+    static std::unordered_map<DeviceBytes, std::vector<void*>, DeviceBytesHash>& freeBlocks()
     {
-        static std::unordered_map<std::size_t, std::vector<void*>> blocks;
+        static std::unordered_map<DeviceBytes, std::vector<void*>, DeviceBytesHash> blocks;
         return blocks;
+    }
+
+    static std::unordered_map<void*, int>& allocationDevices()
+    {
+        static std::unordered_map<void*, int> devices;
+        return devices;
     }
 };
 
@@ -384,6 +493,19 @@ struct GpuAllocator
     static void setMemoryPoolEnabled(bool enabled)
     {
         detail::GpuMemoryPool::setEnabled(enabled);
+    }
+
+    /// Set the maximum total number of bytes retained by the process-local pool.
+    /// Blocks released after the limit is reached are returned directly to CUDA.
+    static void setMemoryPoolMaxBytes(std::size_t bytes)
+    {
+        detail::GpuMemoryPool::setMaxCachedBytes(bytes);
+    }
+
+    /// Return the configured maximum number of bytes retained by the memory pool.
+    static std::size_t memoryPoolMaxBytes()
+    {
+        return detail::GpuMemoryPool::maxCachedBytesValue();
     }
 
     /// @return whether the process-local GPU memory pool is enabled.

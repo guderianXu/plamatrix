@@ -372,21 +372,28 @@ namespace plamatrix
                     kernelArg(update_kernel, 4, alpha);
                     kernelArg(update_kernel, 5, device_count);
                     launch(queue.get(), update_kernel, count, local_size, "clEnqueueNDRangeKernel(update)");
-                    residual_squared = dot<Scalar>(queue.get(),
-                                                   dot_kernel,
-                                                   reduce_kernel,
-                                                   residual,
-                                                   residual,
-                                                   partial_a,
-                                                   partial_b,
-                                                   matrix.rows(),
-                                                   local_size,
-                                                   double_accumulation);
-                    if (!std::isfinite(residual_squared) || residual_squared < 0.0)
-                        throw std::runtime_error("OpenCL PCG residual is invalid");
                     report.iterations = iteration + 1;
-                    report.finalResidual = std::sqrt(residual_squared);
-                    report.converged = std::isfinite(report.finalResidual) && report.finalResidual <= tolerance;
+                    const bool check_residual =
+                        (report.iterations % options.convergenceCheckInterval == 0) ||
+                        (report.iterations == options.maxIterations);
+                    if (check_residual)
+                    {
+                        residual_squared = dot<Scalar>(queue.get(),
+                                                       dot_kernel,
+                                                       reduce_kernel,
+                                                       residual,
+                                                       residual,
+                                                       partial_a,
+                                                       partial_b,
+                                                       matrix.rows(),
+                                                       local_size,
+                                                       double_accumulation);
+                        if (!std::isfinite(residual_squared) || residual_squared < 0.0)
+                            throw std::runtime_error("OpenCL PCG residual is invalid");
+                        report.finalResidual = std::sqrt(residual_squared);
+                        report.converged =
+                            std::isfinite(report.finalResidual) && report.finalResidual <= tolerance;
+                    }
                     if (report.converged)
                         break;
                     run_preconditioner();

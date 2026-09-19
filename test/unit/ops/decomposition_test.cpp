@@ -367,6 +367,38 @@ TEST(SVD, decompose_3x3_Gpu)
         }
     }
 }
+
+TEST(SVD, decompose_WideRectangularGpu_ReturnsFullShapesAndReconstructs)
+{
+    DenseMatrix<double, Device::CPU> A_cpu(2, 4);
+    const double values[] = {1.0, 2.0, -1.0, 0.5, 3.0, -2.0, 4.0, 1.5};
+    for (Index column = 0; column < 4; ++column)
+    {
+        for (Index row = 0; row < 2; ++row)
+        {
+            A_cpu(row, column) = values[column * 2 + row];
+        }
+    }
+
+    auto [U_gpu, S_gpu, Vt_gpu] = svd(A_cpu.toGpu());
+    auto U = U_gpu.toCpu();
+    auto S = S_gpu.toCpu();
+    auto Vt = Vt_gpu.toCpu();
+    EXPECT_EQ(U.rows(), 2);
+    EXPECT_EQ(U.cols(), 2);
+    EXPECT_EQ(S.rows(), 2);
+    EXPECT_EQ(Vt.rows(), 4);
+    EXPECT_EQ(Vt.cols(), 4);
+
+    auto reconstructed = reconstructFromSvd(U, S, Vt);
+    for (Index column = 0; column < 4; ++column)
+    {
+        for (Index row = 0; row < 2; ++row)
+        {
+            EXPECT_NEAR(A_cpu(row, column), reconstructed(row, column), 1e-5);
+        }
+    }
+}
 #endif
 
 // QR: decompose_3x2_Cpu — verify Q orthogonal, R upper triangular, A ≈ Q * R

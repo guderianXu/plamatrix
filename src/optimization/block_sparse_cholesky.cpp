@@ -10,6 +10,8 @@
 
 #include <omp.h>
 
+#include "plamatrix/core/checked_math.h"
+
 namespace plamatrix::block_schur_detail
 {
     namespace
@@ -288,7 +290,8 @@ namespace plamatrix::block_schur_detail
             _updateOffsets.push_back(_updateTargets.size());
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(block_size * block_size);
+        const std::size_t block_values = static_cast<std::size_t>(
+            detail::checkedIndexMul(block_size, block_size, "sparse Cholesky block values"));
         _factorValues.resize(_factorRowBlocks.size() * block_values);
         _sourceEntries.reserve(static_cast<std::size_t>(nonzeros / 2 + dimension));
         for (Index old_row = 0; old_row < dimension; ++old_row)
@@ -339,7 +342,8 @@ namespace plamatrix::block_schur_detail
             _factorValues[entry.targetOffset] = static_cast<double>(values[entry.sourceOffset]);
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(_blockSize * _blockSize);
+        const std::size_t block_values = static_cast<std::size_t>(
+            detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky factor values"));
         _activeCoordinates.assign(static_cast<std::size_t>(_dimension), 0);
         for (Index column = 0; column < _blockCount; ++column)
         {
@@ -451,7 +455,8 @@ namespace plamatrix::block_schur_detail
             }
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(_blockSize * _blockSize);
+        const std::size_t block_values = static_cast<std::size_t>(
+            detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky solve values"));
         for (Index column = 0; column < _blockCount; ++column)
         {
             const std::size_t begin = _factorColumnOffsets[static_cast<std::size_t>(column)];

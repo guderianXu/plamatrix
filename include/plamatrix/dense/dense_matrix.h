@@ -42,14 +42,12 @@ public:
         return DenseMatrix(rows, cols, detail::HostAllocationKind::Pinned);
     }
 
-    /// Construct a GPU matrix with ordinary, uninitialized storage.
+    /// Construct a matrix with ordinary, uninitialized storage.
     /// Unlike uninitializedAsync(), the allocation is not tied to a CUDA stream and may outlive
     /// streams that use it. Callers must overwrite every element before reading it.
     static DenseMatrix uninitialized(Index rows, Index cols)
     {
-        static_assert(Dev == Device::GPU,
-                      "uninitialized() is only available for GPU matrices");
-        return DenseMatrix(rows, cols, UninitializedGpuAllocationTag{});
+        return DenseMatrix(rows, cols, UninitializedAllocationTag{});
     }
 
     /// Construct a GPU matrix with stream-ordered, uninitialized storage.
@@ -196,7 +194,8 @@ public:
     DenseMatrix<Scalar, Device::CPU> toCpu() const
     {
         static_assert(Dev == Device::GPU, "toCpu() is only available on GPU matrices");
-        DenseMatrix<Scalar, Device::CPU> result(this->_rows, this->_cols);
+        DenseMatrix<Scalar, Device::CPU> result = DenseMatrix<Scalar, Device::CPU>::uninitialized(
+            this->_rows, this->_cols);
         if (this->size() == 0)
         {
             return result;
@@ -213,7 +212,8 @@ public:
     DenseMatrix<Scalar, Device::CPU> toCpuAsync(cudaStream_t stream = nullptr) const
     {
         static_assert(Dev == Device::GPU, "toCpuAsync() is only available on GPU matrices");
-        DenseMatrix<Scalar, Device::CPU> result(this->_rows, this->_cols);
+        DenseMatrix<Scalar, Device::CPU> result = DenseMatrix<Scalar, Device::CPU>::pinned(
+            this->_rows, this->_cols);
         copyToCpuAsync(result, stream);
         return result;
     }
@@ -239,7 +239,8 @@ public:
     DenseMatrix<Scalar, Device::GPU> toGpu() const
     {
         static_assert(Dev == Device::CPU, "toGpu() is only available on CPU matrices");
-        DenseMatrix<Scalar, Device::GPU> result(this->_rows, this->_cols);
+        DenseMatrix<Scalar, Device::GPU> result = DenseMatrix<Scalar, Device::GPU>::uninitialized(
+            this->_rows, this->_cols);
         if (this->size() == 0)
         {
             return result;
@@ -256,7 +257,8 @@ public:
     DenseMatrix<Scalar, Device::GPU> toGpuAsync(cudaStream_t stream = nullptr) const
     {
         static_assert(Dev == Device::CPU, "toGpuAsync() is only available on CPU matrices");
-        DenseMatrix<Scalar, Device::GPU> result(this->_rows, this->_cols);
+        DenseMatrix<Scalar, Device::GPU> result = DenseMatrix<Scalar, Device::GPU>::uninitialized(
+            this->_rows, this->_cols);
         copyToGpuAsync(result, stream);
         return result;
     }
@@ -305,11 +307,11 @@ public:
     }
 
 private:
-    struct UninitializedGpuAllocationTag
+    struct UninitializedAllocationTag
     {
     };
 
-    DenseMatrix(Index rows, Index cols, UninitializedGpuAllocationTag)
+    DenseMatrix(Index rows, Index cols, UninitializedAllocationTag)
         : DeviceMatrix<Scalar, Dev>(rows, cols)
     {
     }

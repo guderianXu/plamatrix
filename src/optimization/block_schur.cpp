@@ -27,6 +27,33 @@ namespace plamatrix
     namespace
     {
 
+#ifdef PLAMATRIX_WITH_CUDA
+        class ScopedCudaDevice
+        {
+        public:
+            explicit ScopedCudaDevice(int requested)
+                : _previous(-1)
+            {
+                PLAMATRIX_CHECK_CUDA(cudaGetDevice(&_previous));
+                if (requested >= 0 && requested != _previous)
+                {
+                    PLAMATRIX_CHECK_CUDA(cudaSetDevice(requested));
+                }
+            }
+
+            ~ScopedCudaDevice() noexcept
+            {
+                if (_previous >= 0)
+                {
+                    static_cast<void>(cudaSetDevice(_previous));
+                }
+            }
+
+        private:
+            int _previous;
+        };
+#endif
+
         using block_schur_detail::addMatrixVector;
         using block_schur_detail::addTransposeMatrixVector;
         using block_schur_detail::invertPositiveDefinite;
@@ -65,6 +92,11 @@ namespace plamatrix
         {
             throw std::invalid_argument("solveDampedSchurComplement: invalid solver options");
         }
+
+#ifdef PLAMATRIX_WITH_CUDA
+        const bool uses_cuda = options.linearBackend == SchurComplementLinearBackend::Cuda;
+        ScopedCudaDevice device_guard(uses_cuda ? options.deviceIndex : -1);
+#endif
 
         SchurComplementSolverReport<Scalar> report;
         report.linearBackend = options.linearBackend;
@@ -362,7 +394,8 @@ namespace plamatrix
         Scalar* inverse_value = point_value + eliminated_size;
         const auto apply_schur = [&](const std::vector<Scalar>& input, std::vector<Scalar>* output)
         {
-            output->assign(static_cast<std::size_t>(primary_dimension), Scalar(0));
+            output->resize(static_cast<std::size_t>(primary_dimension));
+            std::fill(output->begin(), output->end(), Scalar(0));
             for (Index block = 0; block < primary_count; ++block)
             {
                 multiplyMatrixVector(primary_diagonal.data() + block * primary_size * primary_size,
@@ -523,10 +556,6 @@ namespace plamatrix
         else if (options.linearBackend != SchurComplementLinearBackend::Cpu)
         {
 #ifdef PLAMATRIX_WITH_CUDA
-            if (options.linearBackend == SchurComplementLinearBackend::Cuda && options.deviceIndex >= 0)
-            {
-                PLAMATRIX_CHECK_CUDA(cudaSetDevice(options.deviceIndex));
-            }
 #endif
             const auto assembly_start = std::chrono::steady_clock::now();
             double accumulation_seconds = 0.0;

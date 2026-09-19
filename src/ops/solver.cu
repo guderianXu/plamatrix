@@ -6,6 +6,7 @@
 #include <cusolverDn.h>
 
 #include "plamatrix/core/error_check.h"
+#include "plamatrix/core/cuda_buffer.h"
 #include "plamatrix/ops/solver.h"
 
 namespace plamatrix
@@ -17,10 +18,19 @@ namespace
 /// Lazily initialized cuSOLVER handle
 cusolverDnHandle_t getCusolverHandle()
 {
-    static cusolverDnHandle_t handle = nullptr;
+    static thread_local cusolverDnHandle_t handle = nullptr;
+    static thread_local int handle_device = -1;
+    int current_device = 0;
+    PLAMATRIX_CHECK_CUDA(cudaGetDevice(&current_device));
+    if (handle != nullptr && handle_device != current_device)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDestroy(handle));
+        handle = nullptr;
+    }
     if (handle == nullptr)
     {
         PLAMATRIX_CHECK_CUSOLVER(cusolverDnCreate(&handle));
+        handle_device = current_device;
     }
     return handle;
 }
@@ -86,12 +96,12 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
                    cudaMemcpyDeviceToDevice));
 
     // Allocate pivot array on GPU
-    int* d_pivot = nullptr;
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_pivot, static_cast<std::size_t>(n) * sizeof(int)));
+    detail::CudaBuffer pivot_buffer(static_cast<std::size_t>(n) * sizeof(int));
+    int* d_pivot = pivot_buffer.as<int>();
 
     // Allocate dev_info on GPU
-    int* d_dev_info = nullptr;
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_dev_info, sizeof(int)));
+    detail::CudaBuffer info_buffer(sizeof(int));
+    int* d_dev_info = info_buffer.as<int>();
 
     // Query workspace size for getrf
     int lwork = 0;
@@ -107,8 +117,8 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
     }
 
     // Allocate workspace
-    Scalar* d_work = nullptr;
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_work, static_cast<std::size_t>(lwork) * sizeof(Scalar)));
+    detail::CudaBuffer work_buffer(static_cast<std::size_t>(lwork) * sizeof(Scalar));
+    Scalar* d_work = work_buffer.as<Scalar>();
 
     // Call getrf (LU factorization)
     if constexpr (std::is_same_v<Scalar, float>)
@@ -128,18 +138,12 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
 
     if (host_dev_info < 0)
     {
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_work));
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_pivot));
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_dev_info));
         std::ostringstream oss;
         oss << "Solve: invalid argument at getrf parameter " << -host_dev_info;
         throw std::runtime_error(oss.str());
     }
     if (host_dev_info > 0)
     {
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_work));
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_pivot));
-        PLAMATRIX_CHECK_CUDA(cudaFree(d_dev_info));
         std::ostringstream oss;
         oss << "Solve: matrix is singular (U[" << (host_dev_info - 1) << "," << (host_dev_info - 1) << "] is zero)";
         throw std::runtime_error(oss.str());
@@ -163,11 +167,6 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
 
     // Check dev_info from getrs
     PLAMATRIX_CHECK_CUDA(cudaMemcpy(&host_dev_info, d_dev_info, sizeof(int), cudaMemcpyDeviceToHost));
-
-    // Free resources
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_work));
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_pivot));
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_dev_info));
 
     if (host_dev_info < 0)
     {

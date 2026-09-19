@@ -17,9 +17,18 @@ namespace
 cublasHandle_t getCublasHandle()
 {
     static thread_local cublasHandle_t handle = nullptr;
+    static thread_local int handle_device = -1;
+    int current_device = 0;
+    PLAMATRIX_CHECK_CUDA(cudaGetDevice(&current_device));
+    if (handle != nullptr && handle_device != current_device)
+    {
+        PLAMATRIX_CHECK_CUBLAS(cublasDestroy(handle));
+        handle = nullptr;
+    }
     if (handle == nullptr)
     {
         PLAMATRIX_CHECK_CUBLAS(cublasCreate(&handle));
+        handle_device = current_device;
     }
     return handle;
 }
@@ -128,7 +137,7 @@ DenseMatrix<Scalar, Device::GPU> gemmAsync(const DenseMatrix<Scalar, Device::GPU
                                            cudaStream_t stream)
 {
     checkGemmDimensions(A, B);
-    DenseMatrix<Scalar, Device::GPU> C(A.rows(), B.cols());
+    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), B.cols(), stream);
     gemmAsync(A, B, C, stream);
     return C;
 }

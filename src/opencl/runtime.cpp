@@ -272,6 +272,18 @@ cl_program OpenClRuntime::program(
         return found->second;
     }
 
+    // Keep the process-wide cache bounded.  Program binaries can be large and
+    // callers may generate keys for many problem sizes over a long run.
+    constexpr std::size_t max_cached_programs = 64;
+    if (_programs.size() >= max_cached_programs)
+    {
+        for (const auto& entry : _programs)
+        {
+            static_cast<void>(clReleaseProgram(entry.second));
+        }
+        _programs.clear();
+    }
+
     const char* source_pointer = source.c_str();
     const std::size_t source_size = source.size();
     cl_int error = CL_SUCCESS;

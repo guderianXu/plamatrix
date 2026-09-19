@@ -8,6 +8,7 @@
 #include <omp.h>
 
 #include "plamatrix/core/parallel.h"
+#include "plamatrix/core/checked_math.h"
 #include "plamatrix/ops/gemm.h"
 
 #include "gemm_microkernel.h"
@@ -22,8 +23,8 @@ inline int chooseGemmThreadCount(Index work, Index tile_count)
 {
     constexpr Index work_per_thread = Index(2) * 1024 * 1024;
     const int available = std::max(1, omp_get_max_threads());
-    const int useful = std::max(1, static_cast<int>(
-        (work + work_per_thread - 1) / work_per_thread));
+    const Index useful_count = work / work_per_thread + (work % work_per_thread != 0 ? 1 : 0);
+    const int useful = std::max(1, static_cast<int>(std::min<Index>(useful_count, 16)));
     return std::min({available, useful, std::max(1, static_cast<int>(tile_count)), 16});
 }
 
@@ -75,7 +76,8 @@ void nativeGemm(const Scalar* A_data,
     const Index row_block_count = (m + row_block_size - 1) / row_block_size;
     const Index column_block_count = (n + column_micro_size - 1) / column_micro_size;
     const Index tile_count = row_block_count * column_block_count;
-    const int thread_count = chooseGemmThreadCount(m * n * k, tile_count);
+    const Index work = detail::checkedIndexMul(detail::checkedIndexMul(m, n, "GEMM work"), k, "GEMM work");
+    const int thread_count = chooseGemmThreadCount(work, tile_count);
     std::vector<Scalar> packed_right(static_cast<std::size_t>(
         column_block_count * k * column_micro_size), Scalar(0));
     #pragma omp parallel for schedule(static) num_threads(thread_count) \
@@ -172,7 +174,7 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
         throw std::runtime_error(oss.str());
     }
 
-    DenseMatrix<Scalar, Device::CPU> C(m, n);
+    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(m, n);
     if (m == 0 || n == 0 || k == 0)
     {
         return C;

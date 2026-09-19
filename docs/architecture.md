@@ -4,6 +4,16 @@
 
 ---
 
+## 运行时资源与工作区约束
+
+GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 GPU 到 CPU 的 DenseMatrix 传输
+使用 pinned host storage；CUDA 求解器临时缓冲区采用 RAII，异常路径也会释放资源。cuBLAS
+和 cuSOLVER handle 按线程及当前 CUDA device 管理，Schur CUDA 执行结束后恢复调用者的设备。
+
+在结果会被完整覆盖的路径中，CPU/GPU 输出矩阵使用未初始化存储；块布局的尺寸乘法会先做
+溢出检查。OpenCL PCG 支持通过 `convergenceCheckInterval` 降低残差回读频率，编译程序缓存
+有固定容量上限，避免长期运行时无界增长。
+
 ## 1. 整体架构
 
 ```

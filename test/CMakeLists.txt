@@ -1,6 +1,7 @@
 add_executable(plamatrix_tests
     test_main.cpp
     unit/core/allocator_test.cpp
+    unit/core/checked_math_test.cpp
     unit/core/device_matrix_test.cpp
     unit/core/parallel_test.cpp
     unit/dense/dense_matrix_test.cpp

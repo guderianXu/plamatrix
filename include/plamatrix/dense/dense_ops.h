@@ -55,7 +55,7 @@ DenseMatrix<Scalar, Device::CPU> add(const DenseMatrix<Scalar, Device::CPU>& A,
                                      const DenseMatrix<Scalar, Device::CPU>& B)
 {
     detail::checkSameDimensions("add", A, B);
-    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(A.rows(), A.cols());
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
@@ -85,7 +85,7 @@ DenseMatrix<Scalar, Device::CPU> sub(const DenseMatrix<Scalar, Device::CPU>& A,
                                      const DenseMatrix<Scalar, Device::CPU>& B)
 {
     detail::checkSameDimensions("sub", A, B);
-    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(A.rows(), A.cols());
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
@@ -299,7 +299,7 @@ void subAsync(const DenseMatrix<Scalar, Device::GPU>&,
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> operator*(Scalar alpha, const DenseMatrix<Scalar, Device::CPU>& A)
 {
-    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(A.rows(), A.cols());
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {
@@ -338,7 +338,7 @@ DenseMatrix<Scalar, Device::CPU> operator*(const DenseMatrix<Scalar, Device::CPU
 template <typename Scalar>
 DenseMatrix<Scalar, Device::CPU> operator+(Scalar alpha, const DenseMatrix<Scalar, Device::CPU>& A)
 {
-    DenseMatrix<Scalar, Device::CPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(A.rows(), A.cols());
     Index n = A.size();
     if (detail::shouldUseOpenMp(n))
     {

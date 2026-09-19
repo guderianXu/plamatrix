@@ -7,6 +7,7 @@
 #include <cusolverDn.h>
 
 #include "plamatrix/core/error_check.h"
+#include "plamatrix/core/cuda_buffer.h"
 #include "plamatrix/ops/decomposition.h"
 
 namespace plamatrix
@@ -18,10 +19,19 @@ namespace
 /// Lazily initialized cuSOLVER handle
 cusolverDnHandle_t getCusolverHandle()
 {
-    static cusolverDnHandle_t handle = nullptr;
+    static thread_local cusolverDnHandle_t handle = nullptr;
+    static thread_local int handle_device = -1;
+    int current_device = 0;
+    PLAMATRIX_CHECK_CUDA(cudaGetDevice(&current_device));
+    if (handle != nullptr && handle_device != current_device)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDestroy(handle));
+        handle = nullptr;
+    }
     if (handle == nullptr)
     {
         PLAMATRIX_CHECK_CUSOLVER(cusolverDnCreate(&handle));
+        handle_device = current_device;
     }
     return handle;
 }
@@ -50,7 +60,13 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     }
     if (m < n)
     {
-        throw std::runtime_error("SVD: GPU backend requires rows >= columns with legacy cuSOLVER gesvd");
+        // Legacy gesvd requires a tall matrix.  Decompose A^T and swap the
+        // orthogonal factors so the public result still represents A.
+        auto transposed = A.transpose();
+        auto [u_transposed, singular_values, vt_transposed] = svdGpuImpl(transposed);
+        auto u = vt_transposed.transpose();
+        auto vt = u_transposed.transpose();
+        return std::make_tuple(std::move(u), std::move(singular_values), std::move(vt));
     }
 
     cusolverDnHandle_t handle = getCusolverHandle();
@@ -91,15 +107,13 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     }
 
     // Allocate workspace, rwork, and dev_info on GPU
-    Scalar* d_work = nullptr;
-    Scalar* d_rwork = nullptr;
-    int* d_dev_info = nullptr;
-
     int rwork_size = (min_mn > 1) ? (min_mn - 1) : 1;
-
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_work, static_cast<std::size_t>(lwork) * sizeof(Scalar)));
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_rwork, static_cast<std::size_t>(rwork_size) * sizeof(Scalar)));
-    PLAMATRIX_CHECK_CUDA(cudaMalloc(&d_dev_info, sizeof(int)));
+    detail::CudaBuffer work_buffer(static_cast<std::size_t>(lwork) * sizeof(Scalar));
+    detail::CudaBuffer rwork_buffer(static_cast<std::size_t>(rwork_size) * sizeof(Scalar));
+    detail::CudaBuffer info_buffer(sizeof(int));
+    Scalar* d_work = work_buffer.as<Scalar>();
+    Scalar* d_rwork = rwork_buffer.as<Scalar>();
+    int* d_dev_info = info_buffer.as<int>();
 
     // Call gesvd
     if constexpr (std::is_same_v<Scalar, float>)
@@ -133,10 +147,6 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     int host_dev_info = 0;
     PLAMATRIX_CHECK_CUDA(cudaMemcpy(&host_dev_info, d_dev_info, sizeof(int), cudaMemcpyDeviceToHost));
 
-    // Free workspace, rwork, and dev_info
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_work));
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_rwork));
-    PLAMATRIX_CHECK_CUDA(cudaFree(d_dev_info));
 
     if (host_dev_info < 0)
     {

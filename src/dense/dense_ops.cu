@@ -69,7 +69,7 @@ DenseMatrix<Scalar, Device::GPU> addAsync(const DenseMatrix<Scalar, Device::GPU>
                                           cudaStream_t stream)
 {
     detail::checkSameDimensions("add", A, B);
-    DenseMatrix<Scalar, Device::GPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
     addAsync(A, B, C, stream);
     return C;
 }
@@ -99,7 +99,7 @@ DenseMatrix<Scalar, Device::GPU> subAsync(const DenseMatrix<Scalar, Device::GPU>
                                           cudaStream_t stream)
 {
     detail::checkSameDimensions("sub", A, B);
-    DenseMatrix<Scalar, Device::GPU> C(A.rows(), A.cols());
+    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
     subAsync(A, B, C, stream);
     return C;
 }

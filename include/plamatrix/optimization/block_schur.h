@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "plamatrix/core/types.h"
@@ -340,6 +341,17 @@ namespace plamatrix
             std::vector<Scalar> values;
         };
 
+        struct BlockPairHash
+        {
+            std::size_t operator()(const std::pair<Index, Index>& value) const noexcept
+            {
+                const std::size_t first = std::hash<Index>{}(value.first);
+                const std::size_t second = std::hash<Index>{}(value.second);
+                return first ^ (second + static_cast<std::size_t>(0x9e3779b9) +
+                                (first << 6) + (first >> 2));
+            }
+        };
+
         void validateResidual(const Scalar* jacobian,
                               Index jacobian_size,
                               const Scalar* residual,
@@ -367,6 +379,8 @@ namespace plamatrix
         std::vector<std::vector<std::size_t>> _primaryAdjacency;
         std::vector<CrossBlock> _crossBlocks;
         std::vector<std::vector<std::size_t>> _eliminatedAdjacency;
+        std::unordered_map<std::pair<Index, Index>, std::size_t, BlockPairHash> _crossBlockIndex;
+        std::unordered_map<std::pair<Index, Index>, std::size_t, BlockPairHash> _primaryCrossBlockIndex;
 
         friend SchurComplementSolverReport<Scalar>
         solveDampedSchurComplement<Scalar>(const BlockNormalEquations<Scalar>& equations,
