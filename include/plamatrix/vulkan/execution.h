@@ -90,11 +90,15 @@ namespace plamatrix::vulkan
         CommandContext& operator=(CommandContext&& other) noexcept;
 
         void begin();
+        /// Record a command buffer that may be submitted repeatedly after the first completed submission.
+        void beginReusable();
         void dispatch(const ComputePipeline& pipeline,
                       const std::vector<Buffer*>& buffers,
                       std::size_t groups,
                       const void* pushData,
                       std::uint32_t pushSize);
+        /// Make writes from earlier submissions visible to the requested stages in this recording.
+        void previousSubmissionBarrier(VkPipelineStageFlags destinationStages, VkAccessFlags destinationAccess);
         void copy(const Buffer& source, Buffer& destination, VkDeviceSize size);
         void submitAndWait();
         void resetSubmissionCount() noexcept
@@ -102,6 +106,7 @@ namespace plamatrix::vulkan
             _submissionCount = 0;
             _barrierCount = 0;
             _gpuMilliseconds = 0.0;
+            _commandBufferRecordings = 0;
         }
         std::uint32_t pendingDispatchCount() const noexcept
         {
@@ -123,6 +128,10 @@ namespace plamatrix::vulkan
         {
             return _gpuMilliseconds;
         }
+        std::uint32_t commandBufferRecordings() const noexcept
+        {
+            return _commandBufferRecordings;
+        }
 
     private:
         struct CachedDescriptorSet
@@ -132,6 +141,7 @@ namespace plamatrix::vulkan
             VkDescriptorSet set = VK_NULL_HANDLE;
         };
 
+        void beginRecording(bool reusable);
         void reset() noexcept;
         Runtime* _runtime = nullptr;
         DescriptorPool _descriptorPool;
@@ -139,10 +149,14 @@ namespace plamatrix::vulkan
         VkFence _fence = VK_NULL_HANDLE;
         VkQueryPool _timestampQueryPool = VK_NULL_HANDLE;
         bool _recording = false;
+        bool _executable = false;
+        bool _reusable = false;
         std::uint32_t _pendingDispatches = 0;
         std::uint32_t _submissionCount = 0;
         std::uint32_t _descriptorSetAllocations = 0;
+        std::uint32_t _recordedBarrierCount = 0;
         std::uint32_t _barrierCount = 0;
+        std::uint32_t _commandBufferRecordings = 0;
         double _gpuMilliseconds = 0.0;
         std::unordered_map<VkBuffer, VkAccessFlags> _bufferAccess;
         std::vector<CachedDescriptorSet> _descriptorSets;

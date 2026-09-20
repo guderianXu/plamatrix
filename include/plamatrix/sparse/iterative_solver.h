@@ -30,11 +30,13 @@ namespace plamatrix
         double finalResidual = 0.0;
         /// Number of backend command submissions when the backend exposes this diagnostic.
         std::uint32_t commandSubmissions = 0;
+        /// Number of Vulkan command-buffer recordings performed during the solve.
+        std::uint32_t commandBufferRecordings = 0;
         /// Number of descriptor sets allocated during the solve when the backend exposes this diagnostic.
         std::uint32_t descriptorSetAllocations = 0;
         /// GPU execution time accumulated by Vulkan when timestamp queries are available.
         double gpuMilliseconds = 0.0;
-        /// Number of Vulkan buffer dependency barriers recorded for the solve.
+        /// Number of Vulkan buffer dependency barriers executed for the solve.
         std::uint32_t barrierCount = 0;
         /// Whether Vulkan selected the subgroup-per-row CSR SpMV kernel.
         bool subgroupSpmv = false;

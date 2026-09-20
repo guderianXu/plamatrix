@@ -190,12 +190,15 @@ PLAMATRIX_VULKAN_DEVICE_INDEX=0 ./benchmark/plamatrix_backend_compare --suite
 ```
 
 对比程序输出 OpenCL/Vulkan 的设备名、实际 CSR 维度和非零元数、迭代次数、初始/最终残差、
-端到端 PCG 中位时间、Vulkan 的 `command_submissions`、`gpu_ms`、`barrier_count`、`spmv_kernel` 和
-`cold_descriptor_set_allocations`。这些列用于观察显式 queue submit/fence wait、GPU 实际执行时间、记录的
-buffer 依赖屏障数量以及冷启动 descriptor set 创建数量；OpenCL 当前填 `0`，不代表它没有内部命令提交。Vulkan 第一阶段只实现 float32 PCG，
+端到端 PCG 中位时间、Vulkan 的 `command_submissions`、`command_buffer_recordings`、`gpu_ms`、
+`barrier_count`、`spmv_kernel`、`cold_descriptor_set_allocations` 和
+`cold_command_buffer_recordings`。这些列用于观察显式 queue submit/fence wait、命令录制复用、GPU 实际
+执行时间、实际执行的 buffer 依赖屏障数量以及冷启动 descriptor set 创建数量；OpenCL 当前填 `0`，
+不代表它没有内部命令提交。Vulkan 第一阶段只实现 float32 PCG，
 结果不代表其他算子（例如 GEMM 或 SVD）的后端性能。Vulkan PCG 的标量递推和收敛状态驻留在
 GPU 状态缓冲区，按 `convergenceCheckInterval` 批量提交；`command_submissions` 可用于确认批量边界
-带来的同步变化。命令上下文按 buffer 的读写方向记录依赖，只在存在写后读/写冲突时插入屏障；`gpu_ms`
+带来的同步变化，`command_buffer_recordings` 小于提交数时表示完整迭代批次发生了复用。命令上下文按
+buffer 的读写方向记录依赖，只在存在写后读/写冲突时插入屏障；`gpu_ms`
 与端到端时间的差值可用于判断瓶颈是否仍在主机提交和 fence wait。
 支持 subgroup arithmetic 的设备会在 CSR 平均行长达到 `max(16, subgroupSize / 2)` 时自动使用
 subgroup-per-row SpMV；短行 CSR 使用 scalar-per-row 内核。上传、初始残差与容差初始化和首批 PCG

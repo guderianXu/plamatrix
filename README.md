@@ -228,9 +228,11 @@ MatrixMarket 输入必须是非空方阵，并且应为正定矩阵或已完成 
 timestamp 得到的设备执行时间，`warm_median_ms` 是包含提交、同步和传输的热路径端到端时间；
 两者不能互相替代。测量时应关闭其他 CPU/GPU 重负载，并交替运行待比较版本。
 
-Vulkan PCG 当前会批量提交迭代，将标量递推和收敛状态保留在 GPU；长行 CSR 可自动选择
-subgroup-per-row SpMV。小解向量会在状态批次中同步回读，大解向量使用独立最终回读，
-以避免多批次重复传输。实现和统计字段见[架构文档](docs/architecture.md)与
+Vulkan PCG 当前会批量提交迭代，将标量递推和收敛状态保留在 GPU；完整迭代批次的 command buffer
+会在后续批次和同尺寸热启动中复用，最终一级点积归约直接更新 `rho/alpha/beta` 或收敛状态。长行 CSR
+可自动选择 subgroup-per-row SpMV。小解向量会在状态批次中同步回读，大解向量使用独立最终回读，
+以避免多批次重复传输。对比工具中的 `command_buffer_recordings` 可用于确认录制复用是否生效。
+实现和统计字段见[架构文档](docs/architecture.md)与
 [编译指南](docs/build.md)。
 
 ## 开发者指南

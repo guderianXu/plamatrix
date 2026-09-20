@@ -225,11 +225,14 @@ namespace plamatrix::vulkan
           _commandBuffer(std::exchange(other._commandBuffer, VK_NULL_HANDLE)),
           _fence(std::exchange(other._fence, VK_NULL_HANDLE)),
           _timestampQueryPool(std::exchange(other._timestampQueryPool, VK_NULL_HANDLE)),
-          _recording(std::exchange(other._recording, false)),
+          _recording(std::exchange(other._recording, false)), _executable(std::exchange(other._executable, false)),
+          _reusable(std::exchange(other._reusable, false)),
           _pendingDispatches(std::exchange(other._pendingDispatches, 0)),
           _submissionCount(std::exchange(other._submissionCount, 0)),
           _descriptorSetAllocations(std::exchange(other._descriptorSetAllocations, 0)),
+          _recordedBarrierCount(std::exchange(other._recordedBarrierCount, 0)),
           _barrierCount(std::exchange(other._barrierCount, 0)),
+          _commandBufferRecordings(std::exchange(other._commandBufferRecordings, 0)),
           _gpuMilliseconds(std::exchange(other._gpuMilliseconds, 0.0)), _bufferAccess(std::move(other._bufferAccess)),
           _descriptorSets(std::move(other._descriptorSets))
     {
@@ -246,10 +249,14 @@ namespace plamatrix::vulkan
             _fence = std::exchange(other._fence, VK_NULL_HANDLE);
             _timestampQueryPool = std::exchange(other._timestampQueryPool, VK_NULL_HANDLE);
             _recording = std::exchange(other._recording, false);
+            _executable = std::exchange(other._executable, false);
+            _reusable = std::exchange(other._reusable, false);
             _pendingDispatches = std::exchange(other._pendingDispatches, 0);
             _submissionCount = std::exchange(other._submissionCount, 0);
             _descriptorSetAllocations = std::exchange(other._descriptorSetAllocations, 0);
+            _recordedBarrierCount = std::exchange(other._recordedBarrierCount, 0);
             _barrierCount = std::exchange(other._barrierCount, 0);
+            _commandBufferRecordings = std::exchange(other._commandBufferRecordings, 0);
             _gpuMilliseconds = std::exchange(other._gpuMilliseconds, 0.0);
             _bufferAccess = std::move(other._bufferAccess);
             _descriptorSets = std::move(other._descriptorSets);
@@ -259,14 +266,26 @@ namespace plamatrix::vulkan
 
     void CommandContext::begin()
     {
+        beginRecording(false);
+    }
+
+    void CommandContext::beginReusable()
+    {
+        beginRecording(true);
+    }
+
+    void CommandContext::beginRecording(bool reusable)
+    {
         if (!_runtime || !_commandBuffer || !_fence)
             throw std::runtime_error("Vulkan command context is not initialized");
         if (_recording)
             throw std::logic_error("Vulkan command context is already recording");
+        _executable = false;
+        _reusable = false;
         checkVk(vkResetCommandBuffer(_commandBuffer, 0), "vkResetCommandBuffer");
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        beginInfo.flags = reusable ? 0u : VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         checkVk(vkBeginCommandBuffer(_commandBuffer, &beginInfo), "vkBeginCommandBuffer");
         if (_timestampQueryPool)
         {
@@ -274,8 +293,11 @@ namespace plamatrix::vulkan
             vkCmdWriteTimestamp(_commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, _timestampQueryPool, 0);
         }
         _pendingDispatches = 0;
+        _recordedBarrierCount = 0;
         _bufferAccess.clear();
+        _reusable = reusable;
         _recording = true;
+        ++_commandBufferRecordings;
     }
 
     void CommandContext::dispatch(const ComputePipeline& pipeline,
@@ -375,7 +397,7 @@ namespace plamatrix::vulkan
                                  barriers.data(),
                                  0,
                                  nullptr);
-            ++_barrierCount;
+            ++_recordedBarrierCount;
         }
         vkCmdBindPipeline(_commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline());
         vkCmdBindDescriptorSets(
@@ -386,6 +408,30 @@ namespace plamatrix::vulkan
         for (std::size_t index = 0; index < handles.size(); ++index)
             _bufferAccess[handles[index]] = pipeline.accessMask(static_cast<std::uint32_t>(index));
         ++_pendingDispatches;
+    }
+
+    void CommandContext::previousSubmissionBarrier(VkPipelineStageFlags destinationStages,
+                                                   VkAccessFlags destinationAccess)
+    {
+        if (!_recording)
+            throw std::logic_error("Vulkan command context is not recording");
+        if (destinationStages == 0 || destinationAccess == 0)
+            throw std::invalid_argument("Vulkan previous-submission barrier requires destination stages and access");
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = destinationAccess;
+        vkCmdPipelineBarrier(_commandBuffer,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             destinationStages,
+                             0,
+                             1,
+                             &barrier,
+                             0,
+                             nullptr,
+                             0,
+                             nullptr);
+        ++_recordedBarrierCount;
     }
 
     void CommandContext::copy(const Buffer& source, Buffer& destination, VkDeviceSize size)
@@ -426,7 +472,7 @@ namespace plamatrix::vulkan
                                  barriers.data(),
                                  0,
                                  nullptr);
-            ++_barrierCount;
+            ++_recordedBarrierCount;
         }
         VkBufferCopy region{};
         region.size = size;
@@ -437,13 +483,18 @@ namespace plamatrix::vulkan
 
     void CommandContext::submitAndWait()
     {
-        if (!_recording)
-            throw std::logic_error("Vulkan command context is not recording");
+        if (!_recording && !_executable)
+            throw std::logic_error("Vulkan command context has no executable recording");
         try
         {
-            if (_timestampQueryPool)
-                vkCmdWriteTimestamp(_commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _timestampQueryPool, 1);
-            checkVk(vkEndCommandBuffer(_commandBuffer), "vkEndCommandBuffer");
+            if (_recording)
+            {
+                if (_timestampQueryPool)
+                    vkCmdWriteTimestamp(_commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, _timestampQueryPool, 1);
+                checkVk(vkEndCommandBuffer(_commandBuffer), "vkEndCommandBuffer");
+                _recording = false;
+                _executable = true;
+            }
             checkVk(vkResetFences(_runtime->device(), 1, &_fence), "vkResetFences");
             VkSubmitInfo submit{};
             submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -470,12 +521,15 @@ namespace plamatrix::vulkan
                     _gpuMilliseconds += nanoseconds * 1.0e-6;
                 }
             }
-            _recording = false;
             ++_submissionCount;
+            _barrierCount += _recordedBarrierCount;
+            if (!_reusable)
+                _executable = false;
         }
         catch (...)
         {
             _recording = false;
+            _executable = false;
             throw;
         }
     }
@@ -496,10 +550,14 @@ namespace plamatrix::vulkan
         _timestampQueryPool = VK_NULL_HANDLE;
         _commandBuffer = VK_NULL_HANDLE;
         _recording = false;
+        _executable = false;
+        _reusable = false;
         _pendingDispatches = 0;
         _submissionCount = 0;
         _descriptorSetAllocations = 0;
+        _recordedBarrierCount = 0;
         _barrierCount = 0;
+        _commandBufferRecordings = 0;
         _gpuMilliseconds = 0.0;
         _bufferAccess.clear();
         _descriptorSets.clear();

@@ -17,11 +17,7 @@ namespace plamatrix::vulkan
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         Runtime& runtime = Runtime::instance();
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_state_init", 2, sizeof(float) * 2));
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_rho_init", 2, 0));
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_alpha", 2, 0));
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_beta", 2, 0));
-        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_convergence", 2, 0));
+        EXPECT_NO_THROW(ComputePipeline(runtime, "pcg_dot_state", 3, sizeof(std::uint32_t) * 4));
     }
 
     TEST(VulkanRuntime, EnumeratesComputeDevice)
@@ -110,6 +106,54 @@ namespace plamatrix::vulkan
         EXPECT_LE(vulkan_report.commandSubmissions, 1u);
         for (Index row = 0; row < 2; ++row)
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
+    }
+
+    TEST(VulkanSolver, ReusesRecordedIterationBatchAcrossSubmissionsAndSolves)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        constexpr Index size = 257;
+        CSRMatrix<float, Device::CPU> matrix(size, size, 3 * size - 2);
+        Index offset = 0;
+        for (Index row = 0; row < size; ++row)
+        {
+            matrix.rowOffsets()[row] = offset;
+            if (row > 0)
+            {
+                matrix.colIndices()[offset] = row - 1;
+                matrix.values()[offset++] = -1.0f;
+            }
+            matrix.colIndices()[offset] = row;
+            matrix.values()[offset++] = 4.0f;
+            if (row + 1 < size)
+            {
+                matrix.colIndices()[offset] = row + 1;
+                matrix.values()[offset++] = -1.0f;
+            }
+        }
+        matrix.rowOffsets()[size] = offset;
+        DenseMatrix<float, Device::CPU> rhs(size, 1);
+        DenseMatrix<float, Device::CPU> first(size, 1);
+        DenseMatrix<float, Device::CPU> second(size, 1);
+        for (Index row = 0; row < size; ++row)
+            rhs(row, 0) = 1.0f + static_cast<float>(row % 11);
+        first.fill(0.0f);
+        second.fill(0.0f);
+        IterativeSolverOptions options;
+        options.maxIterations = 100;
+        options.relativeTolerance = 1.0e-5;
+        options.requireConvergence = true;
+        options.convergenceCheckInterval = 1;
+
+        const auto firstReport = pcg(matrix, rhs, first, options);
+        const auto secondReport = pcg(matrix, rhs, second, options);
+        EXPECT_TRUE(firstReport.converged);
+        EXPECT_TRUE(secondReport.converged);
+        EXPECT_GT(firstReport.commandSubmissions, firstReport.commandBufferRecordings);
+        EXPECT_EQ(secondReport.commandBufferRecordings, 1u);
+        EXPECT_EQ(firstReport.iterations, secondReport.iterations);
+        for (Index row = 0; row < size; ++row)
+            EXPECT_NEAR(first(row, 0), second(row, 0), 1.0e-6f);
     }
 
     TEST(VulkanSolver, ResetsBatchedStateBetweenWarmSolves)
@@ -415,18 +459,29 @@ namespace plamatrix::vulkan
         EXPECT_GT(context.submissionCount(), 0u);
     }
 
-    TEST(VulkanExecution, ReusesCommandContextAcrossBatches)
+    TEST(VulkanExecution, ResubmitsReusableCommandBufferWithoutRecordingAgain)
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         Runtime& runtime = Runtime::instance();
+        ComputePipeline pipeline(runtime, "jacobi", 3, sizeof(std::uint32_t));
+        Buffer residual(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer inverse(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer transformed(runtime, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        *static_cast<float*>(residual.map()) = 2.0f;
+        residual.unmap();
+        *static_cast<float*>(inverse.map()) = 3.0f;
+        inverse.unmap();
+        const std::uint32_t count = 1;
         CommandContext context(runtime);
-        context.begin();
-        EXPECT_EQ(context.pendingDispatchCount(), 0u);
+        context.beginReusable();
+        context.dispatch(pipeline, {&residual, &inverse, &transformed}, 1, &count, sizeof(count));
         context.submitAndWait();
-        context.begin();
-        EXPECT_EQ(context.pendingDispatchCount(), 0u);
         context.submitAndWait();
+        EXPECT_EQ(context.commandBufferRecordings(), 1u);
+        EXPECT_EQ(context.submissionCount(), 2u);
+        EXPECT_FLOAT_EQ(*static_cast<const float*>(transformed.map()), 6.0f);
+        transformed.unmap();
     }
 
     TEST(VulkanExecution, ReusesDescriptorSetsAcrossBatches)
@@ -456,7 +511,10 @@ namespace plamatrix::vulkan
             GTEST_SKIP() << "No usable Vulkan compute device";
         Runtime& runtime = Runtime::instance();
         Buffer source(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, BufferMemory::HostVisible);
-        Buffer device(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, BufferMemory::DeviceLocal);
+        Buffer device(runtime,
+                      sizeof(float),
+                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                      BufferMemory::DeviceLocal);
         Buffer result(runtime, sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, BufferMemory::HostVisible);
         *static_cast<float*>(source.map()) = 42.5f;
         source.unmap();

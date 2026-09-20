@@ -59,8 +59,9 @@ namespace
                 std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
                           << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
                           << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
-                          << ',' << report.gpuMilliseconds << ',' << report.barrierCount << ',' << spmvKernel << ','
-                          << coldReport.descriptorSetAllocations << ',' << coldReport.iterations << ','
+                          << ',' << report.commandBufferRecordings << ',' << report.gpuMilliseconds << ','
+                          << report.barrierCount << ',' << spmvKernel << ',' << coldReport.descriptorSetAllocations
+                          << ',' << coldReport.commandBufferRecordings << ',' << coldReport.iterations << ','
                           << coldMilliseconds << ',' << timings[timings.size() / 2] << '\n';
             }
         }
@@ -159,8 +160,8 @@ int main(int argc, char** argv)
         return 2;
     }
     std::cout << "scenario,backend,device,dimension,nnz,iterations,initial_residual,final_residual,command_submissions,"
-                 "gpu_ms,barrier_count,spmv_kernel,cold_descriptor_set_allocations,cold_iterations,cold_ms,"
-                 "warm_median_ms\n";
+                 "command_buffer_recordings,gpu_ms,barrier_count,spmv_kernel,cold_descriptor_set_allocations,"
+                 "cold_command_buffer_recordings,cold_iterations,cold_ms,warm_median_ms\n";
     auto runFixture = [convergenceCheckInterval](const BackendFixture& fixture)
     {
         if (opencl::hasUsableOpenClDevice())

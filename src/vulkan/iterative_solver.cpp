@@ -5,6 +5,7 @@
 #include "plamatrix/vulkan/execution.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -106,16 +107,24 @@ namespace plamatrix::vulkan
             std::uint32_t count;
         };
 
-        struct StateInitPush
+        enum class DotStateOperation : std::uint32_t
         {
+            Initialize = 0,
+            RhoInitialize = 1,
+            Beta = 2,
+            Alpha = 3,
+            Convergence = 4
+        };
+
+        struct DotStatePush
+        {
+            std::uint32_t count;
+            DotStateOperation operation;
             float relativeToleranceSquared;
             float absoluteToleranceSquared;
         };
 
-        struct IterationPush
-        {
-            std::uint32_t iterations;
-        };
+        static_assert(sizeof(DotStatePush) == sizeof(std::uint32_t) * 4);
 
         struct PcgStateHost
         {
@@ -180,19 +189,13 @@ namespace plamatrix::vulkan
                             3,
                             sizeof(CountPush),
                             {VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT}),
-                  stateInit(runtime,
-                            "pcg_state_init",
-                            2,
-                            sizeof(StateInitPush),
-                            {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
-                  rhoInit(runtime, "pcg_rho_init", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
-                  alpha(runtime, "pcg_alpha", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
-                  beta(runtime, "pcg_beta", 2, 0, {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT}),
-                  convergence(runtime,
-                              "pcg_convergence",
-                              2,
-                              sizeof(IterationPush),
-                              {VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT})
+                  dotState(runtime,
+                           "pcg_dot_state",
+                           3,
+                           sizeof(DotStatePush),
+                           {VK_ACCESS_SHADER_READ_BIT,
+                            VK_ACCESS_SHADER_READ_BIT,
+                            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT})
             {
                 if (runtime.supportsSubgroupArithmetic())
                 {
@@ -221,11 +224,7 @@ namespace plamatrix::vulkan
             ComputePipeline update;
             ComputePipeline direction;
             ComputePipeline reduction;
-            ComputePipeline stateInit;
-            ComputePipeline rhoInit;
-            ComputePipeline alpha;
-            ComputePipeline beta;
-            ComputePipeline convergence;
+            ComputePipeline dotState;
         };
 
         struct PcgBuffers
@@ -256,6 +255,9 @@ namespace plamatrix::vulkan
             std::unique_ptr<Buffer> onesUpload;
             std::unique_ptr<Buffer> solutionReadback;
             std::unique_ptr<CommandContext> context;
+            std::unique_ptr<CommandContext> iterationContext;
+            int recordedBatchIterations = 0;
+            bool recordedBatchSubgroup = false;
 
             PcgBuffers(Runtime& runtime, std::size_t countValue, std::size_t nnzValue)
                 : count(countValue), nnz(nnzValue)
@@ -313,6 +315,7 @@ namespace plamatrix::vulkan
                 onesUpload = std::make_unique<Buffer>(runtime, count * floatBytes, stagingSourceUsage);
                 solutionReadback = std::make_unique<Buffer>(runtime, count * floatBytes, stagingDestinationUsage);
                 context = std::make_unique<CommandContext>(runtime);
+                iterationContext = std::make_unique<CommandContext>(runtime);
             }
         };
 
@@ -326,29 +329,41 @@ namespace plamatrix::vulkan
             context.dispatch(pipeline, buffers, groups, pushData, pushSize);
         }
 
-        Buffer* dispatchDot(CommandContext& context,
-                            const ComputePipeline& pipeline,
-                            Buffer& left,
-                            Buffer& right,
-                            Buffer& partialA,
-                            Buffer& partialB,
-                            Buffer& ones,
-                            std::size_t count)
+        void dispatchDotState(CommandContext& context,
+                              const PipelineSet& pipelines,
+                              Buffer& left,
+                              Buffer& right,
+                              Buffer& partialA,
+                              Buffer& partialB,
+                              Buffer& ones,
+                              Buffer& state,
+                              std::size_t count,
+                              DotStateOperation operation,
+                              float relativeToleranceSquared = 0.0f,
+                              float absoluteToleranceSquared = 0.0f)
         {
-            std::size_t remaining = reductionGroupsFor(count);
-            Buffer* current = &partialA;
-            Buffer* next = &partialB;
-            CountPush push{static_cast<std::uint32_t>(count)};
-            dispatch(context, pipeline, {&left, &right, current}, remaining, &push, sizeof(push));
-            while (remaining > 1)
+            std::size_t remaining = count;
+            Buffer* currentLeft = &left;
+            Buffer* currentRight = &right;
+            Buffer* output = &partialA;
+            while (remaining > kLocalSize * 2)
             {
-                const std::size_t nextGroups = reductionGroupsFor(remaining);
-                push.count = static_cast<std::uint32_t>(remaining);
-                dispatch(context, pipeline, {current, &ones, next}, nextGroups, &push, sizeof(push));
-                remaining = nextGroups;
-                std::swap(current, next);
+                const std::size_t groups = reductionGroupsFor(remaining);
+                const CountPush reductionPush{static_cast<std::uint32_t>(remaining)};
+                dispatch(context,
+                         pipelines.reduction,
+                         {currentLeft, currentRight, output},
+                         groups,
+                         &reductionPush,
+                         sizeof(reductionPush));
+                remaining = groups;
+                currentLeft = output;
+                currentRight = &ones;
+                output = output == &partialA ? &partialB : &partialA;
             }
-            return current;
+            const DotStatePush push{
+                static_cast<std::uint32_t>(remaining), operation, relativeToleranceSquared, absoluteToleranceSquared};
+            dispatch(context, pipelines.dotState, {currentLeft, currentRight, &state}, 1, &push, sizeof(push));
         }
 
     } // namespace
@@ -440,8 +455,14 @@ namespace plamatrix::vulkan
         const ComputePipeline& spmvPipeline = pipelines.spmvPipeline(useSubgroupSpmv);
         const std::size_t spmvGroups = spmvGroupsFor(runtime, count, useSubgroupSpmv);
         CommandContext& context = *buffers.context;
-        const std::uint32_t descriptorSetsBefore = context.descriptorSetAllocations();
-        context.resetSubmissionCount();
+        CommandContext& iterationContext = *buffers.iterationContext;
+        const std::array<CommandContext*, 2> contexts{&context, &iterationContext};
+        std::array<std::uint32_t, 2> descriptorSetsBefore{};
+        for (std::size_t index = 0; index < contexts.size(); ++index)
+        {
+            descriptorSetsBefore[index] = contexts[index]->descriptorSetAllocations();
+            contexts[index]->resetSubmissionCount();
+        }
         context.begin();
         context.copy(rowUpload, rowBuffer, rowOffsets.size() * sizeof(std::uint32_t));
         if (nnz != 0)
@@ -469,118 +490,97 @@ namespace plamatrix::vulkan
             groupsFor(count),
             &countPush,
             sizeof(countPush));
-        Buffer* initialResidual = dispatchDot(context,
-                                              pipelines.reduction,
-                                              residualBuffer,
-                                              residualBuffer,
-                                              partialABuffer,
-                                              partialBBuffer,
-                                              onesBuffer,
-                                              count);
-        const StateInitPush stateInitPush{static_cast<float>(options.relativeTolerance * options.relativeTolerance),
-                                          static_cast<float>(options.absoluteTolerance * options.absoluteTolerance)};
-        dispatch(context,
-                 pipelines.stateInit,
-                 {buffers.state.get(), initialResidual},
-                 1,
-                 &stateInitPush,
-                 sizeof(stateInitPush));
-        Buffer* initialRho = dispatchDot(context,
-                                         pipelines.reduction,
-                                         residualBuffer,
-                                         transformedBuffer,
-                                         partialABuffer,
-                                         partialBBuffer,
-                                         onesBuffer,
-                                         count);
-        dispatch(context, pipelines.rhoInit, {buffers.state.get(), initialRho}, 1, nullptr, 0);
+        dispatchDotState(context,
+                         pipelines,
+                         residualBuffer,
+                         residualBuffer,
+                         partialABuffer,
+                         partialBBuffer,
+                         onesBuffer,
+                         *buffers.state,
+                         count,
+                         DotStateOperation::Initialize,
+                         static_cast<float>(options.relativeTolerance * options.relativeTolerance),
+                         static_cast<float>(options.absoluteTolerance * options.absoluteTolerance));
+        dispatchDotState(context,
+                         pipelines,
+                         residualBuffer,
+                         transformedBuffer,
+                         partialABuffer,
+                         partialBBuffer,
+                         onesBuffer,
+                         *buffers.state,
+                         count,
+                         DotStateOperation::RhoInitialize);
 
-        int completedIterations = 0;
-        bool firstBatch = true;
-        while (firstBatch || (!report.converged && completedIterations < options.maxIterations))
+        auto recordIteration = [&](CommandContext& target, bool firstIteration)
         {
-            if (!firstBatch)
-                context.begin();
-
-            const int batchLimit =
-                std::min(options.convergenceCheckInterval, options.maxIterations - completedIterations);
-            for (int batchIteration = 0; batchIteration < batchLimit; ++batchIteration)
+            if (!firstIteration)
             {
-                if (completedIterations > 0)
-                {
-                    dispatch(context,
-                             pipelines.jacobi,
-                             {&residualBuffer, &inverseBuffer, &transformedBuffer},
-                             groupsFor(count),
-                             &countPush,
-                             sizeof(countPush));
-                    Buffer* nextRho = dispatchDot(context,
-                                                  pipelines.reduction,
-                                                  residualBuffer,
-                                                  transformedBuffer,
-                                                  partialABuffer,
-                                                  partialBBuffer,
-                                                  onesBuffer,
-                                                  count);
-                    dispatch(context, pipelines.beta, {buffers.state.get(), nextRho}, 1, nullptr, 0);
-                    dispatch(context,
-                             pipelines.direction,
-                             {&directionBuffer, &transformedBuffer, buffers.state.get()},
-                             groupsFor(count),
-                             &countPush,
-                             sizeof(countPush));
-                }
-
-                dispatch(context,
-                         spmvPipeline,
-                         {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
-                         spmvGroups,
+                dispatch(target,
+                         pipelines.jacobi,
+                         {&residualBuffer, &inverseBuffer, &transformedBuffer},
+                         groupsFor(count),
                          &countPush,
                          sizeof(countPush));
-                Buffer* denominator = dispatchDot(context,
-                                                  pipelines.reduction,
-                                                  directionBuffer,
-                                                  matrixDirectionBuffer,
-                                                  partialABuffer,
-                                                  partialBBuffer,
-                                                  onesBuffer,
-                                                  count);
-                dispatch(context, pipelines.alpha, {buffers.state.get(), denominator}, 1, nullptr, 0);
-                dispatch(
-                    context,
-                    pipelines.update,
-                    {&solutionBuffer, &residualBuffer, &directionBuffer, &matrixDirectionBuffer, buffers.state.get()},
-                    groupsFor(count),
-                    &countPush,
-                    sizeof(countPush));
-                ++completedIterations;
-
-                Buffer* residualNow = dispatchDot(context,
-                                                  pipelines.reduction,
-                                                  residualBuffer,
-                                                  residualBuffer,
-                                                  partialABuffer,
-                                                  partialBBuffer,
-                                                  onesBuffer,
-                                                  count);
-                const IterationPush iterationPush{static_cast<std::uint32_t>(completedIterations)};
-                dispatch(context,
-                         pipelines.convergence,
-                         {buffers.state.get(), residualNow},
-                         1,
-                         &iterationPush,
-                         sizeof(iterationPush));
-
-                const bool finalIteration = completedIterations >= options.maxIterations;
-                const bool check = batchIteration + 1 == batchLimit || finalIteration;
-                if (check)
-                    break;
+                dispatchDotState(target,
+                                 pipelines,
+                                 residualBuffer,
+                                 transformedBuffer,
+                                 partialABuffer,
+                                 partialBBuffer,
+                                 onesBuffer,
+                                 *buffers.state,
+                                 count,
+                                 DotStateOperation::Beta);
+                dispatch(target,
+                         pipelines.direction,
+                         {&directionBuffer, &transformedBuffer, buffers.state.get()},
+                         groupsFor(count),
+                         &countPush,
+                         sizeof(countPush));
             }
-
+            dispatch(target,
+                     spmvPipeline,
+                     {&rowBuffer, &columnBuffer, &valueBuffer, &directionBuffer, &matrixDirectionBuffer},
+                     spmvGroups,
+                     &countPush,
+                     sizeof(countPush));
+            dispatchDotState(target,
+                             pipelines,
+                             directionBuffer,
+                             matrixDirectionBuffer,
+                             partialABuffer,
+                             partialBBuffer,
+                             onesBuffer,
+                             *buffers.state,
+                             count,
+                             DotStateOperation::Alpha);
+            dispatch(target,
+                     pipelines.update,
+                     {&solutionBuffer, &residualBuffer, &directionBuffer, &matrixDirectionBuffer, buffers.state.get()},
+                     groupsFor(count),
+                     &countPush,
+                     sizeof(countPush));
+            dispatchDotState(target,
+                             pipelines,
+                             residualBuffer,
+                             residualBuffer,
+                             partialABuffer,
+                             partialBBuffer,
+                             onesBuffer,
+                             *buffers.state,
+                             count,
+                             DotStateOperation::Convergence);
+        };
+        auto recordReadback = [&](CommandContext& target)
+        {
             if (fuseSolutionReadback)
-                context.copy(solutionBuffer, solutionReadback, solutionBytes);
-            context.copy(*buffers.state, *buffers.stateReadback, sizeof(PcgStateHost));
-            context.submitAndWait();
+                target.copy(solutionBuffer, solutionReadback, solutionBytes);
+            target.copy(*buffers.state, *buffers.stateReadback, sizeof(PcgStateHost));
+        };
+        auto updateReport = [&]()
+        {
             PcgStateHost state{};
             copyFromBuffer(*buffers.stateReadback, &state, sizeof(state));
             if ((state.flags & kBreakdownFlag) != 0u)
@@ -592,20 +592,59 @@ namespace plamatrix::vulkan
             report.iterations = static_cast<int>(state.iterations);
             report.finalResidual = std::sqrt(static_cast<double>(state.residualSquared));
             report.converged = (state.flags & kConvergedFlag) != 0u;
-            firstBatch = false;
+        };
+
+        const int firstBatchIterations = std::min(options.convergenceCheckInterval, options.maxIterations);
+        for (int iteration = 0; iteration < firstBatchIterations; ++iteration)
+            recordIteration(context, iteration == 0);
+        recordReadback(context);
+        context.submitAndWait();
+        updateReport();
+
+        int scheduledIterations = firstBatchIterations;
+        while (!report.converged && scheduledIterations < options.maxIterations)
+        {
+            const int batchIterations =
+                std::min(options.convergenceCheckInterval, options.maxIterations - scheduledIterations);
+            const bool reusableBatch = batchIterations == options.convergenceCheckInterval;
+            const bool reuseRecording = reusableBatch && buffers.recordedBatchIterations == batchIterations &&
+                                        buffers.recordedBatchSubgroup == useSubgroupSpmv;
+            if (!reuseRecording)
+            {
+                if (reusableBatch)
+                    iterationContext.beginReusable();
+                else
+                    iterationContext.begin();
+                iterationContext.previousSubmissionBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                                           VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                for (int iteration = 0; iteration < batchIterations; ++iteration)
+                    recordIteration(iterationContext, false);
+                recordReadback(iterationContext);
+                buffers.recordedBatchIterations = reusableBatch ? batchIterations : 0;
+                buffers.recordedBatchSubgroup = useSubgroupSpmv;
+            }
+            iterationContext.submitAndWait();
+            scheduledIterations += batchIterations;
+            updateReport();
         }
 
         if (!fuseSolutionReadback)
         {
             context.begin();
+            context.previousSubmissionBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             context.copy(solutionBuffer, solutionReadback, solutionBytes);
             context.submitAndWait();
         }
         copyFromBuffer(solutionReadback, solution.data(), solutionBytes);
-        report.commandSubmissions = context.submissionCount();
-        report.descriptorSetAllocations = context.descriptorSetAllocations() - descriptorSetsBefore;
-        report.gpuMilliseconds = context.gpuMilliseconds();
-        report.barrierCount = context.barrierCount();
+        for (std::size_t index = 0; index < contexts.size(); ++index)
+        {
+            report.commandSubmissions += contexts[index]->submissionCount();
+            report.commandBufferRecordings += contexts[index]->commandBufferRecordings();
+            report.descriptorSetAllocations +=
+                contexts[index]->descriptorSetAllocations() - descriptorSetsBefore[index];
+            report.gpuMilliseconds += contexts[index]->gpuMilliseconds();
+            report.barrierCount += contexts[index]->barrierCount();
+        }
         report.subgroupSpmv = useSubgroupSpmv;
         return report;
     }

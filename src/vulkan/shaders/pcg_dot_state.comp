@@ -1,0 +1,121 @@
+#version 450
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer Left { float left_values[]; };
+layout(std430, binding = 1) readonly buffer Right { float right_values[]; };
+layout(std430, binding = 2) buffer State
+{
+    float rho;
+    float alpha;
+    float beta;
+    float residual_squared;
+    float tolerance_squared;
+    float initial_residual_squared;
+    uint flags;
+    uint iterations;
+} state;
+
+layout(push_constant) uniform Params
+{
+    uint count;
+    uint operation;
+    float relative_tolerance_squared;
+    float absolute_tolerance_squared;
+} params;
+
+const uint INITIALIZE = 0u;
+const uint RHO_INITIALIZE = 1u;
+const uint BETA = 2u;
+const uint ALPHA = 3u;
+const uint CONVERGENCE = 4u;
+const uint CONVERGED = 1u;
+const uint BREAKDOWN = 2u;
+
+shared float partial[128];
+
+bool invalidScalar(float value)
+{
+    return isnan(value) || isinf(value);
+}
+
+void main()
+{
+    uint local = gl_LocalInvocationID.x;
+    uint index = local;
+    bool state_active = params.operation == INITIALIZE || (state.flags & (CONVERGED | BREAKDOWN)) == 0u;
+    float value = state_active && index < params.count ? left_values[index] * right_values[index] : 0.0;
+    index += gl_WorkGroupSize.x;
+    if (state_active && index < params.count)
+        value += left_values[index] * right_values[index];
+    partial[local] = value;
+    barrier();
+
+    for (uint stride = 64u; stride > 0u; stride >>= 1u)
+    {
+        if (local < stride)
+            partial[local] += partial[local + stride];
+        barrier();
+    }
+    if (local != 0u || !state_active)
+        return;
+
+    value = partial[0];
+    if (params.operation == INITIALIZE)
+    {
+        state.rho = 0.0;
+        state.alpha = 0.0;
+        state.beta = 0.0;
+        state.residual_squared = value;
+        state.initial_residual_squared = value;
+        state.tolerance_squared =
+            max(params.absolute_tolerance_squared, params.relative_tolerance_squared * value);
+        state.flags = 0u;
+        state.iterations = 0u;
+        if (invalidScalar(value) || value < 0.0)
+            state.flags |= BREAKDOWN;
+        else if (value <= state.tolerance_squared)
+            state.flags |= CONVERGED;
+        return;
+    }
+    if (params.operation == RHO_INITIALIZE)
+    {
+        if (invalidScalar(value) || value <= 0.0)
+            state.flags |= BREAKDOWN;
+        else
+            state.rho = value;
+        return;
+    }
+    if (params.operation == BETA)
+    {
+        float previous = state.rho;
+        if (invalidScalar(previous) || previous <= 0.0 || invalidScalar(value) || value <= 0.0)
+        {
+            state.flags |= BREAKDOWN;
+            return;
+        }
+        state.beta = value / previous;
+        state.rho = value;
+        if (invalidScalar(state.beta))
+            state.flags |= BREAKDOWN;
+        return;
+    }
+    if (params.operation == ALPHA)
+    {
+        if (invalidScalar(state.rho) || state.rho <= 0.0 || invalidScalar(value) || value <= 0.0)
+        {
+            state.flags |= BREAKDOWN;
+            return;
+        }
+        state.alpha = state.rho / value;
+        if (invalidScalar(state.alpha))
+            state.flags |= BREAKDOWN;
+        return;
+    }
+
+    state.residual_squared = value;
+    state.iterations += 1u;
+    if (invalidScalar(value) || value < 0.0)
+        state.flags |= BREAKDOWN;
+    else if (value <= state.tolerance_squared)
+        state.flags |= CONVERGED;
+}

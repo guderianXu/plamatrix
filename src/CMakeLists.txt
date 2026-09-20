@@ -56,11 +56,7 @@ if(PLAMATRIX_WITH_VULKAN)
         update
         direction
         dot_reduce
-        pcg_state_init
-        pcg_rho_init
-        pcg_alpha
-        pcg_beta
-        pcg_convergence)
+        pcg_dot_state)
     set(_PLAMATRIX_VULKAN_SHADER_OUTPUTS)
     foreach(_shader_name IN LISTS _PLAMATRIX_VULKAN_SHADER_NAMES)
         set(_shader_input "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/${_shader_name}.comp")

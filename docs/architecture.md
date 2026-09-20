@@ -20,7 +20,10 @@ Vulkan 求解器为每种矩阵规模复用 device-local CSR/向量工作区，�
 初始化阶段把残差、Jacobi 变换和方向向量合并为一个 dispatch，点积归约每个 invocation 处理两个
 元素；PCG 的 rho/alpha/beta、初始和当前残差范数、容差及收敛标志保存在 device-local 状态缓冲区，按
 `convergenceCheckInterval` 批量提交并只在批次边界读取状态。上传、状态初始化与首批迭代共享一个
-command buffer，以减少显式 queue submit 和 fence wait。命令上下文同时记录
+command buffer。后续完整迭代批次使用不带 `ONE_TIME_SUBMIT` 标志的可复用录制，fence 完成后可以直接
+再次提交；相同矩阵规模、批次长度和 SpMV 策略的热启动也会沿用该录制。尾批次仍按实际迭代数重新录制。
+多级点积只使用 `dot_reduce` 处理前置层级，最终不超过 256 个值的一级归约与
+`rho/alpha/beta/convergence` 状态更新由 `pcg_dot_state` 在同一 dispatch 中完成。命令上下文同时记录
 Vulkan timestamp 和每个 buffer 的读写状态，GPU 时间与端到端时间分开统计，并将屏障限制在实际存在写后读/写依赖的 storage buffer 上。
 CSR SpMV 同时提供 scalar-per-row 和 subgroup-per-row 内核；运行时根据 subgroup arithmetic 能力和平均行长
 选择实现，避免短行稀疏矩阵浪费 subgroup lane。输入上传、初始残差与容差初始化和首批迭代在同一个
