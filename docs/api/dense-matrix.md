@@ -180,8 +180,9 @@ plamatrix::VectorXd row_sums = (matrix + centered).rowwise().sum();
 ```
 
 平方矩阵可通过 `partialPivLu()` 创建可复用的 CPU 部分选主元 LU 分解，再对一个或多个
-右端调用 `solve()`。该入口仅支持浮点标量，拒绝非有限、非方阵和奇异输入；
-该入口在 CPU 求解。BA 业务调度与残差装配由 PlaBundle 负责。
+右端调用 `solve()`。该入口支持实数与复数浮点标量，拒绝非有限、非方阵和奇异输入；
+固定小矩阵保持栈上工作区，较大的列优先 `float`/`double` 矩阵使用分块面板、AVX2/FMA 尾部更新，
+并从 512 阶开始按独立列块并行。该入口在 CPU 求解。BA 业务调度与残差装配由 PlaBundle 负责。
 
 `llt()`、`ldlt()`、`fullPivLu()`、`householderQr()`、`colPivHouseholderQr()`、
 `jacobiSvd()` 和 `bdcSvd()` 使用与 Eigen 相同的入口名。列选主元 QR 接受宽矩阵与秩亏矩阵，

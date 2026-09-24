@@ -18,6 +18,7 @@ target_sources(plamatrix PRIVATE
     dense/elementwise_cpu.cpp
     dense/auto_backend.cpp
     dense/packet_reduction.cpp
+    dense/partial_piv_lu.cpp
     ops/gemm_cpu.cpp
     ops/cpu_features.cpp
     ops/decomposition_cpu.cpp
@@ -33,6 +34,7 @@ target_sources(plamatrix PRIVATE
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$")
     target_sources(plamatrix PRIVATE
         dense/packet_reduction_avx2.cpp
+        dense/partial_piv_lu_avx2.cpp
         ops/gemm_microkernel_avx2.cpp)
     target_compile_definitions(plamatrix PRIVATE PLAMATRIX_HAVE_AVX2_KERNEL=1)
     if(MSVC)
@@ -42,11 +44,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$")
         set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/dense/packet_reduction_avx2.cpp"
             DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTIES
             COMPILE_FLAGS "/arch:AVX2")
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/dense/partial_piv_lu_avx2.cpp"
+            DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTIES
+            COMPILE_FLAGS "/arch:AVX2")
     else()
         set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/ops/gemm_microkernel_avx2.cpp"
             DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma")
         set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/dense/packet_reduction_avx2.cpp"
+            DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTIES
+            COMPILE_FLAGS "-mavx2 -mfma")
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/dense/partial_piv_lu_avx2.cpp"
             DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma")
     endif()

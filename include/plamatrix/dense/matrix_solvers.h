@@ -8,6 +8,7 @@
 
 #include "plamatrix/dense/matrix.h"
 #include "plamatrix/dense/detail/static_or_dynamic_vector.h"
+#include "plamatrix/internal/dense/partial_piv_lu.h"
 
 namespace plamatrix::v1
 {
@@ -67,7 +68,7 @@ namespace plamatrix::v1
             }
             _pivots.resize(static_cast<std::size_t>(n));
             Scalar* factors = _factors.data();
-            for (Index column = 0; column < n; ++column)
+            const auto prepare_pivot = [&](Index column)
             {
                 Index pivot = column;
                 RealScalar largest = std::abs(factors[offset(column, column)]);
@@ -92,9 +93,13 @@ namespace plamatrix::v1
                         std::swap(factors[offset(column, other_column)], factors[offset(pivot, other_column)]);
                     }
                 }
-                const Scalar diagonal = factors[offset(column, column)];
-                if constexpr ((Options & RowMajor) == RowMajor)
+                return factors[offset(column, column)];
+            };
+            if constexpr ((Options & RowMajor) == RowMajor)
+            {
+                for (Index column = 0; column < n; ++column)
                 {
+                    const Scalar diagonal = prepare_pivot(column);
                     for (Index row = column + 1; row < n; ++row)
                     {
                         const Scalar factor = factors[offset(row, column)] / diagonal;
@@ -104,39 +109,54 @@ namespace plamatrix::v1
                             factors[offset(row, other_column)] -= factor * factors[offset(column, other_column)];
                     }
                 }
-                else
+            }
+            else
+            {
+                // Keep a panel and four trailing columns hot while applying the rank updates.
+                constexpr Index block_size = 32;
+                for (Index block_start = 0; block_start < n; block_start += block_size)
                 {
-                    for (Index row = column + 1; row < n; ++row)
-                        factors[offset(row, column)] /= diagonal;
-                    const Scalar* lower_column = factors + column * n;
-                    Index other_column = column + 1;
-                    for (; other_column + 3 < n; other_column += 4)
+                    const Index block_end = std::min(n, block_start + block_size);
+                    for (Index column = block_start; column < block_end; ++column)
                     {
-                        Scalar* first = factors + other_column * n;
-                        Scalar* second = first + n;
-                        Scalar* third = second + n;
-                        Scalar* fourth = third + n;
-                        const Scalar first_pivot = first[column];
-                        const Scalar second_pivot = second[column];
-                        const Scalar third_pivot = third[column];
-                        const Scalar fourth_pivot = fourth[column];
-#pragma omp simd
+                        const Scalar diagonal = prepare_pivot(column);
+                        Scalar* lower_column = factors + column * n;
                         for (Index row = column + 1; row < n; ++row)
+                            lower_column[row] /= diagonal;
+                        for (Index panel_column = column + 1; panel_column < block_end; ++panel_column)
                         {
-                            const Scalar factor = lower_column[row];
-                            first[row] -= factor * first_pivot;
-                            second[row] -= factor * second_pivot;
-                            third[row] -= factor * third_pivot;
-                            fourth[row] -= factor * fourth_pivot;
+                            Scalar* trailing_column = factors + panel_column * n;
+                            const Scalar pivot_value = trailing_column[column];
+#pragma omp simd
+                            for (Index row = column + 1; row < n; ++row)
+                                trailing_column[row] -= lower_column[row] * pivot_value;
                         }
                     }
-                    for (; other_column < n; ++other_column)
+                    if constexpr (std::is_same_v<Scalar, float> || std::is_same_v<Scalar, double>)
                     {
-                        Scalar* trailing_column = factors + other_column * n;
-                        const Scalar pivot_value = trailing_column[column];
+                        internal::detail::partialPivLuTrailingUpdate(factors, n, block_start, block_end);
+                    }
+                    else
+                    {
+                        for (Index other_column = block_end; other_column < n; ++other_column)
+                        {
+                            Scalar* trailing_column = factors + other_column * n;
+                            for (Index row = block_start; row < block_end; ++row)
+                            {
+                                Scalar value = trailing_column[row];
+                                for (Index previous = block_start; previous < row; ++previous)
+                                    value -= factors[previous * n + row] * trailing_column[previous];
+                                trailing_column[row] = value;
+                            }
+                            for (Index previous = block_start; previous < block_end; ++previous)
+                            {
+                                const Scalar* lower_column = factors + previous * n;
+                                const Scalar pivot_value = trailing_column[previous];
 #pragma omp simd
-                        for (Index row = column + 1; row < n; ++row)
-                            trailing_column[row] -= lower_column[row] * pivot_value;
+                                for (Index row = block_end; row < n; ++row)
+                                    trailing_column[row] -= lower_column[row] * pivot_value;
+                            }
+                        }
                     }
                 }
             }

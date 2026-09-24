@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <complex>
 #include <type_traits>
 
@@ -26,6 +27,52 @@ TEST(DenseDecompositions, LuRcondEstimatesReciprocalOneNormCondition)
     plamatrix::Matrix2d singular;
     singular << 1.0, 0.0, 0.0, 0.0;
     EXPECT_DOUBLE_EQ(singular.fullPivLu().rcond(), 0.0);
+}
+
+namespace
+{
+    template <typename Scalar> void verifyBlockedPartialPivotLu()
+    {
+        constexpr plamatrix::Index size = 73;
+        constexpr plamatrix::Index right_columns = 3;
+        using Matrix = plamatrix::Matrix<Scalar, plamatrix::Dynamic, plamatrix::Dynamic>;
+
+        Matrix base(size, size);
+        for (plamatrix::Index column = 0; column < size; ++column)
+        {
+            for (plamatrix::Index row = 0; row < size; ++row)
+            {
+                const int seed = static_cast<int>((row * 17 + column * 29 + 7) % 31) - 15;
+                base(row, column) = static_cast<Scalar>(seed) * Scalar{0.01};
+            }
+            base(column, column) += static_cast<Scalar>(size + column + 1);
+        }
+
+        Matrix coefficients(size, size);
+        for (plamatrix::Index row = 0; row < size; ++row)
+        {
+            const plamatrix::Index source_row = (row + 17) % size;
+            for (plamatrix::Index column = 0; column < size; ++column)
+                coefficients(row, column) = base(source_row, column);
+        }
+
+        Matrix expected(size, right_columns);
+        for (plamatrix::Index column = 0; column < right_columns; ++column)
+            for (plamatrix::Index row = 0; row < size; ++row)
+                expected(row, column) = static_cast<Scalar>((row + 3 * column) % 19 - 9) * Scalar{0.125};
+
+        const Matrix right = coefficients * expected;
+        const Matrix actual = coefficients.partialPivLu().solve(right);
+        const auto tolerance = std::is_same_v<Scalar, float> ? Scalar{2.0e-4F} : Scalar{1.0e-11};
+        EXPECT_TRUE(actual.isApprox(expected, tolerance));
+        EXPECT_LE((coefficients * actual - right).norm(), tolerance * std::max(Scalar{1}, right.norm()));
+    }
+} // namespace
+
+TEST(DenseDecompositions, BlockedPartialPivotLuHandlesCrossPanelPivotsAndMultipleRightSides)
+{
+    verifyBlockedPartialPivotLu<float>();
+    verifyBlockedPartialPivotLu<double>();
 }
 
 TEST(DenseDecompositions, HessenbergAndTridiagonalizationReconstructInput)
