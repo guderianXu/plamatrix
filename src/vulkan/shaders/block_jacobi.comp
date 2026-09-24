@@ -1,0 +1,52 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer Residual
+{
+    float residual[];
+};
+layout(std430, binding = 1) readonly buffer InverseBlocks
+{
+    float inverse_blocks[];
+};
+layout(std430, binding = 2) writeonly buffer Transformed
+{
+    float transformed[];
+};
+layout(std430, binding = 3) writeonly buffer Direction
+{
+    float direction[];
+};
+
+layout(push_constant) uniform Parameters
+{
+    uint count;
+    uint block_size;
+    uint initialize_direction;
+}
+parameters;
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= parameters.count)
+    {
+        return;
+    }
+    const uint block = index / parameters.block_size;
+    const uint local_row = index - block * parameters.block_size;
+    const uint inverse_offset = block * parameters.block_size * parameters.block_size;
+    const uint residual_offset = block * parameters.block_size;
+    float value = 0.0;
+    for (uint column = 0; column < parameters.block_size; ++column)
+    {
+        value += inverse_blocks[inverse_offset + local_row * parameters.block_size + column] *
+                 residual[residual_offset + column];
+    }
+    transformed[index] = value;
+    if (parameters.initialize_direction != 0u)
+    {
+        direction[index] = value;
+    }
+}

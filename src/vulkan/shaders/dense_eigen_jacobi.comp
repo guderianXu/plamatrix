@@ -1,0 +1,73 @@
+#version 450
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0, std430) buffer MatrixBuffer { float matrix_values[]; };
+layout(set = 0, binding = 1, std430) buffer VectorBuffer { float vector_values[]; };
+layout(set = 0, binding = 2, std430) readonly buffer PairBuffer { float pair_values[]; };
+layout(set = 0, binding = 3, std430) buffer RotationBuffer { float rotation_values[]; };
+layout(push_constant) uniform Parameters
+{
+    uint size;
+    uint pair_offset;
+    uint pair_count;
+    uint operation;
+    float tolerance;
+} parameters;
+
+void main()
+{
+    if (gl_WorkGroupID.x >= parameters.pair_count)
+        return;
+    uint local_pair = gl_WorkGroupID.x;
+    uint pair_index = parameters.pair_offset + local_pair;
+    uint p = uint(pair_values[2 * pair_index]);
+    uint q = uint(pair_values[2 * pair_index + 1]);
+    uint lane = gl_LocalInvocationID.x;
+    if (parameters.operation == 0)
+    {
+        if (lane == 0)
+        {
+            float app = matrix_values[p + p * parameters.size];
+            float aqq = matrix_values[q + q * parameters.size];
+            float apq = 0.5 * (matrix_values[p + q * parameters.size] + matrix_values[q + p * parameters.size]);
+            float scale = max(1.0, max(abs(app), abs(aqq)));
+            float cosine = 1.0;
+            float sine = 0.0;
+            if (abs(apq) > parameters.tolerance * scale)
+            {
+                float angle = 0.5 * atan(2.0 * apq, aqq - app);
+                cosine = cos(angle);
+                sine = sin(angle);
+            }
+            rotation_values[2 * local_pair] = cosine;
+            rotation_values[2 * local_pair + 1] = sine;
+        }
+        return;
+    }
+    float cosine = rotation_values[2 * local_pair];
+    float sine = rotation_values[2 * local_pair + 1];
+    if (sine == 0.0)
+        return;
+    if (parameters.operation == 1)
+    {
+        for (uint row = lane; row < parameters.size; row += 128)
+        {
+            float first = matrix_values[row + p * parameters.size];
+            float second = matrix_values[row + q * parameters.size];
+            matrix_values[row + p * parameters.size] = cosine * first - sine * second;
+            matrix_values[row + q * parameters.size] = sine * first + cosine * second;
+            first = vector_values[row + p * parameters.size];
+            second = vector_values[row + q * parameters.size];
+            vector_values[row + p * parameters.size] = cosine * first - sine * second;
+            vector_values[row + q * parameters.size] = sine * first + cosine * second;
+        }
+        return;
+    }
+    for (uint column = lane; column < parameters.size; column += 128)
+    {
+        float first = matrix_values[p + column * parameters.size];
+        float second = matrix_values[q + column * parameters.size];
+        matrix_values[p + column * parameters.size] = cosine * first - sine * second;
+        matrix_values[q + column * parameters.size] = sine * first + cosine * second;
+    }
+}

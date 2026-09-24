@@ -1,0 +1,73 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer BaseData
+{
+    float values[];
+}
+base_data;
+layout(std430, binding = 1) readonly buffer BaseKinds
+{
+    uint values[];
+}
+base_kinds;
+layout(std430, binding = 2) readonly buffer BaseIndices
+{
+    uint values[];
+}
+base_indices;
+layout(std430, binding = 3) readonly buffer BlockSlots
+{
+    uint values[];
+}
+block_slots;
+layout(std430, binding = 4) readonly buffer LocalRows
+{
+    uint values[];
+}
+local_rows;
+layout(std430, binding = 5) readonly buffer LocalColumns
+{
+    uint values[];
+}
+local_columns;
+layout(std430, binding = 6) readonly buffer Products
+{
+    float values[];
+}
+products;
+layout(std430, binding = 7) writeonly buffer Output
+{
+    float values[];
+}
+output_data;
+
+layout(push_constant) uniform Parameters
+{
+    uint value_count;
+    uint direct_offset;
+}
+parameters;
+
+void main()
+{
+    const uint value_index = gl_GlobalInvocationID.x;
+    if (value_index >= parameters.value_count)
+    {
+        return;
+    }
+    float value = 0.0;
+    if (base_kinds.values[value_index] == 1u)
+    {
+        value = base_data.values[base_indices.values[value_index]];
+    }
+    else if (base_kinds.values[value_index] == 2u)
+    {
+        value = base_data.values[parameters.direct_offset + base_indices.values[value_index]];
+    }
+    const uint slot = block_slots.values[value_index];
+    const uint product_index = local_rows.values[value_index] * 16u + local_columns.values[value_index];
+    value -= products.values[slot * 256u + product_index];
+    output_data.values[value_index] = value;
+}

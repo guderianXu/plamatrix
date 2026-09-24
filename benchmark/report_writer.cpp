@@ -20,7 +20,7 @@
 #include <cuda_runtime.h>
 #endif
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -336,4 +336,4 @@ void BenchmarkReport::writeMarkdown(const std::string& path) const
     file << "\n";
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

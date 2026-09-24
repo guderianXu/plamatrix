@@ -1,0 +1,146 @@
+#version 450
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0, std430) readonly buffer InputBuffer { float input_values[]; };
+layout(set = 0, binding = 1, std430) buffer QrBuffer { float qr_values[]; };
+layout(set = 0, binding = 2, std430) buffer TauBuffer { float tau_values[]; };
+layout(set = 0, binding = 3, std430) buffer QBuffer { float q_values[]; };
+layout(set = 0, binding = 4, std430) buffer RBuffer { float r_values[]; };
+layout(set = 0, binding = 5, std430) buffer StatusBuffer { float status_values[]; };
+layout(push_constant) uniform Parameters
+{
+    uint rows;
+    uint columns;
+    uint step;
+    uint operation;
+    float epsilon;
+} parameters;
+
+shared float scratch[128];
+shared float shared_tau;
+shared float shared_alpha;
+shared float shared_denominator;
+
+float reduceSum(float value)
+{
+    uint lane = gl_LocalInvocationID.x;
+    scratch[lane] = value;
+    barrier();
+    for (uint stride = 64; stride > 0; stride >>= 1)
+    {
+        if (lane < stride)
+            scratch[lane] += scratch[lane + stride];
+        barrier();
+    }
+    return scratch[0];
+}
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    if (parameters.operation == 0)
+    {
+        uint index = gl_GlobalInvocationID.x;
+        uint qr_count = parameters.rows * parameters.columns;
+        uint q_count = parameters.rows * parameters.rows;
+        if (index < qr_count)
+        {
+            qr_values[index] = input_values[index];
+            r_values[index] = 0.0;
+        }
+        if (index < q_count)
+            q_values[index] = (index % parameters.rows) == (index / parameters.rows) ? 1.0 : 0.0;
+        if (index < min(parameters.rows, parameters.columns))
+            tau_values[index] = 0.0;
+        if (index == 0)
+            status_values[0] = 0.0;
+        return;
+    }
+
+    if (parameters.operation == 1)
+    {
+        float local_norm = 0.0;
+        for (uint row = parameters.step + lane; row < parameters.rows; row += 128)
+        {
+            float value = qr_values[row + parameters.step * parameters.rows];
+            local_norm += value * value;
+        }
+        float norm = sqrt(max(reduceSum(local_norm), 0.0));
+        if (lane == 0)
+        {
+            float leading = qr_values[parameters.step + parameters.step * parameters.rows];
+            float alpha = leading >= 0.0 ? -norm : norm;
+            float denominator = leading - alpha;
+            float tolerance = parameters.epsilon * float(max(parameters.rows, parameters.columns)) * max(1.0, norm);
+            shared_alpha = alpha;
+            shared_denominator = denominator;
+            shared_tau = norm > tolerance && abs(denominator) > tolerance
+                             ? (2.0 / (1.0 + max(0.0, (norm * norm - leading * leading) /
+                                                               (denominator * denominator))))
+                             : 0.0;
+            tau_values[parameters.step] = shared_tau;
+            if (shared_tau != 0.0)
+            {
+                qr_values[parameters.step + parameters.step * parameters.rows] = alpha;
+                status_values[0] += 1.0;
+            }
+        }
+        barrier();
+        if (shared_tau != 0.0)
+        {
+            for (uint row = parameters.step + 1 + lane; row < parameters.rows; row += 128)
+                qr_values[row + parameters.step * parameters.rows] /= shared_denominator;
+        }
+        return;
+    }
+
+    if (parameters.operation == 2)
+    {
+        uint column = parameters.step + 1 + gl_WorkGroupID.x;
+        if (column >= parameters.columns || tau_values[parameters.step] == 0.0)
+            return;
+        float local_projection = 0.0;
+        for (uint row = parameters.step + lane; row < parameters.rows; row += 128)
+        {
+            float vector_value = row == parameters.step ? 1.0 : qr_values[row + parameters.step * parameters.rows];
+            local_projection += vector_value * qr_values[row + column * parameters.rows];
+        }
+        float projection = reduceSum(local_projection) * tau_values[parameters.step];
+        for (uint row = parameters.step + lane; row < parameters.rows; row += 128)
+        {
+            float vector_value = row == parameters.step ? 1.0 : qr_values[row + parameters.step * parameters.rows];
+            qr_values[row + column * parameters.rows] -= vector_value * projection;
+        }
+        return;
+    }
+
+    if (parameters.operation == 3)
+    {
+        uint index = gl_GlobalInvocationID.x;
+        uint qr_count = parameters.rows * parameters.columns;
+        uint q_count = parameters.rows * parameters.rows;
+        if (index < qr_count)
+        {
+            uint row = index % parameters.rows;
+            uint column = index / parameters.rows;
+            r_values[index] = row <= column ? qr_values[index] : 0.0;
+        }
+        if (index < q_count)
+            q_values[index] = (index % parameters.rows) == (index / parameters.rows) ? 1.0 : 0.0;
+        return;
+    }
+
+    uint q_column = gl_WorkGroupID.x;
+    float local_projection = 0.0;
+    for (uint row = parameters.step + lane; row < parameters.rows; row += 128)
+    {
+        float vector_value = row == parameters.step ? 1.0 : qr_values[row + parameters.step * parameters.rows];
+        local_projection += vector_value * q_values[row + q_column * parameters.rows];
+    }
+    float projection = reduceSum(local_projection) * tau_values[parameters.step];
+    for (uint row = parameters.step + lane; row < parameters.rows; row += 128)
+    {
+        float vector_value = row == parameters.step ? 1.0 : qr_values[row + parameters.step * parameters.rows];
+        q_values[row + q_column * parameters.rows] -= vector_value * projection;
+    }
+}

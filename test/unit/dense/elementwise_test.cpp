@@ -1,16 +1,19 @@
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/core/parallel.h"
-#include "plamatrix/dense/elementwise.h"
+#include "plamatrix/internal/core/parallel.h"
+#include "plamatrix/internal/dense/elementwise.h"
 #include "support/cuda_test_utils.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -19,12 +22,12 @@ template <typename Scalar>
 class ElementwiseTest : public ::testing::Test
 {
 protected:
-    static DenseMatrix<Scalar, Device::CPU> makeMatrix(
+    static DenseStorage<Scalar, Device::CPU> makeMatrix(
         Index rows,
         Index cols,
         std::initializer_list<Scalar> values)
     {
-        DenseMatrix<Scalar, Device::CPU> matrix(rows, cols);
+        DenseStorage<Scalar, Device::CPU> matrix(rows, cols);
         if (matrix.size() != static_cast<Index>(values.size()))
         {
             throw std::invalid_argument("makeMatrix: initializer length must match matrix size");
@@ -37,7 +40,7 @@ protected:
         return matrix;
     }
 
-    static void expectValues(const DenseMatrix<Scalar, Device::CPU>& matrix,
+    static void expectValues(const DenseStorage<Scalar, Device::CPU>& matrix,
                              std::initializer_list<Scalar> expected)
     {
         ASSERT_EQ(matrix.size(), static_cast<Index>(expected.size()));
@@ -48,7 +51,7 @@ protected:
         }
     }
 
-    static void expectEmpty(const DenseMatrix<Scalar, Device::CPU>& matrix)
+    static void expectEmpty(const DenseStorage<Scalar, Device::CPU>& matrix)
     {
         EXPECT_EQ(matrix.rows(), 0);
         EXPECT_EQ(matrix.cols(), 3);
@@ -56,13 +59,13 @@ protected:
         EXPECT_EQ(matrix.data(), nullptr);
     }
 
-    static void expectGpuValues(const DenseMatrix<Scalar, Device::GPU>& matrix,
+    static void expectGpuValues(const DenseStorage<Scalar, Device::GPU>& matrix,
                                 std::initializer_list<Scalar> expected)
     {
         expectValues(matrix.toCpu(), expected);
     }
 
-    static void expectGpuEmpty(const DenseMatrix<Scalar, Device::GPU>& matrix)
+    static void expectGpuEmpty(const DenseStorage<Scalar, Device::GPU>& matrix)
     {
         expectEmpty(matrix.toCpu());
     }
@@ -105,9 +108,9 @@ TYPED_TEST(ElementwiseTest, ScalarOperationsAllocateExpectedResults)
         Scalar(-2), Scalar(-0.5), Scalar(0), Scalar(1), Scalar(2), Scalar(4)
     });
 
-    auto scaled = plamatrix::scalarMultiply(input, Scalar(2));
-    auto shifted = plamatrix::scalarAdd(input, Scalar(-1));
-    auto divided = plamatrix::scalarDivide(input, Scalar(2));
+    auto scaled = plamatrix::internal::scalarMultiply(input, Scalar(2));
+    auto shifted = plamatrix::internal::scalarAdd(input, Scalar(-1));
+    auto divided = plamatrix::internal::scalarDivide(input, Scalar(2));
 
     TestFixture::expectValues(scaled, {
         Scalar(-4), Scalar(-1), Scalar(0), Scalar(2), Scalar(4), Scalar(8)
@@ -120,6 +123,218 @@ TYPED_TEST(ElementwiseTest, ScalarOperationsAllocateExpectedResults)
     });
 }
 
+TYPED_TEST(ElementwiseTest, AxpbyFusesLinearCombinationAndSupportsExactAliases)
+{
+    using Scalar = TypeParam;
+    auto lhs = TestFixture::makeMatrix(2, 3, {
+        Scalar(-2), Scalar(-0.5), Scalar(0), Scalar(1), Scalar(2), Scalar(4)
+    });
+    auto rhs = TestFixture::makeMatrix(2, 3, {
+        Scalar(1), Scalar(2), Scalar(-4), Scalar(0.5), Scalar(-2), Scalar(8)
+    });
+
+    auto result = axpby(Scalar(1.5), lhs, Scalar(-0.5), rhs);
+    TestFixture::expectValues(result, {
+        Scalar(-3.5), Scalar(-1.75), Scalar(2), Scalar(1.25), Scalar(4), Scalar(2)
+    });
+
+    axpby(Scalar(2), lhs, Scalar(1), rhs, lhs);
+    TestFixture::expectValues(lhs, {
+        Scalar(-3), Scalar(1), Scalar(-4), Scalar(2.5), Scalar(2), Scalar(16)
+    });
+
+    axpby(Scalar(-1), lhs, Scalar(0.5), rhs, rhs);
+    TestFixture::expectValues(rhs, {
+        Scalar(3.5), Scalar(0), Scalar(2), Scalar(-2.25), Scalar(-3), Scalar(-12)
+    });
+}
+
+TYPED_TEST(ElementwiseTest, AxpbySupportsStridedViewsAndRejectsUnsafeOverlap)
+{
+    using Scalar = TypeParam;
+    std::array<Scalar, 12> lhs_storage{};
+    std::array<Scalar, 12> rhs_storage{};
+    std::array<Scalar, 12> output_storage{};
+    for (Index index = 0; index < 6; ++index)
+    {
+        lhs_storage[static_cast<std::size_t>(index * 2)] = Scalar(index + 1);
+        rhs_storage[static_cast<std::size_t>(index * 2)] = Scalar(10 + index);
+        output_storage[static_cast<std::size_t>(index * 2)] = Scalar(-99);
+    }
+    const auto lhs = makeConstMatrixView<Scalar, Device::CPU>(lhs_storage.data(), 2, 3, 2, 4);
+    const auto rhs = makeConstMatrixView<Scalar, Device::CPU>(rhs_storage.data(), 2, 3, 2, 4);
+    auto output = makeMatrixView<Scalar, Device::CPU>(output_storage.data(), 2, 3, 2, 4);
+
+    axpby(Scalar(2), lhs, Scalar(-1), rhs, output);
+    for (Index index = 0; index < 6; ++index)
+    {
+        EXPECT_EQ(output_storage[static_cast<std::size_t>(index * 2)], Scalar(index - 8));
+    }
+
+    std::array<Scalar, 9> compact_lhs{};
+    std::array<Scalar, 9> compact_rhs{};
+    std::array<Scalar, 11> irregular_output{};
+    for (Index index = 0; index < 9; ++index)
+    {
+        compact_lhs[static_cast<std::size_t>(index)] = Scalar(index + 1);
+        compact_rhs[static_cast<std::size_t>(index)] = Scalar(index + 10);
+    }
+    auto unique_irregular_output =
+        makeMatrixView<Scalar, Device::CPU>(irregular_output.data(), 3, 3, 2, 3);
+    const auto compact_lhs_view =
+        makeConstMatrixView<Scalar, Device::CPU>(compact_lhs.data(), 3, 3, 1, 3);
+    const auto compact_rhs_view =
+        makeConstMatrixView<Scalar, Device::CPU>(compact_rhs.data(), 3, 3, 1, 3);
+    axpby(Scalar(1), compact_lhs_view, Scalar(1), compact_rhs_view, unique_irregular_output);
+    for (Index col = 0; col < 3; ++col)
+    {
+        for (Index row = 0; row < 3; ++row)
+        {
+            const Index input_index = row + col * 3;
+            EXPECT_EQ(unique_irregular_output(row, col), Scalar(input_index * 2 + 11));
+        }
+    }
+
+    std::array<Scalar, 8> overlapping{};
+    std::array<Scalar, 4> independent{};
+    std::fill(overlapping.begin(), overlapping.end(), Scalar(7));
+    const auto overlapping_input = makeColumnMajorView<Scalar, Device::CPU>(overlapping.data(), 4, 1);
+    const auto independent_input = makeColumnMajorView<Scalar, Device::CPU>(independent.data(), 4, 1);
+    auto shifted_output = makeColumnMajorView<Scalar, Device::CPU>(overlapping.data() + 1, 4, 1);
+
+    EXPECT_THROW(
+        axpby(Scalar(1), ConstMatrixView<Scalar, Device::CPU>(overlapping_input), Scalar(1),
+              ConstMatrixView<Scalar, Device::CPU>(independent_input), shifted_output),
+        std::invalid_argument);
+    EXPECT_TRUE(std::all_of(overlapping.begin(), overlapping.end(), [](Scalar value) { return value == Scalar(7); }));
+
+    auto self_overlapping_output = makeMatrixView<Scalar, Device::CPU>(output_storage.data(), 2, 2, 1, 1);
+    EXPECT_THROW(
+        axpby(Scalar(1), lhs.block(0, 0, 2, 2), Scalar(1), rhs.block(0, 0, 2, 2), self_overlapping_output),
+        std::invalid_argument);
+}
+
+TYPED_TEST(ElementwiseTest, AxpbyValidatesShapesAndPreservesEmptyDimensions)
+{
+    using Scalar = TypeParam;
+    DenseStorage<Scalar, Device::CPU> lhs(0, 3);
+    DenseStorage<Scalar, Device::CPU> rhs(0, 3);
+    DenseStorage<Scalar, Device::CPU> mismatch(3, 0);
+    DenseStorage<Scalar, Device::CPU> output(0, 3);
+
+    TestFixture::expectEmpty(axpby(Scalar(2), lhs, Scalar(-1), rhs));
+    EXPECT_NO_THROW(axpby(Scalar(2), lhs, Scalar(-1), rhs, output));
+    EXPECT_THROW(static_cast<void>(axpby(Scalar(1), lhs, Scalar(1), mismatch)), std::runtime_error);
+    EXPECT_THROW(axpby(Scalar(1), lhs, Scalar(1), rhs, mismatch), std::runtime_error);
+}
+
+TYPED_TEST(ElementwiseTest, AxpbyPreservesIeeeSpecialValues)
+{
+    using Scalar = TypeParam;
+    const Scalar infinity = std::numeric_limits<Scalar>::infinity();
+    const Scalar nan = std::numeric_limits<Scalar>::quiet_NaN();
+    auto lhs = TestFixture::makeMatrix(3, 1, {infinity, -infinity, nan});
+    auto rhs = TestFixture::makeMatrix(3, 1, {Scalar(1), Scalar(2), Scalar(3)});
+
+    const auto result = axpby(Scalar(1), lhs, Scalar(1), rhs);
+
+    EXPECT_TRUE(std::isinf(result.data()[0]));
+    EXPECT_FALSE(std::signbit(result.data()[0]));
+    EXPECT_TRUE(std::isinf(result.data()[1]));
+    EXPECT_TRUE(std::signbit(result.data()[1]));
+    EXPECT_TRUE(std::isnan(result.data()[2]));
+}
+
+TYPED_TEST(ElementwiseTest, LinearCombinationFusesThreeInputsAndSupportsEveryExactAlias)
+{
+    using Scalar = TypeParam;
+    const auto make_first = []()
+    {
+        return TestFixture::makeMatrix(2, 2, {Scalar(1), Scalar(2), Scalar(3), Scalar(4)});
+    };
+    const auto make_second = []()
+    {
+        return TestFixture::makeMatrix(2, 2, {Scalar(5), Scalar(6), Scalar(7), Scalar(8)});
+    };
+    const auto make_third = []()
+    {
+        return TestFixture::makeMatrix(2, 2, {Scalar(-1), Scalar(-2), Scalar(-3), Scalar(-4)});
+    };
+
+    auto first = make_first();
+    auto second = make_second();
+    auto third = make_third();
+    const auto result = linearCombination(
+        Scalar(2), first, Scalar(-1), second, Scalar(0.5), third);
+    TestFixture::expectValues(result, {Scalar(-3.5), Scalar(-3), Scalar(-2.5), Scalar(-2)});
+
+    linearCombination(Scalar(1), first, Scalar(1), second, Scalar(1), third, first);
+    TestFixture::expectValues(first, {Scalar(5), Scalar(6), Scalar(7), Scalar(8)});
+
+    first = make_first();
+    linearCombination(Scalar(1), first, Scalar(1), second, Scalar(1), third, second);
+    TestFixture::expectValues(second, {Scalar(5), Scalar(6), Scalar(7), Scalar(8)});
+
+    second = make_second();
+    linearCombination(Scalar(1), first, Scalar(1), second, Scalar(1), third, third);
+    TestFixture::expectValues(third, {Scalar(5), Scalar(6), Scalar(7), Scalar(8)});
+}
+
+TYPED_TEST(ElementwiseTest, LinearCombinationSupportsStridedViewsAndRejectsUnsafeOverlap)
+{
+    using Scalar = TypeParam;
+    std::array<Scalar, 12> first_storage{};
+    std::array<Scalar, 12> second_storage{};
+    std::array<Scalar, 12> third_storage{};
+    std::array<Scalar, 12> output_storage{};
+    for (Index index = 0; index < 6; ++index)
+    {
+        const auto offset = static_cast<std::size_t>(index * 2);
+        first_storage[offset] = Scalar(index + 1);
+        second_storage[offset] = Scalar(index + 2);
+        third_storage[offset] = Scalar(index + 3);
+    }
+    const auto first = makeConstMatrixView<Scalar, Device::CPU>(first_storage.data(), 2, 3, 2, 4);
+    const auto second = makeConstMatrixView<Scalar, Device::CPU>(second_storage.data(), 2, 3, 2, 4);
+    const auto third = makeConstMatrixView<Scalar, Device::CPU>(third_storage.data(), 2, 3, 2, 4);
+    auto output = makeMatrixView<Scalar, Device::CPU>(output_storage.data(), 2, 3, 2, 4);
+
+    linearCombination(Scalar(1), first, Scalar(2), second, Scalar(-1), third, output);
+    for (Index index = 0; index < 6; ++index)
+    {
+        EXPECT_EQ(output.data()[index * 2], Scalar(index * 2 + 2));
+    }
+
+    auto shifted_output = makeMatrixView<Scalar, Device::CPU>(third_storage.data() + 2, 2, 3, 2, 4);
+    EXPECT_THROW(
+        linearCombination(
+            Scalar(1), first, Scalar(1), second, Scalar(1), third, shifted_output),
+        std::invalid_argument);
+}
+
+TYPED_TEST(ElementwiseTest, LinearCombinationValidatesShapesAndPreservesEmptyDimensions)
+{
+    using Scalar = TypeParam;
+    DenseStorage<Scalar, Device::CPU> first(0, 3);
+    DenseStorage<Scalar, Device::CPU> second(0, 3);
+    DenseStorage<Scalar, Device::CPU> third(0, 3);
+    DenseStorage<Scalar, Device::CPU> mismatch(3, 0);
+    DenseStorage<Scalar, Device::CPU> output(0, 3);
+
+    TestFixture::expectEmpty(linearCombination(
+        Scalar(1), first, Scalar(2), second, Scalar(3), third));
+    EXPECT_NO_THROW(linearCombination(
+        Scalar(1), first, Scalar(2), second, Scalar(3), third, output));
+    EXPECT_THROW(
+        static_cast<void>(linearCombination(
+            Scalar(1), first, Scalar(2), second, Scalar(3), mismatch)),
+        std::runtime_error);
+    EXPECT_THROW(
+        linearCombination(
+            Scalar(1), first, Scalar(2), second, Scalar(3), third, mismatch),
+        std::runtime_error);
+}
+
 TYPED_TEST(ElementwiseTest, HadamardOperationsAllocateExpectedResults)
 {
     using Scalar = TypeParam;
@@ -130,8 +345,8 @@ TYPED_TEST(ElementwiseTest, HadamardOperationsAllocateExpectedResults)
         Scalar(1), Scalar(2), Scalar(-4), Scalar(0.5), Scalar(-2), Scalar(8)
     });
 
-    auto product = plamatrix::hadamardMultiply(input, other);
-    auto quotient = plamatrix::hadamardDivide(input, other);
+    auto product = plamatrix::internal::hadamardMultiply(input, other);
+    auto quotient = plamatrix::internal::hadamardDivide(input, other);
 
     TestFixture::expectValues(product, {
         Scalar(-2), Scalar(-1), Scalar(0), Scalar(0.5), Scalar(-4), Scalar(32)
@@ -151,9 +366,9 @@ TYPED_TEST(ElementwiseTest, UnaryAndClampOperationsAllocateExpectedResults)
         Scalar(0), Scalar(0.25), Scalar(1), Scalar(4), Scalar(9), Scalar(16)
     });
 
-    auto absolute = plamatrix::absElements(input);
-    auto rooted = plamatrix::sqrtElements(non_negative);
-    auto clipped = plamatrix::clampElements(input, Scalar(-1), Scalar(1));
+    auto absolute = plamatrix::internal::absElements(input);
+    auto rooted = plamatrix::internal::sqrtElements(non_negative);
+    auto clipped = plamatrix::internal::clampElements(input, Scalar(-1), Scalar(1));
 
     TestFixture::expectValues(absolute, {
         Scalar(2), Scalar(0.5), Scalar(0), Scalar(1), Scalar(2), Scalar(4)
@@ -169,30 +384,30 @@ TYPED_TEST(ElementwiseTest, UnaryAndClampOperationsAllocateExpectedResults)
 TYPED_TEST(ElementwiseTest, EmptyMatricesPreserveDimensions)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input(0, 3);
-    DenseMatrix<Scalar, Device::CPU> other(0, 3);
+    DenseStorage<Scalar, Device::CPU> input(0, 3);
+    DenseStorage<Scalar, Device::CPU> other(0, 3);
 
-    TestFixture::expectEmpty(plamatrix::scalarMultiply(input, Scalar(2)));
-    TestFixture::expectEmpty(plamatrix::scalarAdd(input, Scalar(-1)));
-    TestFixture::expectEmpty(plamatrix::scalarDivide(input, Scalar(2)));
-    TestFixture::expectEmpty(plamatrix::hadamardMultiply(input, other));
-    TestFixture::expectEmpty(plamatrix::hadamardDivide(input, other));
-    TestFixture::expectEmpty(plamatrix::absElements(input));
-    TestFixture::expectEmpty(plamatrix::sqrtElements(input));
-    TestFixture::expectEmpty(plamatrix::clampElements(input, Scalar(-1), Scalar(1)));
+    TestFixture::expectEmpty(plamatrix::internal::scalarMultiply(input, Scalar(2)));
+    TestFixture::expectEmpty(plamatrix::internal::scalarAdd(input, Scalar(-1)));
+    TestFixture::expectEmpty(plamatrix::internal::scalarDivide(input, Scalar(2)));
+    TestFixture::expectEmpty(plamatrix::internal::hadamardMultiply(input, other));
+    TestFixture::expectEmpty(plamatrix::internal::hadamardDivide(input, other));
+    TestFixture::expectEmpty(plamatrix::internal::absElements(input));
+    TestFixture::expectEmpty(plamatrix::internal::sqrtElements(input));
+    TestFixture::expectEmpty(plamatrix::internal::clampElements(input, Scalar(-1), Scalar(1)));
 }
 
 TYPED_TEST(ElementwiseTest, RejectsInvalidArguments)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input(2, 3);
-    DenseMatrix<Scalar, Device::CPU> mismatch(3, 2);
+    DenseStorage<Scalar, Device::CPU> input(2, 3);
+    DenseStorage<Scalar, Device::CPU> mismatch(3, 2);
 
-    EXPECT_THROW(static_cast<void>(plamatrix::hadamardMultiply(input, mismatch)), std::runtime_error);
-    EXPECT_THROW(static_cast<void>(plamatrix::hadamardDivide(input, mismatch)), std::runtime_error);
-    EXPECT_THROW(static_cast<void>(plamatrix::scalarDivide(input, Scalar(0))), std::domain_error);
+    EXPECT_THROW(static_cast<void>(plamatrix::internal::hadamardMultiply(input, mismatch)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(plamatrix::internal::hadamardDivide(input, mismatch)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(plamatrix::internal::scalarDivide(input, Scalar(0))), std::domain_error);
     EXPECT_THROW(
-        static_cast<void>(plamatrix::clampElements(input, Scalar(2), Scalar(1))),
+        static_cast<void>(plamatrix::internal::clampElements(input, Scalar(2), Scalar(1))),
         std::invalid_argument);
 }
 
@@ -206,7 +421,7 @@ TYPED_TEST(ElementwiseTest, HadamardDivisionByZeroUsesIeeeSemantics)
         Scalar(0), Scalar(0), Scalar(0)
     });
 
-    auto quotient = plamatrix::hadamardDivide(numerator, denominator);
+    auto quotient = plamatrix::internal::hadamardDivide(numerator, denominator);
 
     EXPECT_TRUE(std::isinf(quotient.data()[0]));
     EXPECT_FALSE(std::signbit(quotient.data()[0]));
@@ -219,8 +434,8 @@ TYPED_TEST(ElementwiseTest, OpenMpBranchProcessesEveryElement)
 {
     using Scalar = TypeParam;
     constexpr Index element_count = detail::kOpenMpWorkThreshold;
-    DenseMatrix<Scalar, Device::CPU> input(element_count, 1);
-    DenseMatrix<Scalar, Device::CPU> other(element_count, 1);
+    DenseStorage<Scalar, Device::CPU> input(element_count, 1);
+    DenseStorage<Scalar, Device::CPU> other(element_count, 1);
 
     ASSERT_TRUE(detail::shouldUseOpenMp(element_count));
     for (Index index = 0; index < element_count; ++index)
@@ -229,15 +444,24 @@ TYPED_TEST(ElementwiseTest, OpenMpBranchProcessesEveryElement)
         other.data()[index] = Scalar(index % 5 + 1);
     }
 
-    auto absolute = plamatrix::absElements(input);
-    auto product = plamatrix::hadamardMultiply(input, other);
+    auto absolute = plamatrix::internal::absElements(input);
+    auto product = plamatrix::internal::hadamardMultiply(input, other);
+    auto combined = plamatrix::internal::axpby(Scalar(2), input, Scalar(-1), other);
+    auto combined_three =
+        plamatrix::internal::linearCombination(Scalar(2), input, Scalar(-1), other, Scalar(0.5), input);
 
     ASSERT_EQ(absolute.size(), element_count);
     ASSERT_EQ(product.size(), element_count);
+    ASSERT_EQ(combined.size(), element_count);
+    ASSERT_EQ(combined_three.size(), element_count);
     for (Index index = 0; index < element_count; ++index)
     {
         EXPECT_EQ(absolute.data()[index], std::abs(input.data()[index]));
         EXPECT_EQ(product.data()[index], input.data()[index] * other.data()[index]);
+        EXPECT_EQ(combined.data()[index], Scalar(2) * input.data()[index] - other.data()[index]);
+        EXPECT_EQ(
+            combined_three.data()[index],
+            Scalar(2.5) * input.data()[index] - other.data()[index]);
     }
 }
 
@@ -267,14 +491,14 @@ TYPED_TEST(ElementwiseTest, GpuSynchronousOperationsSupportAllocationAndOutputRe
     auto rooted = sqrtElements(non_negative);
     auto clipped = clampElements(input, Scalar(-1), Scalar(1));
 
-    DenseMatrix<Scalar, Device::GPU> scaled_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> shifted_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> divided_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> product_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> quotient_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> absolute_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> rooted_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> clipped_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> scaled_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> shifted_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> divided_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> product_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> quotient_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> absolute_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> rooted_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> clipped_reuse(2, 3);
     test::CudaStreamGuard stream;
     scalarMultiply(input, Scalar(2), scaled_reuse, stream.get());
     scalarAdd(input, Scalar(-1), shifted_reuse, stream.get());
@@ -390,14 +614,14 @@ TYPED_TEST(ElementwiseTest, GpuAsyncOperationsUseTwoIndependentStreams)
     auto rooted = sqrtElementsAsync(non_negative, second_stream.get());
     auto clipped = clampElementsAsync(input, Scalar(-1), Scalar(1), second_stream.get());
 
-    DenseMatrix<Scalar, Device::GPU> scaled_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> shifted_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> divided_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> product_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> quotient_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> absolute_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> rooted_reuse(2, 3);
-    DenseMatrix<Scalar, Device::GPU> clipped_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> scaled_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> shifted_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> divided_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> product_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> quotient_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> absolute_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> rooted_reuse(2, 3);
+    DenseStorage<Scalar, Device::GPU> clipped_reuse(2, 3);
     scalarMultiplyAsync(input, Scalar(2), scaled_reuse, first_stream.get());
     scalarAddAsync(input, Scalar(-1), shifted_reuse, second_stream.get());
     scalarDivideAsync(input, Scalar(2), divided_reuse, first_stream.get());
@@ -474,8 +698,8 @@ TYPED_TEST(ElementwiseTest, GpuAsyncOperationsUseTwoIndependentStreams)
 TYPED_TEST(ElementwiseTest, GpuOperationsPreserveEmptyDimensions)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input_cpu(0, 3);
-    DenseMatrix<Scalar, Device::CPU> other_cpu(0, 3);
+    DenseStorage<Scalar, Device::CPU> input_cpu(0, 3);
+    DenseStorage<Scalar, Device::CPU> other_cpu(0, 3);
     auto input = input_cpu.toGpu();
     auto other = other_cpu.toGpu();
 
@@ -500,9 +724,9 @@ TYPED_TEST(ElementwiseTest, GpuOperationsPreserveEmptyDimensions)
 TYPED_TEST(ElementwiseTest, GpuOperationsRejectHostKnownInvalidArguments)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::GPU> input(2, 3);
-    DenseMatrix<Scalar, Device::GPU> mismatch(3, 2);
-    DenseMatrix<Scalar, Device::GPU> wrong_output(3, 2);
+    DenseStorage<Scalar, Device::GPU> input(2, 3);
+    DenseStorage<Scalar, Device::GPU> mismatch(3, 2);
+    DenseStorage<Scalar, Device::GPU> wrong_output(3, 2);
 
     EXPECT_THROW(static_cast<void>(hadamardMultiply(input, mismatch)), std::runtime_error);
     EXPECT_THROW(static_cast<void>(hadamardDivideAsync(input, mismatch)), std::runtime_error);
@@ -550,9 +774,9 @@ TYPED_TEST(ElementwiseTest, GpuHadamardDivisionByZeroUsesIeeeSemantics)
 TYPED_TEST(ElementwiseTest, NoCudaElementwiseEntryPointsThrowRuntimeError)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::GPU> input(2, 3);
-    DenseMatrix<Scalar, Device::GPU> other(2, 3);
-    DenseMatrix<Scalar, Device::GPU> output(2, 3);
+    DenseStorage<Scalar, Device::GPU> input(2, 3);
+    DenseStorage<Scalar, Device::GPU> other(2, 3);
+    DenseStorage<Scalar, Device::GPU> output(2, 3);
 
     expectNoCudaElementwiseError("scalarMultiply", [&] {
         static_cast<void>(scalarMultiplyAsync(input, Scalar(2)));
@@ -661,4 +885,4 @@ TYPED_TEST(ElementwiseTest, NoCudaElementwiseEntryPointsThrowRuntimeError)
 #endif
 
 } // anonymous namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

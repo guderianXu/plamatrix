@@ -6,9 +6,9 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -28,9 +28,9 @@ protected:
         return Scalar(6e-11);
     }
 
-    static DenseMatrix<Scalar, Device::CPU> makeBatch(Index rows)
+    static DenseStorage<Scalar, Device::CPU> makeBatch(Index rows)
     {
-        DenseMatrix<Scalar, Device::CPU> compact(rows, 6);
+        DenseStorage<Scalar, Device::CPU> compact(rows, 6);
         std::mt19937 generator(0xC0DAu + static_cast<unsigned int>(rows));
         std::uniform_real_distribution<double> distribution(-4.0, 4.0);
         for (Index row = 0; row < rows; ++row)
@@ -61,9 +61,9 @@ protected:
     }
 
     static void expectDecomposition(
-        const DenseMatrix<Scalar, Device::CPU>& compact,
-        const DenseMatrix<Scalar, Device::CPU>& eigenvalues,
-        const DenseMatrix<Scalar, Device::CPU>& eigenvectors)
+        const DenseStorage<Scalar, Device::CPU>& compact,
+        const DenseStorage<Scalar, Device::CPU>& eigenvalues,
+        const DenseStorage<Scalar, Device::CPU>& eigenvectors)
     {
         ASSERT_EQ(eigenvalues.rows(), compact.rows());
         ASSERT_EQ(eigenvalues.cols(), 3);
@@ -132,8 +132,8 @@ protected:
 
     static void expectCpuGpuAgreement(
         const SymmetricEigh3x3Result<Scalar, Device::CPU>& cpu,
-        const DenseMatrix<Scalar, Device::CPU>& gpu_values,
-        const DenseMatrix<Scalar, Device::CPU>& gpu_vectors)
+        const DenseStorage<Scalar, Device::CPU>& gpu_values,
+        const DenseStorage<Scalar, Device::CPU>& gpu_vectors)
     {
         const Scalar tol = tolerance();
         for (Index row = 0; row < cpu.eigenvalues.rows(); ++row)
@@ -254,7 +254,7 @@ TYPED_TEST(SmallMatrixCudaTest, ScaledJacobiAngleHandlesFiniteExtremeMatrix)
 {
     using Scalar = TypeParam;
     const Scalar largest = std::numeric_limits<Scalar>::max();
-    DenseMatrix<Scalar, Device::CPU> compact(1, 6);
+    DenseStorage<Scalar, Device::CPU> compact(1, 6);
     compact(0, 0) = Scalar(-0.5) * largest;
     compact(0, 1) = Scalar(0.75) * largest;
     compact(0, 2) = Scalar(0);
@@ -278,7 +278,7 @@ TYPED_TEST(SmallMatrixCudaTest, TangentUpdateKeepsMaximumBoundaryEigenvalueFinit
     using Scalar = TypeParam;
     const Scalar maximum = std::numeric_limits<Scalar>::max();
     const Scalar half_maximum = Scalar(0.5) * maximum;
-    DenseMatrix<Scalar, Device::CPU> compact(1, 6);
+    DenseStorage<Scalar, Device::CPU> compact(1, 6);
     compact(0, 0) = half_maximum;
     compact(0, 1) = half_maximum;
     compact(0, 2) = Scalar(0);
@@ -309,7 +309,7 @@ TYPED_TEST(SmallMatrixCudaTest, TangentUpdateHandlesScaledOffDiagonalUnderflow)
 {
     using Scalar = TypeParam;
     const Scalar maximum = std::numeric_limits<Scalar>::max();
-    DenseMatrix<Scalar, Device::CPU> compact(1, 6);
+    DenseStorage<Scalar, Device::CPU> compact(1, 6);
     compact(0, 0) = maximum;
     compact(0, 1) = std::numeric_limits<Scalar>::denorm_min();
     compact(0, 2) = Scalar(0);
@@ -335,4 +335,4 @@ TYPED_TEST(SmallMatrixCudaTest, TangentUpdateHandlesScaledOffDiagonalUnderflow)
 #endif
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

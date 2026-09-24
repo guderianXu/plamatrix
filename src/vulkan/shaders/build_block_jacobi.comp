@@ -1,0 +1,145 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer BlockRowOffsets
+{
+    uint block_row_offsets[];
+};
+layout(std430, binding = 1) readonly buffer BlockColumns
+{
+    uint block_columns[];
+};
+layout(std430, binding = 2) readonly buffer Values
+{
+    float values[];
+};
+layout(std430, binding = 3) writeonly buffer InverseBlocks
+{
+    float inverse_blocks[];
+};
+
+layout(push_constant) uniform Parameters
+{
+    uint block_rows;
+    uint block_size;
+}
+parameters;
+
+const uint MAX_BLOCK_SIZE = 9u;
+const uint MAX_BLOCK_VALUES = MAX_BLOCK_SIZE * MAX_BLOCK_SIZE;
+
+void writeInvalidBlock(uint block)
+{
+    const uint offset = block * parameters.block_size * parameters.block_size;
+    const float invalid = uintBitsToFloat(0x7fc00000u);
+    for (uint index = 0u; index < parameters.block_size * parameters.block_size; ++index)
+    {
+        inverse_blocks[offset + index] = invalid;
+    }
+}
+
+void main()
+{
+    const uint block_row = gl_GlobalInvocationID.x;
+    if (block_row >= parameters.block_rows)
+    {
+        return;
+    }
+    if (parameters.block_size != MAX_BLOCK_SIZE)
+    {
+        writeInvalidBlock(block_row);
+        return;
+    }
+
+    const uint first_block = block_row_offsets[block_row];
+    const uint last_block = block_row_offsets[block_row + 1u];
+    const uint blocks_in_row = last_block - first_block;
+    uint diagonal_block = last_block;
+    for (uint block = first_block; block < last_block; ++block)
+    {
+        if (block_columns[block] == block_row)
+        {
+            diagonal_block = block;
+            break;
+        }
+    }
+    if (diagonal_block == last_block)
+    {
+        writeInvalidBlock(block_row);
+        return;
+    }
+
+    const uint local_block = diagonal_block - first_block;
+    float lower[MAX_BLOCK_VALUES];
+    for (uint index = 0u; index < MAX_BLOCK_VALUES; ++index)
+    {
+        lower[index] = 0.0;
+    }
+
+    bool valid = true;
+    for (uint row = 0u; row < MAX_BLOCK_SIZE; ++row)
+    {
+        const uint scalar_row_offset = first_block * MAX_BLOCK_VALUES + row * blocks_in_row * MAX_BLOCK_SIZE;
+        const uint value_offset = scalar_row_offset + local_block * MAX_BLOCK_SIZE;
+        for (uint column = 0u; column <= row; ++column)
+        {
+            float value = values[value_offset + column];
+            for (uint inner = 0u; inner < column; ++inner)
+            {
+                value -= lower[row * MAX_BLOCK_SIZE + inner] * lower[column * MAX_BLOCK_SIZE + inner];
+            }
+            if (row == column)
+            {
+                if (!(value > 0.0) || isnan(value) || isinf(value))
+                {
+                    valid = false;
+                }
+                lower[row * MAX_BLOCK_SIZE + column] = valid ? sqrt(value) : 1.0;
+            }
+            else
+            {
+                value /= lower[column * MAX_BLOCK_SIZE + column];
+                if (isnan(value) || isinf(value))
+                {
+                    valid = false;
+                }
+                lower[row * MAX_BLOCK_SIZE + column] = valid ? value : 0.0;
+            }
+        }
+    }
+    if (!valid)
+    {
+        writeInvalidBlock(block_row);
+        return;
+    }
+
+    const uint inverse_offset = block_row * MAX_BLOCK_VALUES;
+    for (uint column = 0u; column < MAX_BLOCK_SIZE; ++column)
+    {
+        float forward[MAX_BLOCK_SIZE];
+        float backward[MAX_BLOCK_SIZE];
+        for (uint row = 0u; row < MAX_BLOCK_SIZE; ++row)
+        {
+            float value = row == column ? 1.0 : 0.0;
+            for (uint inner = 0u; inner < row; ++inner)
+            {
+                value -= lower[row * MAX_BLOCK_SIZE + inner] * forward[inner];
+            }
+            forward[row] = value / lower[row * MAX_BLOCK_SIZE + row];
+        }
+        for (int row = int(MAX_BLOCK_SIZE) - 1; row >= 0; --row)
+        {
+            float value = forward[uint(row)];
+            for (uint inner = uint(row) + 1u; inner < MAX_BLOCK_SIZE; ++inner)
+            {
+                value -= lower[inner * MAX_BLOCK_SIZE + uint(row)] * backward[inner];
+            }
+            backward[uint(row)] = value / lower[uint(row) * MAX_BLOCK_SIZE + uint(row)];
+        }
+        for (uint row = 0u; row < MAX_BLOCK_SIZE; ++row)
+        {
+            inverse_blocks[inverse_offset + row * MAX_BLOCK_SIZE + column] = backward[row];
+        }
+    }
+}

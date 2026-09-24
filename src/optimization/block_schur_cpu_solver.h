@@ -4,11 +4,11 @@
 #include <cmath>
 #include <vector>
 
-#include "plamatrix/optimization/block_schur.h"
+#include "plamatrix/internal/optimization/block_schur.h"
 
 #include "block_schur_linear_algebra.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
 template <typename Scalar, typename ApplySchur, typename ApplyPreconditioner>
@@ -81,4 +81,4 @@ SchurComplementSolverReport<Scalar> solveReducedSchurOnCpu(
     return report;
 }
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

@@ -5,9 +5,9 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -33,7 +33,7 @@ Scalar element(const Matrix3<Scalar>& matrix, Index row, Index col)
 }
 
 template <typename Scalar>
-void validateInput(const DenseMatrix<Scalar, Device::CPU>& compact_matrices)
+void validateInput(const DenseStorage<Scalar, Device::CPU>& compact_matrices)
 {
     if (compact_matrices.cols() != 6)
     {
@@ -312,10 +312,10 @@ void decomposeCompact(const std::array<Scalar, 6>& compact,
 }
 
 template <typename Scalar>
-void decomposeRow(const DenseMatrix<Scalar, Device::CPU>& compact_matrices,
+void decomposeRow(const DenseStorage<Scalar, Device::CPU>& compact_matrices,
                   Index row,
-                  DenseMatrix<Scalar, Device::CPU>& eigenvalues_output,
-                  DenseMatrix<Scalar, Device::CPU>& eigenvectors_output)
+                  DenseStorage<Scalar, Device::CPU>& eigenvalues_output,
+                  DenseStorage<Scalar, Device::CPU>& eigenvectors_output)
 {
     const std::array<Scalar, 6> compact = {
         compact_matrices(row, 0), compact_matrices(row, 1), compact_matrices(row, 2),
@@ -477,13 +477,13 @@ void svd3x3(const std::array<Scalar, 9>& matrix,
 
 template <typename Scalar>
 SymmetricEigh3x3Result<Scalar, Device::CPU> symmetricEigh3x3Batched(
-    const DenseMatrix<Scalar, Device::CPU>& compact_matrices)
+    const DenseStorage<Scalar, Device::CPU>& compact_matrices)
 {
     validateInput(compact_matrices);
 
     SymmetricEigh3x3Result<Scalar, Device::CPU> result{
-        DenseMatrix<Scalar, Device::CPU>(compact_matrices.rows(), 3),
-        DenseMatrix<Scalar, Device::CPU>(compact_matrices.rows(), 9)
+        DenseStorage<Scalar, Device::CPU>(compact_matrices.rows(), 3),
+        DenseStorage<Scalar, Device::CPU>(compact_matrices.rows(), 9)
     };
     for (Index row = 0; row < compact_matrices.rows(); ++row)
     {
@@ -501,7 +501,7 @@ template void svd3x3(const std::array<float, 9>&,
                      std::array<float, 3>*,
                      std::array<float, 9>*);
 template SymmetricEigh3x3Result<float, Device::CPU> symmetricEigh3x3Batched(
-    const DenseMatrix<float, Device::CPU>&);
+    const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
@@ -513,7 +513,7 @@ template void svd3x3(const std::array<double, 9>&,
                      std::array<double, 3>*,
                      std::array<double, 9>*);
 template SymmetricEigh3x3Result<double, Device::CPU> symmetricEigh3x3Batched(
-    const DenseMatrix<double, Device::CPU>&);
+    const DenseStorage<double, Device::CPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

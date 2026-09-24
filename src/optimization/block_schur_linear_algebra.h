@@ -1,13 +1,13 @@
 #pragma once
 
-#include "plamatrix/core/types.h"
+#include "plamatrix/internal/core/device.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
 template <typename Scalar>
@@ -232,4 +232,4 @@ void addTransposeMatrixVector(const Scalar* matrix,
     }
 }
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

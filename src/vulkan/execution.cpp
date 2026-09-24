@@ -1,4 +1,4 @@
-#include "plamatrix/vulkan/execution.h"
+#include "plamatrix/internal/vulkan/execution.h"
 
 #ifdef PLAMATRIX_WITH_VULKAN
 
@@ -7,7 +7,7 @@
 #include <limits>
 #include <vector>
 
-namespace plamatrix::vulkan
+namespace plamatrix::internal::vulkan
 {
     namespace
     {
@@ -564,6 +564,6 @@ namespace plamatrix::vulkan
         _runtime = nullptr;
     }
 
-} // namespace plamatrix::vulkan
+} // namespace plamatrix::internal::vulkan
 
 #endif

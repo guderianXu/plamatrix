@@ -4,12 +4,12 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/sparse/iterative_solver.h"
-#include "plamatrix/vulkan/execution.h"
-#include "plamatrix/vulkan/iterative_solver.h"
-#include "plamatrix/vulkan/runtime.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
+#include "plamatrix/internal/vulkan/execution.h"
+#include "plamatrix/internal/vulkan/iterative_solver.h"
+#include "plamatrix/internal/vulkan/runtime.h"
 
-namespace plamatrix::vulkan
+namespace plamatrix::internal::vulkan
 {
 
     TEST(VulkanRuntime, LoadsPcgStatePipelines)
@@ -46,26 +46,26 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(3, 3, 7);
+        CsrStorage<float, Device::CPU> matrix(3, 3, 7);
         const Index row_offsets[] = {0, 2, 5, 7};
         const Index columns[] = {0, 1, 0, 1, 2, 1, 2};
         const float values[] = {4.0f, 1.0f, 1.0f, 3.0f, 1.0f, 1.0f, 2.0f};
         std::copy(row_offsets, row_offsets + 4, matrix.rowOffsets());
         std::copy(columns, columns + 7, matrix.colIndices());
         std::copy(values, values + 7, matrix.values());
-        DenseMatrix<float, Device::CPU> rhs(3, 1);
+        DenseStorage<float, Device::CPU> rhs(3, 1);
         rhs(0, 0) = 1.0f;
         rhs(1, 0) = 2.0f;
         rhs(2, 0) = 3.0f;
-        DenseMatrix<float, Device::CPU> expected(3, 1);
-        DenseMatrix<float, Device::CPU> actual(3, 1);
+        DenseStorage<float, Device::CPU> expected(3, 1);
+        DenseStorage<float, Device::CPU> actual(3, 1);
         expected.fill(0.0f);
         actual.fill(0.0f);
         IterativeSolverOptions options;
         options.maxIterations = 100;
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
-        const auto cpu_report = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto cpu_report = plamatrix::internal::pcg(matrix, rhs, expected, options);
         const auto vulkan_report = pcg(matrix, rhs, actual, options);
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
@@ -75,22 +75,66 @@ namespace plamatrix::vulkan
             EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
     }
 
+    TEST(VulkanSolver, BlockPcgMatchesCpuReference)
+    {
+        if (!hasUsableVulkanDevice())
+            GTEST_SKIP() << "No usable Vulkan compute device";
+        CsrStorage<float, Device::CPU> matrix(4, 4, 12);
+        const Index row_offsets[] = {0, 3, 6, 9, 12};
+        const Index columns[] = {0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3};
+        const float values[] = {4.0f, 1.0f, 0.2f, 1.0f, 3.0f, 0.1f, 0.2f, 5.0f, 1.0f, 0.1f, 1.0f, 4.0f};
+        std::copy(row_offsets, row_offsets + 5, matrix.rowOffsets());
+        std::copy(columns, columns + 12, matrix.colIndices());
+        std::copy(values, values + 12, matrix.values());
+        DenseStorage<float, Device::CPU> rhs(4, 1);
+        DenseStorage<float, Device::CPU> expected(4, 1);
+        DenseStorage<float, Device::CPU> actual(4, 1);
+        for (Index row = 0; row < 4; ++row)
+            rhs(row, 0) = static_cast<float>(row + 1);
+        expected.fill(0.0f);
+        actual.fill(0.0f);
+
+        DenseStorage<float, Device::CPU> inverse_blocks(8, 1);
+        const float first_determinant = 11.0f;
+        inverse_blocks.data()[0] = 3.0f / first_determinant;
+        inverse_blocks.data()[1] = -1.0f / first_determinant;
+        inverse_blocks.data()[2] = -1.0f / first_determinant;
+        inverse_blocks.data()[3] = 4.0f / first_determinant;
+        const float second_determinant = 19.0f;
+        inverse_blocks.data()[4] = 4.0f / second_determinant;
+        inverse_blocks.data()[5] = -1.0f / second_determinant;
+        inverse_blocks.data()[6] = -1.0f / second_determinant;
+        inverse_blocks.data()[7] = 5.0f / second_determinant;
+
+        IterativeSolverOptions options;
+        options.maxIterations = 32;
+        options.relativeTolerance = 1.0e-6;
+        options.requireConvergence = true;
+        const auto cpu_report = plamatrix::internal::pcg(matrix, rhs, expected, options);
+        const auto vulkan_report = blockPcg(matrix, rhs, actual, inverse_blocks, 2, options);
+        EXPECT_TRUE(cpu_report.converged);
+        EXPECT_TRUE(vulkan_report.converged);
+        EXPECT_GT(vulkan_report.commandSubmissions, 0u);
+        for (Index row = 0; row < 4; ++row)
+            EXPECT_NEAR(expected(row, 0), actual(row, 0), 2.0e-4f);
+    }
+
     TEST(VulkanSolver, SupportsBatchedConvergenceChecks)
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(2, 2, 4);
+        CsrStorage<float, Device::CPU> matrix(2, 2, 4);
         const Index row_offsets[] = {0, 2, 4};
         const Index columns[] = {0, 1, 0, 1};
         const float values[] = {4.0f, 1.0f, 1.0f, 3.0f};
         std::copy(row_offsets, row_offsets + 3, matrix.rowOffsets());
         std::copy(columns, columns + 4, matrix.colIndices());
         std::copy(values, values + 4, matrix.values());
-        DenseMatrix<float, Device::CPU> rhs(2, 1);
+        DenseStorage<float, Device::CPU> rhs(2, 1);
         rhs(0, 0) = 1.0f;
         rhs(1, 0) = 2.0f;
-        DenseMatrix<float, Device::CPU> expected(2, 1);
-        DenseMatrix<float, Device::CPU> actual(2, 1);
+        DenseStorage<float, Device::CPU> expected(2, 1);
+        DenseStorage<float, Device::CPU> actual(2, 1);
         expected.fill(0.0f);
         actual.fill(0.0f);
         IterativeSolverOptions options;
@@ -98,7 +142,7 @@ namespace plamatrix::vulkan
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
         options.convergenceCheckInterval = 2;
-        const auto cpu_report = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto cpu_report = plamatrix::internal::pcg(matrix, rhs, expected, options);
         const auto vulkan_report = pcg(matrix, rhs, actual, options);
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
@@ -113,7 +157,7 @@ namespace plamatrix::vulkan
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         constexpr Index size = 257;
-        CSRMatrix<float, Device::CPU> matrix(size, size, 3 * size - 2);
+        CsrStorage<float, Device::CPU> matrix(size, size, 3 * size - 2);
         Index offset = 0;
         for (Index row = 0; row < size; ++row)
         {
@@ -132,9 +176,9 @@ namespace plamatrix::vulkan
             }
         }
         matrix.rowOffsets()[size] = offset;
-        DenseMatrix<float, Device::CPU> rhs(size, 1);
-        DenseMatrix<float, Device::CPU> first(size, 1);
-        DenseMatrix<float, Device::CPU> second(size, 1);
+        DenseStorage<float, Device::CPU> rhs(size, 1);
+        DenseStorage<float, Device::CPU> first(size, 1);
+        DenseStorage<float, Device::CPU> second(size, 1);
         for (Index row = 0; row < size; ++row)
             rhs(row, 0) = 1.0f + static_cast<float>(row % 11);
         first.fill(0.0f);
@@ -160,23 +204,23 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(2, 2, 4);
+        CsrStorage<float, Device::CPU> matrix(2, 2, 4);
         const Index row_offsets[] = {0, 2, 4};
         const Index columns[] = {0, 1, 0, 1};
         const float values[] = {4.0f, 1.0f, 1.0f, 3.0f};
         std::copy(row_offsets, row_offsets + 3, matrix.rowOffsets());
         std::copy(columns, columns + 4, matrix.colIndices());
         std::copy(values, values + 4, matrix.values());
-        DenseMatrix<float, Device::CPU> rhsFirst(2, 1);
-        DenseMatrix<float, Device::CPU> rhsSecond(2, 1);
+        DenseStorage<float, Device::CPU> rhsFirst(2, 1);
+        DenseStorage<float, Device::CPU> rhsSecond(2, 1);
         rhsFirst(0, 0) = 1.0f;
         rhsFirst(1, 0) = 2.0f;
         rhsSecond(0, 0) = 2.0f;
         rhsSecond(1, 0) = 1.0f;
-        DenseMatrix<float, Device::CPU> expectedFirst(2, 1);
-        DenseMatrix<float, Device::CPU> expectedSecond(2, 1);
-        DenseMatrix<float, Device::CPU> actualFirst(2, 1);
-        DenseMatrix<float, Device::CPU> actualSecond(2, 1);
+        DenseStorage<float, Device::CPU> expectedFirst(2, 1);
+        DenseStorage<float, Device::CPU> expectedSecond(2, 1);
+        DenseStorage<float, Device::CPU> actualFirst(2, 1);
+        DenseStorage<float, Device::CPU> actualSecond(2, 1);
         expectedFirst.fill(0.0f);
         expectedSecond.fill(0.0f);
         actualFirst.fill(0.0f);
@@ -186,8 +230,8 @@ namespace plamatrix::vulkan
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
         options.convergenceCheckInterval = 4;
-        const auto expectedFirstReport = plamatrix::pcg(matrix, rhsFirst, expectedFirst, options);
-        const auto expectedSecondReport = plamatrix::pcg(matrix, rhsSecond, expectedSecond, options);
+        const auto expectedFirstReport = plamatrix::internal::pcg(matrix, rhsFirst, expectedFirst, options);
+        const auto expectedSecondReport = plamatrix::internal::pcg(matrix, rhsSecond, expectedSecond, options);
         const auto actualFirstReport = pcg(matrix, rhsFirst, actualFirst, options);
         const auto actualSecondReport = pcg(matrix, rhsSecond, actualSecond, options);
         EXPECT_TRUE(expectedFirstReport.converged);
@@ -207,15 +251,15 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(2, 2, 4);
+        CsrStorage<float, Device::CPU> matrix(2, 2, 4);
         const Index row_offsets[] = {0, 2, 4};
         const Index columns[] = {0, 1, 0, 1};
         const float values[] = {4.0f, 1.0f, 1.0f, 3.0f};
         std::copy(row_offsets, row_offsets + 3, matrix.rowOffsets());
         std::copy(columns, columns + 4, matrix.colIndices());
         std::copy(values, values + 4, matrix.values());
-        DenseMatrix<float, Device::CPU> rhs(2, 1);
-        DenseMatrix<float, Device::CPU> solution(2, 1);
+        DenseStorage<float, Device::CPU> rhs(2, 1);
+        DenseStorage<float, Device::CPU> solution(2, 1);
         rhs(0, 0) = 1.0f;
         rhs(1, 0) = 2.0f;
         solution.fill(0.0f);
@@ -236,13 +280,13 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        CsrStorage<float, Device::CPU> matrix(1, 1, 1);
         matrix.rowOffsets()[0] = 0;
         matrix.rowOffsets()[1] = 1;
         matrix.colIndices()[0] = 0;
         matrix.values()[0] = 4.0f;
-        DenseMatrix<float, Device::CPU> rhs(1, 1);
-        DenseMatrix<float, Device::CPU> solution(1, 1);
+        DenseStorage<float, Device::CPU> rhs(1, 1);
+        DenseStorage<float, Device::CPU> solution(1, 1);
         rhs(0, 0) = 4.0f;
         solution(0, 0) = 0.0f;
         IterativeSolverOptions options;
@@ -260,13 +304,13 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        CsrStorage<float, Device::CPU> matrix(1, 1, 1);
         matrix.rowOffsets()[0] = 0;
         matrix.rowOffsets()[1] = 1;
         matrix.colIndices()[0] = 0;
         matrix.values()[0] = 4.0f;
-        DenseMatrix<float, Device::CPU> rhs(1, 1);
-        DenseMatrix<float, Device::CPU> solution(1, 1);
+        DenseStorage<float, Device::CPU> rhs(1, 1);
+        DenseStorage<float, Device::CPU> solution(1, 1);
         rhs(0, 0) = 4.0f;
         solution(0, 0) = 1.0f;
         IterativeSolverOptions options;
@@ -287,13 +331,13 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        CsrStorage<float, Device::CPU> matrix(1, 1, 1);
         matrix.rowOffsets()[0] = 0;
         matrix.rowOffsets()[1] = 1;
         matrix.colIndices()[0] = 0;
         matrix.values()[0] = 4.0f;
-        DenseMatrix<float, Device::CPU> rhs(1, 1);
-        DenseMatrix<float, Device::CPU> solution(1, 1);
+        DenseStorage<float, Device::CPU> rhs(1, 1);
+        DenseStorage<float, Device::CPU> solution(1, 1);
         rhs(0, 0) = 4.0f;
         solution(0, 0) = 0.0f;
         IterativeSolverOptions options;
@@ -313,9 +357,9 @@ namespace plamatrix::vulkan
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         constexpr Index size = 16385;
-        CSRMatrix<float, Device::CPU> matrix(size, size, size);
-        DenseMatrix<float, Device::CPU> rhs(size, 1);
-        DenseMatrix<float, Device::CPU> solution(size, 1);
+        CsrStorage<float, Device::CPU> matrix(size, size, size);
+        DenseStorage<float, Device::CPU> rhs(size, 1);
+        DenseStorage<float, Device::CPU> solution(size, 1);
         for (Index row = 0; row < size; ++row)
         {
             matrix.rowOffsets()[row] = row;
@@ -342,13 +386,13 @@ namespace plamatrix::vulkan
     {
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
-        CSRMatrix<float, Device::CPU> matrix(1, 1, 1);
+        CsrStorage<float, Device::CPU> matrix(1, 1, 1);
         matrix.rowOffsets()[0] = 0;
         matrix.rowOffsets()[1] = 1;
         matrix.colIndices()[0] = 0;
         matrix.values()[0] = -1.0f;
-        DenseMatrix<float, Device::CPU> rhs(1, 1);
-        DenseMatrix<float, Device::CPU> solution(1, 1);
+        DenseStorage<float, Device::CPU> rhs(1, 1);
+        DenseStorage<float, Device::CPU> solution(1, 1);
         rhs(0, 0) = 1.0f;
         solution(0, 0) = 0.0f;
         IterativeSolverOptions options;
@@ -364,7 +408,7 @@ namespace plamatrix::vulkan
         if (!hasUsableVulkanDevice())
             GTEST_SKIP() << "No usable Vulkan compute device";
         constexpr Index size = 257;
-        CSRMatrix<float, Device::CPU> matrix(size, size, 3 * size - 2);
+        CsrStorage<float, Device::CPU> matrix(size, size, 3 * size - 2);
         Index offset = 0;
         for (Index row = 0; row < size; ++row)
         {
@@ -383,9 +427,9 @@ namespace plamatrix::vulkan
             }
         }
         matrix.rowOffsets()[size] = offset;
-        DenseMatrix<float, Device::CPU> rhs(size, 1);
-        DenseMatrix<float, Device::CPU> expected(size, 1);
-        DenseMatrix<float, Device::CPU> actual(size, 1);
+        DenseStorage<float, Device::CPU> rhs(size, 1);
+        DenseStorage<float, Device::CPU> expected(size, 1);
+        DenseStorage<float, Device::CPU> actual(size, 1);
         rhs.fill(1.0f);
         expected.fill(0.0f);
         actual.fill(0.0f);
@@ -393,7 +437,7 @@ namespace plamatrix::vulkan
         options.maxIterations = 100;
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
-        const auto cpu_report = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto cpu_report = plamatrix::internal::pcg(matrix, rhs, expected, options);
         const auto vulkan_report = pcg(matrix, rhs, actual, options);
         EXPECT_TRUE(cpu_report.converged);
         EXPECT_TRUE(vulkan_report.converged);
@@ -409,7 +453,7 @@ namespace plamatrix::vulkan
         if (!Runtime::instance().supportsSubgroupArithmetic())
             GTEST_SKIP() << "Selected Vulkan device has no compute subgroup arithmetic";
         constexpr Index size = 65;
-        CSRMatrix<float, Device::CPU> matrix(size, size, size * size);
+        CsrStorage<float, Device::CPU> matrix(size, size, size * size);
         for (Index row = 0; row < size; ++row)
         {
             matrix.rowOffsets()[row] = row * size;
@@ -421,9 +465,9 @@ namespace plamatrix::vulkan
             }
         }
         matrix.rowOffsets()[size] = size * size;
-        DenseMatrix<float, Device::CPU> rhs(size, 1);
-        DenseMatrix<float, Device::CPU> expected(size, 1);
-        DenseMatrix<float, Device::CPU> actual(size, 1);
+        DenseStorage<float, Device::CPU> rhs(size, 1);
+        DenseStorage<float, Device::CPU> expected(size, 1);
+        DenseStorage<float, Device::CPU> actual(size, 1);
         for (Index row = 0; row < size; ++row)
             rhs(row, 0) = 1.0f + static_cast<float>(row % 7);
         expected.fill(0.0f);
@@ -432,7 +476,7 @@ namespace plamatrix::vulkan
         options.maxIterations = 32;
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
-        const auto cpuReport = plamatrix::pcg(matrix, rhs, expected, options);
+        const auto cpuReport = plamatrix::internal::pcg(matrix, rhs, expected, options);
         const auto vulkanReport = pcg(matrix, rhs, actual, options);
         EXPECT_TRUE(cpuReport.converged);
         EXPECT_TRUE(vulkanReport.converged);
@@ -529,4 +573,4 @@ namespace plamatrix::vulkan
         result.unmap();
     }
 
-} // namespace plamatrix::vulkan
+} // namespace plamatrix::internal::vulkan

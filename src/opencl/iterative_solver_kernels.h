@@ -1,6 +1,6 @@
 #pragma once
 
-namespace plamatrix::opencl::iterative_solver_detail
+namespace plamatrix::internal::opencl::iterative_solver_detail
 {
 
 inline constexpr const char* kSolverSource = R"CLC(
@@ -77,6 +77,19 @@ __kernel void applyPreconditioner(
     if (i < size) transformed[i] = inverse_diagonal[i] * residual[i];
 }
 
+__kernel void buildJacobi(
+    __global const index_t* rows, __global const index_t* columns,
+    __global const real* values, __global real* inverse,
+    const index_t size)
+{
+    const index_t row = (index_t)get_global_id(0);
+    if (row >= size) return;
+    real diagonal = (real)0;
+    for (index_t entry = rows[row]; entry < rows[row + 1]; ++entry)
+        if (columns[entry] == row) diagonal += values[entry];
+    inverse[row] = diagonal > (real)0 ? (real)1 / diagonal : (real)0;
+}
+
 __kernel void applyBlockPreconditioner(
     __global const real* inverse_blocks, __global const real* residual,
     __global real* transformed, const index_t size, const index_t block_size)
@@ -150,4 +163,4 @@ __kernel void reducePartial(
 }
 )CLC";
 
-} // namespace plamatrix::opencl::iterative_solver_detail
+} // namespace plamatrix::internal::opencl::iterative_solver_detail

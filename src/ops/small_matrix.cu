@@ -4,7 +4,7 @@
 
 #include "small_matrix_detail.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -349,9 +349,9 @@ __global__ void symmetricEigh3x3Kernel(
 
 template <typename Scalar>
 void small_matrix_detail::launchSymmetricEigh3x3(
-    const DenseMatrix<Scalar, Device::GPU>& input,
-    DenseMatrix<Scalar, Device::GPU>& values,
-    DenseMatrix<Scalar, Device::GPU>& vectors,
+    ConstMatrixView<Scalar, Device::GPU> input,
+    MatrixView<Scalar, Device::GPU> values,
+    MatrixView<Scalar, Device::GPU> vectors,
     SymmetricEigh3x3Workspace& workspace,
     cudaStream_t stream)
 {
@@ -382,11 +382,25 @@ void small_matrix_detail::launchSymmetricEigh3x3(
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
 
+template <typename Scalar>
+void small_matrix_detail::launchSymmetricEigh3x3(
+    const DenseStorage<Scalar, Device::GPU>& input,
+    DenseStorage<Scalar, Device::GPU>& values,
+    DenseStorage<Scalar, Device::GPU>& vectors,
+    SymmetricEigh3x3Workspace& workspace,
+    cudaStream_t stream)
+{
+    launchSymmetricEigh3x3(input.view(), values.view(), vectors.view(), workspace, stream);
+}
+
 #define PLAMATRIX_INSTANTIATE_SMALL_MATRIX_LAUNCH(Scalar)                               \
     template void small_matrix_detail::launchSymmetricEigh3x3(                          \
-        const DenseMatrix<Scalar, Device::GPU>&,                                        \
-        DenseMatrix<Scalar, Device::GPU>&, DenseMatrix<Scalar, Device::GPU>&,            \
-        SymmetricEigh3x3Workspace&, cudaStream_t)
+        const DenseStorage<Scalar, Device::GPU>&,                                        \
+        DenseStorage<Scalar, Device::GPU>&, DenseStorage<Scalar, Device::GPU>&,            \
+        SymmetricEigh3x3Workspace&, cudaStream_t);                                      \
+    template void small_matrix_detail::launchSymmetricEigh3x3(                          \
+        ConstMatrixView<Scalar, Device::GPU>, MatrixView<Scalar, Device::GPU>,           \
+        MatrixView<Scalar, Device::GPU>, SymmetricEigh3x3Workspace&, cudaStream_t)
 
 #ifdef PLAMATRIX_USE_FLOAT
 PLAMATRIX_INSTANTIATE_SMALL_MATRIX_LAUNCH(float);
@@ -397,4 +411,4 @@ PLAMATRIX_INSTANTIATE_SMALL_MATRIX_LAUNCH(double);
 
 #undef PLAMATRIX_INSTANTIATE_SMALL_MATRIX_LAUNCH
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

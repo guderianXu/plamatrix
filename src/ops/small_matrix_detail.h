@@ -1,8 +1,8 @@
 #pragma once
 
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace small_matrix_detail
 {
@@ -25,11 +25,19 @@ Index forcedBasisFailureRow() noexcept;
 
 template <typename Scalar>
 void launchSymmetricEigh3x3(
-    const DenseMatrix<Scalar, Device::GPU>& input,
-    DenseMatrix<Scalar, Device::GPU>& eigenvalues,
-    DenseMatrix<Scalar, Device::GPU>& eigenvectors,
+    const DenseStorage<Scalar, Device::GPU>& input,
+    DenseStorage<Scalar, Device::GPU>& eigenvalues,
+    DenseStorage<Scalar, Device::GPU>& eigenvectors,
+    SymmetricEigh3x3Workspace& workspace,
+    cudaStream_t stream);
+
+template <typename Scalar>
+void launchSymmetricEigh3x3(
+    ConstMatrixView<Scalar, Device::GPU> input,
+    MatrixView<Scalar, Device::GPU> eigenvalues,
+    MatrixView<Scalar, Device::GPU> eigenvectors,
     SymmetricEigh3x3Workspace& workspace,
     cudaStream_t stream);
 
 } // namespace small_matrix_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

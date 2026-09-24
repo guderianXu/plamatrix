@@ -1,0 +1,73 @@
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Transformed
+{
+    float16_t values[];
+}
+transformed;
+layout(set = 0, binding = 1, std430) readonly buffer PackedInput
+{
+    float16_t values[];
+}
+input_data;
+layout(set = 0, binding = 2, std430) readonly buffer TermLeft
+{
+    uint values[];
+}
+term_left;
+layout(set = 0, binding = 3, std430) readonly buffer TermRight
+{
+    uint values[];
+}
+term_right;
+layout(set = 0, binding = 4, std430) readonly buffer TermOffsets
+{
+    uint values[];
+}
+term_offsets;
+layout(set = 0, binding = 5, std430) writeonly buffer Products
+{
+    float values[];
+}
+products;
+
+layout(push_constant) uniform Parameters
+{
+    uint slot_count;
+    uint transpose_offset;
+}
+parameters;
+
+void main()
+{
+    const uint slot = gl_WorkGroupID.x;
+    if (slot >= parameters.slot_count)
+    {
+        return;
+    }
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> accumulator =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    for (uint term = term_offsets.values[slot]; term < term_offsets.values[slot + 1u]; ++term)
+    {
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> matrix_left;
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> matrix_right;
+        coopMatLoad(matrix_left,
+                    transformed.values,
+                    term_left.values[term] * 256u,
+                    16u,
+                    gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(matrix_right,
+                    input_data.values,
+                    parameters.transpose_offset + term_right.values[term] * 256u,
+                    16u,
+                    gl_CooperativeMatrixLayoutRowMajor);
+        accumulator = coopMatMulAdd(matrix_left, matrix_right, accumulator);
+    }
+    coopMatStore(accumulator, products.values, slot * 256u, 16u, gl_CooperativeMatrixLayoutRowMajor);
+}

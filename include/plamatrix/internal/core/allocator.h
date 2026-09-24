@@ -1,0 +1,536 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdlib>
+#include <atomic>
+#include <limits>
+#include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <unordered_map>
+#include <vector>
+
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+
+#ifdef _WIN32
+#define PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC 1
+#else
+#define PLAMATRIX_CPU_ALLOCATOR_USES_POSIX_MEMALIGN 1
+#endif
+
+#ifdef PLAMATRIX_NO_CUDA
+#include "plamatrix/internal/core/no_cuda_stubs.h"
+#else
+#include <cuda_runtime.h>
+#endif
+
+#include "plamatrix/internal/core/error_check.h"
+
+namespace plamatrix::internal
+{
+
+namespace detail
+{
+
+template <typename Scalar>
+std::size_t checkedAllocationBytes(std::size_t count)
+{
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(Scalar))
+    {
+        std::ostringstream oss;
+        oss << "allocation size overflows size_t for " << count << " elements of "
+            << sizeof(Scalar) << " bytes";
+        throw std::overflow_error(oss.str());
+    }
+    return count * sizeof(Scalar);
+}
+
+class GpuMemoryPool
+{
+public:
+    static void setEnabled(bool enabled)
+    {
+        enabledFlag().store(enabled, std::memory_order_release);
+    }
+
+    static bool isEnabled()
+    {
+        return enabledFlag().load(std::memory_order_acquire);
+    }
+
+    static void setMaxCachedBytes(std::size_t bytes)
+    {
+        maxCachedBytes().store(bytes, std::memory_order_release);
+    }
+
+    static std::size_t maxCachedBytesValue()
+    {
+        return maxCachedBytes().load(std::memory_order_acquire);
+    }
+
+    static void* acquire(std::size_t bytes)
+    {
+        if (bytes == 0)
+        {
+            return nullptr;
+        }
+
+        if (isEnabled())
+        {
+            const DeviceBytes key{currentDevice(), bytes};
+            std::lock_guard<std::mutex> lock(mutex());
+            auto& blocks = freeBlocks()[key];
+            if (!blocks.empty())
+            {
+                void* ptr = blocks.back();
+                blocks.pop_back();
+                return ptr;
+            }
+        }
+
+        void* ptr = nullptr;
+        PLAMATRIX_CHECK_CUDA(cudaMalloc(&ptr, bytes));
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            allocationDevices()[ptr] = currentDevice();
+        }
+        return ptr;
+    }
+
+    static void release(void* ptr, std::size_t bytes)
+    {
+        if (ptr == nullptr)
+        {
+            return;
+        }
+
+        if (isEnabled() && bytes > 0)
+        {
+            const DeviceBytes key{allocationDevice(ptr), bytes};
+            std::lock_guard<std::mutex> lock(mutex());
+            const std::size_t limit = maxCachedBytesValue();
+            if (bytes <= limit && cachedBytesLocked() <= limit - bytes)
+            {
+                freeBlocks()[key].push_back(ptr);
+                return;
+            }
+            allocationDevices().erase(ptr);
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            allocationDevices().erase(ptr);
+        }
+
+        PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+    }
+
+    static void releaseNoThrow(void* ptr, std::size_t bytes) noexcept
+    {
+        try
+        {
+            release(ptr, bytes);
+        }
+        catch (...)
+        {
+            static_cast<void>(cudaFree(ptr));
+        }
+    }
+
+    static void releaseAll()
+    {
+        std::vector<void*> blocks_to_free;
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            for (auto& entry : freeBlocks())
+            {
+                blocks_to_free.insert(blocks_to_free.end(), entry.second.begin(), entry.second.end());
+            }
+            freeBlocks().clear();
+            for (void* ptr : blocks_to_free)
+            {
+                allocationDevices().erase(ptr);
+            }
+        }
+
+        for (void* ptr : blocks_to_free)
+        {
+            PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+        }
+    }
+
+    static std::size_t cachedBlockCount()
+    {
+        std::lock_guard<std::mutex> lock(mutex());
+        std::size_t count = 0;
+        for (const auto& entry : freeBlocks())
+        {
+            count += entry.second.size();
+        }
+        return count;
+    }
+
+    static std::size_t cachedBytes()
+    {
+        std::lock_guard<std::mutex> lock(mutex());
+        return cachedBytesLocked();
+    }
+
+private:
+    struct DeviceBytes
+    {
+        int device = 0;
+        std::size_t bytes = 0;
+
+        bool operator==(const DeviceBytes& other) const noexcept
+        {
+            return device == other.device && bytes == other.bytes;
+        }
+    };
+
+    struct DeviceBytesHash
+    {
+        std::size_t operator()(const DeviceBytes& value) const noexcept
+        {
+            const std::size_t device_hash = std::hash<int>{}(value.device);
+            const std::size_t bytes_hash = std::hash<std::size_t>{}(value.bytes);
+            return device_hash ^ (bytes_hash + static_cast<std::size_t>(0x9e3779b9) +
+                                  (device_hash << 6) + (device_hash >> 2));
+        }
+    };
+
+    static int currentDevice()
+    {
+#ifdef PLAMATRIX_WITH_CUDA
+        int device = 0;
+        PLAMATRIX_CHECK_CUDA(cudaGetDevice(&device));
+        return device;
+#else
+        return 0;
+#endif
+    }
+
+    static int allocationDevice(void* ptr)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            const auto found = allocationDevices().find(ptr);
+            if (found != allocationDevices().end())
+            {
+                return found->second;
+            }
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        cudaPointerAttributes attributes{};
+        if (cudaPointerGetAttributes(&attributes, ptr) == cudaSuccess)
+        {
+            return attributes.device;
+        }
+        static_cast<void>(cudaGetLastError());
+#endif
+        return currentDevice();
+    }
+
+    static std::size_t cachedBytesLocked()
+    {
+        std::size_t bytes = 0;
+        for (const auto& entry : freeBlocks())
+        {
+            for (std::size_t index = 0; index < entry.second.size(); ++index)
+            {
+                if (bytes > std::numeric_limits<std::size_t>::max() - entry.first.bytes)
+                {
+                    return std::numeric_limits<std::size_t>::max();
+                }
+                bytes += entry.first.bytes;
+            }
+        }
+        return bytes;
+    }
+
+    static std::atomic<bool>& enabledFlag()
+    {
+        static std::atomic<bool> enabled{false};
+        return enabled;
+    }
+
+    static std::atomic<std::size_t>& maxCachedBytes()
+    {
+        static std::atomic<std::size_t> limit{std::numeric_limits<std::size_t>::max()};
+        return limit;
+    }
+
+    static std::mutex& mutex()
+    {
+        static std::mutex pool_mutex;
+        return pool_mutex;
+    }
+
+    static std::unordered_map<DeviceBytes, std::vector<void*>, DeviceBytesHash>& freeBlocks()
+    {
+        static std::unordered_map<DeviceBytes, std::vector<void*>, DeviceBytesHash> blocks;
+        return blocks;
+    }
+
+    static std::unordered_map<void*, int>& allocationDevices()
+    {
+        static std::unordered_map<void*, int> devices;
+        return devices;
+    }
+};
+
+} // namespace detail
+
+/// CPU memory allocator with 32-byte alignment (suitable for AVX/SSE).
+/// Available in both CPU-only and CUDA builds.
+/// @tparam Scalar  Element type (float, double, etc.)
+template <typename Scalar>
+struct CpuAllocator
+{
+    /// Allocate aligned memory for `count` elements.
+    /// @param count  Number of elements to allocate
+    /// @return  Pointer to allocated memory (never null)
+    /// @throws std::bad_alloc  if allocation fails
+    static Scalar* allocate(std::size_t count)
+    {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+        void* ptr = nullptr;
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
+        ptr = _aligned_malloc(bytes, 32);
+        if (ptr == nullptr)
+        {
+            throw std::bad_alloc();
+        }
+#else
+        int rc = posix_memalign(&ptr, 32, bytes);
+        if (rc != 0)
+        {
+            throw std::bad_alloc();
+        }
+#endif
+        return static_cast<Scalar*>(ptr);
+    }
+
+    /// Deallocate memory previously allocated by CpuAllocator::allocate.
+    /// @param ptr  Pointer to free (nullptr is safe)
+    static void deallocate(Scalar* ptr)
+    {
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
+        _aligned_free(ptr);
+#else
+        std::free(ptr);
+#endif
+    }
+
+    static void deallocateNoThrow(Scalar* ptr) noexcept
+    {
+#ifdef PLAMATRIX_CPU_ALLOCATOR_USES_WIN32_ALIGNED_ALLOC
+        _aligned_free(ptr);
+#else
+        std::free(ptr);
+#endif
+    }
+};
+
+/// Pinned host allocator for faster/true asynchronous CUDA transfers.
+/// Falls back to CPU memory stubs when compiled without CUDA.
+/// @tparam Scalar  Element type (float, double, etc.)
+template <typename Scalar>
+struct PinnedCpuAllocator
+{
+    /// Allocate page-locked host memory for `count` elements.
+    /// @param count  Number of elements to allocate
+    /// @return  Pointer to allocated memory
+    /// @throws std::runtime_error  if CUDA host allocation fails
+    static Scalar* allocate(std::size_t count)
+    {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+        void* ptr = nullptr;
+        PLAMATRIX_CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
+        return static_cast<Scalar*>(ptr);
+    }
+
+    /// Deallocate memory previously allocated by PinnedCpuAllocator::allocate.
+    /// @param ptr  Pointer to free (nullptr is safe)
+    static void deallocate(Scalar* ptr)
+    {
+        PLAMATRIX_CHECK_CUDA(cudaFreeHost(ptr));
+    }
+
+    static void deallocateNoThrow(Scalar* ptr) noexcept
+    {
+        if (ptr)
+        {
+            static_cast<void>(cudaFreeHost(ptr));
+        }
+    }
+};
+
+/// GPU memory allocator. Uses CUDA device memory when available, falls back to
+/// CPU memory (via stubs) when compiled without CUDA (PLAMATRIX_NO_CUDA).
+/// @tparam Scalar  Element type (float, double, etc.)
+template <typename Scalar>
+struct GpuAllocator
+{
+    /// Allocate device memory for `count` elements.
+    /// @throws std::runtime_error  if CUDA allocation fails
+    static Scalar* allocate(std::size_t count)
+    {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+        return static_cast<Scalar*>(detail::GpuMemoryPool::acquire(bytes));
+    }
+
+    /// Allocate device memory in stream order without initializing it.
+    /// The caller must keep the allocation and stream alive until deallocation is enqueued.
+    /// @param count   Number of elements to allocate
+    /// @param stream  CUDA stream that orders the allocation
+    /// @throws std::runtime_error if CUDA is disabled or cudaMallocAsync fails
+    static Scalar* allocateAsync(std::size_t count, cudaStream_t stream)
+    {
+        const std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+#ifdef PLAMATRIX_WITH_CUDA
+        if (bytes == 0)
+        {
+            return nullptr;
+        }
+        void* ptr = nullptr;
+        PLAMATRIX_CHECK_CUDA(cudaMallocAsync(&ptr, bytes, stream));
+        return static_cast<Scalar*>(ptr);
+#else
+        static_cast<void>(bytes);
+        static_cast<void>(stream);
+        throw std::runtime_error(
+            "GpuAllocator::allocateAsync requires PLAMATRIX_WITH_CUDA=ON");
+#endif
+    }
+
+    /// Enqueue checked release of stream-ordered memory without using the ordinary memory pool.
+    /// The stream must remain valid through this call. nullptr is a no-op.
+    /// @param ptr     Pointer returned by allocateAsync
+    /// @param stream  CUDA stream that owns the allocation ordering
+    /// @throws std::runtime_error if CUDA is disabled or cudaFreeAsync fails
+    static void deallocateAsync(Scalar* ptr, cudaStream_t stream)
+    {
+        if (ptr == nullptr)
+        {
+            return;
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        PLAMATRIX_CHECK_CUDA(cudaFreeAsync(ptr, stream));
+#else
+        static_cast<void>(stream);
+        throw std::runtime_error(
+            "GpuAllocator::deallocateAsync requires PLAMATRIX_WITH_CUDA=ON");
+#endif
+    }
+
+    /// Enqueue release of stream-ordered memory for noexcept owner destruction.
+    /// Errors are swallowed. Call deallocateAsync when release errors must be reported.
+    /// The stream must remain valid through this call.
+    /// @param ptr     Pointer returned by allocateAsync
+    /// @param stream  CUDA stream that owns the allocation ordering
+    static void deallocateAsyncNoThrow(Scalar* ptr, cudaStream_t stream) noexcept
+    {
+        if (ptr == nullptr)
+        {
+            return;
+        }
+#ifdef PLAMATRIX_WITH_CUDA
+        try
+        {
+            deallocateAsync(ptr, stream);
+        }
+        catch (...)
+        {
+        }
+#else
+        static_cast<void>(stream);
+        deallocateNoThrow(ptr);
+#endif
+    }
+
+    /// Deallocate device memory. nullptr is safe (no-op via cudaFree).
+    /// @throws std::runtime_error  if deallocation fails (e.g., double-free)
+    static void deallocate(Scalar* ptr)
+    {
+        PLAMATRIX_CHECK_CUDA(cudaFree(ptr));
+    }
+
+    /// Deallocate device memory with element count. Uses the memory pool when enabled.
+    /// @param ptr    Pointer to release
+    /// @param count  Number of elements originally allocated
+    static void deallocate(Scalar* ptr, std::size_t count)
+    {
+        std::size_t bytes = detail::checkedAllocationBytes<Scalar>(count);
+        detail::GpuMemoryPool::release(ptr, bytes);
+    }
+
+    static void deallocateNoThrow(Scalar* ptr) noexcept
+    {
+        if (ptr)
+        {
+            static_cast<void>(cudaFree(ptr));
+        }
+    }
+
+    static void deallocateNoThrow(Scalar* ptr, std::size_t count) noexcept
+    {
+        if (ptr)
+        {
+            std::size_t bytes = 0;
+            if (count <= std::numeric_limits<std::size_t>::max() / sizeof(Scalar))
+            {
+                bytes = count * sizeof(Scalar);
+            }
+            detail::GpuMemoryPool::releaseNoThrow(ptr, bytes);
+        }
+    }
+
+    /// Enable or disable the process-local GPU memory pool.
+    /// @param enabled  true to cache same-sized freed blocks for reuse
+    static void setMemoryPoolEnabled(bool enabled)
+    {
+        detail::GpuMemoryPool::setEnabled(enabled);
+    }
+
+    /// Set the maximum total number of bytes retained by the process-local pool.
+    /// Blocks released after the limit is reached are returned directly to CUDA.
+    static void setMemoryPoolMaxBytes(std::size_t bytes)
+    {
+        detail::GpuMemoryPool::setMaxCachedBytes(bytes);
+    }
+
+    /// Return the configured maximum number of bytes retained by the memory pool.
+    static std::size_t memoryPoolMaxBytes()
+    {
+        return detail::GpuMemoryPool::maxCachedBytesValue();
+    }
+
+    /// @return whether the process-local GPU memory pool is enabled.
+    static bool isMemoryPoolEnabled()
+    {
+        return detail::GpuMemoryPool::isEnabled();
+    }
+
+    /// Free all cached blocks currently held by the process-local GPU memory pool.
+    static void releaseMemoryPool()
+    {
+        detail::GpuMemoryPool::releaseAll();
+    }
+
+    /// @return number of cached blocks currently held by the process-local GPU memory pool.
+    static std::size_t cachedBlockCount()
+    {
+        return detail::GpuMemoryPool::cachedBlockCount();
+    }
+
+    /// @return total bytes currently cached by the process-local GPU memory pool.
+    static std::size_t cachedBytes()
+    {
+        return detail::GpuMemoryPool::cachedBytes();
+    }
+};
+
+} // namespace plamatrix::internal

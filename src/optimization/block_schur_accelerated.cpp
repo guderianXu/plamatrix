@@ -7,10 +7,12 @@
 #include <string>
 #include <type_traits>
 
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/opencl/iterative_solver.h"
-#include "plamatrix/opencl/runtime.h"
-#include "plamatrix/sparse/iterative_solver.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/opencl/iterative_solver.h"
+#include "plamatrix/internal/opencl/runtime.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
+#include "plamatrix/internal/vulkan/runtime.h"
+#include "plamatrix/internal/vulkan/iterative_solver.h"
 
 #include "block_schur_sparse_assembly.h"
 #include "block_schur_device_assembly.h"
@@ -18,10 +20,10 @@
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime_api.h>
 
-#include "plamatrix/core/error_check.h"
+#include "plamatrix/internal/core/error_check.h"
 #endif
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
     namespace
     {
@@ -30,17 +32,17 @@ namespace plamatrix::block_schur_detail
         template <typename Scalar> struct CudaSchurState
         {
             int deviceIndex = -1;
-            std::unique_ptr<CSRMatrix<Scalar, Device::GPU>> matrix;
-            std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> rhs;
-            std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> solution;
-            std::unique_ptr<DenseMatrix<Scalar, Device::GPU>> inverseBlocks;
+            std::unique_ptr<CsrStorage<Scalar, Device::GPU>> matrix;
+            std::unique_ptr<DenseStorage<Scalar, Device::GPU>> rhs;
+            std::unique_ptr<DenseStorage<Scalar, Device::GPU>> solution;
+            std::unique_ptr<DenseStorage<Scalar, Device::GPU>> inverseBlocks;
             IterativeSolverWorkspace<Scalar> solverWorkspace;
         };
 #endif
 
-        template <typename Scalar> DenseMatrix<Scalar, Device::CPU> makeDenseVector(const std::vector<Scalar>& values)
+        template <typename Scalar> DenseStorage<Scalar, Device::CPU> makeDenseVector(const std::vector<Scalar>& values)
         {
-            DenseMatrix<Scalar, Device::CPU> result(static_cast<Index>(values.size()), 1);
+            DenseStorage<Scalar, Device::CPU> result(static_cast<Index>(values.size()), 1);
             for (std::size_t index = 0; index < values.size(); ++index)
             {
                 result.data()[index] = values[index];
@@ -67,6 +69,11 @@ namespace plamatrix::block_schur_detail
             destination->iterations = source.iterations;
             destination->initialResidualNorm = static_cast<Scalar>(source.initialResidual);
             destination->finalResidualNorm = static_cast<Scalar>(source.finalResidual);
+            destination->commandSubmissions = source.commandSubmissions;
+            destination->commandBufferRecordings = source.commandBufferRecordings;
+            destination->gpuMilliseconds = source.gpuMilliseconds;
+            destination->blockSpmvUsed = source.blockSpmv;
+            destination->deviceBlockJacobiUsed = source.deviceBlockJacobi;
             destination->message = source.converged ? "converged" : "PCG iteration limit reached";
         }
 
@@ -74,7 +81,7 @@ namespace plamatrix::block_schur_detail
 
     template <typename Scalar>
     SchurComplementSolverReport<Scalar>
-    solveAcceleratedReducedSchur(const CSRMatrix<Scalar, Device::CPU>& matrix,
+    solveAcceleratedReducedSchur(const CsrStorage<Scalar, Device::CPU>& matrix,
                                  const std::vector<Scalar>& rhs,
                                  const std::vector<std::vector<Scalar>>& inverse_diagonal_blocks,
                                  Index block_size,
@@ -88,11 +95,16 @@ namespace plamatrix::block_schur_detail
         }
         SchurComplementSolverReport<Scalar> report;
         report.linearBackend = options.linearBackend;
-        if (block_size <= 0 || static_cast<Index>(inverse_diagonal_blocks.size()) * block_size != matrix.rows())
+        const bool build_device_block_jacobi = options.linearBackend == SchurComplementLinearBackend::Vulkan &&
+                                               inverse_diagonal_blocks.empty() && block_size == 9;
+        if (block_size <= 0 || (!build_device_block_jacobi &&
+                                static_cast<Index>(inverse_diagonal_blocks.size()) * block_size != matrix.rows()))
         {
             throw std::invalid_argument("solveAcceleratedReducedSchur: invalid inverse diagonal block count");
         }
-        DenseMatrix<Scalar, Device::CPU> inverse_blocks_cpu(matrix.rows() * block_size, 1);
+        std::unique_ptr<DenseStorage<Scalar, Device::CPU>> inverse_blocks_cpu;
+        if (!build_device_block_jacobi)
+            inverse_blocks_cpu = std::make_unique<DenseStorage<Scalar, Device::CPU>>(matrix.rows() * block_size, 1);
         std::size_t inverse_offset = 0;
         for (const auto& block : inverse_diagonal_blocks)
         {
@@ -100,14 +112,14 @@ namespace plamatrix::block_schur_detail
             {
                 throw std::invalid_argument("solveAcceleratedReducedSchur: invalid inverse diagonal block size");
             }
-            std::copy(block.begin(), block.end(), inverse_blocks_cpu.data() + inverse_offset);
+            std::copy(block.begin(), block.end(), inverse_blocks_cpu->data() + inverse_offset);
             inverse_offset += block.size();
         }
         const auto iterative_options = makeIterativeOptions(options.maxIterations,
                                                             static_cast<double>(options.relativeTolerance),
                                                             static_cast<double>(options.absoluteTolerance));
         auto rhs_cpu = makeDenseVector(rhs);
-        DenseMatrix<Scalar, Device::CPU> solution_cpu(matrix.rows(), 1);
+        DenseStorage<Scalar, Device::CPU> solution_cpu(matrix.rows(), 1);
         if (options.useInitialGuess && solution->size() == static_cast<std::size_t>(matrix.rows()))
         {
             std::copy(solution->begin(), solution->end(), solution_cpu.data());
@@ -121,9 +133,10 @@ namespace plamatrix::block_schur_detail
         if constexpr (std::is_same_v<Scalar, double>)
         {
             if (options.useMixedPrecision && (options.linearBackend == SchurComplementLinearBackend::Cuda ||
-                                              options.linearBackend == SchurComplementLinearBackend::OpenCl))
+                                              options.linearBackend == SchurComplementLinearBackend::OpenCl ||
+                                              options.linearBackend == SchurComplementLinearBackend::Vulkan))
             {
-                CSRMatrix<float, Device::CPU> float_matrix(matrix.rows(), matrix.cols(), matrix.nnz());
+                CsrStorage<float, Device::CPU> float_matrix(matrix.rows(), matrix.cols(), matrix.nnz());
                 std::copy(matrix.rowOffsets(), matrix.rowOffsets() + matrix.rows() + 1, float_matrix.rowOffsets());
                 std::copy(matrix.colIndices(), matrix.colIndices() + matrix.nnz(), float_matrix.colIndices());
                 for (Index index = 0; index < matrix.nnz(); ++index)
@@ -150,6 +163,7 @@ namespace plamatrix::block_schur_detail
                 float_options.relativeTolerance = std::max(1.0e-3f, static_cast<float>(options.relativeTolerance));
                 float_options.absoluteTolerance = std::max(1.0e-7f, static_cast<float>(options.absoluteTolerance));
                 float_options.schurValuesOnDevice = false;
+                float_options.useMixedPrecision = options.linearBackend == SchurComplementLinearBackend::Vulkan;
                 std::vector<float> float_solution(solution_cpu.rows(), 0.0f);
                 SchurComplementSolverWorkspace<float> float_workspace;
                 auto& persistent_float_state = SchurComplementSolverWorkspaceAccess::mixedPrecisionState(workspace);
@@ -164,6 +178,25 @@ namespace plamatrix::block_schur_detail
                                                                            float_workspace,
                                                                            &float_solution);
                     persistent_float_state = SchurComplementSolverWorkspaceAccess::acceleratedState(float_workspace);
+                    if (options.linearBackend == SchurComplementLinearBackend::Vulkan)
+                    {
+                        solution->assign(float_solution.begin(), float_solution.end());
+                        report.converged = float_report.converged;
+                        report.iterations = float_report.iterations;
+                        report.initialResidualNorm = static_cast<double>(float_report.initialResidualNorm);
+                        report.finalResidualNorm = static_cast<double>(float_report.finalResidualNorm);
+                        report.linearSolveSeconds = float_report.linearSolveSeconds;
+                        report.mixedPrecisionUsed = true;
+                        report.cooperativeMatrixUsed = float_report.cooperativeMatrixUsed;
+                        report.blockSpmvUsed = float_report.blockSpmvUsed;
+                        report.deviceBlockJacobiUsed = float_report.deviceBlockJacobiUsed;
+                        report.commandSubmissions = float_report.commandSubmissions;
+                        report.commandBufferRecordings = float_report.commandBufferRecordings;
+                        report.gpuMilliseconds = float_report.gpuMilliseconds;
+                        report.deviceName = float_report.deviceName;
+                        report.message = float_report.message;
+                        return report;
+                    }
                     if (float_report.converged)
                     {
                         std::transform(float_solution.begin(),
@@ -203,10 +236,11 @@ namespace plamatrix::block_schur_detail
                 state = std::make_shared<CudaSchurState<Scalar>>();
                 state->deviceIndex = active_device;
                 state->matrix =
-                    std::make_unique<CSRMatrix<Scalar, Device::GPU>>(matrix.rows(), matrix.cols(), matrix.nnz());
-                state->rhs = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(matrix.rows(), 1);
-                state->solution = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(matrix.rows(), 1);
-                state->inverseBlocks = std::make_unique<DenseMatrix<Scalar, Device::GPU>>(inverse_blocks_cpu.rows(), 1);
+                    std::make_unique<CsrStorage<Scalar, Device::GPU>>(matrix.rows(), matrix.cols(), matrix.nnz());
+                state->rhs = std::make_unique<DenseStorage<Scalar, Device::GPU>>(matrix.rows(), 1);
+                state->solution = std::make_unique<DenseStorage<Scalar, Device::GPU>>(matrix.rows(), 1);
+                state->inverseBlocks =
+                    std::make_unique<DenseStorage<Scalar, Device::GPU>>(inverse_blocks_cpu->rows(), 1);
                 opaque_state = state;
             }
             if (options.schurValuesOnDevice)
@@ -242,8 +276,8 @@ namespace plamatrix::block_schur_detail
                                             static_cast<std::size_t>(matrix.rows()) * sizeof(Scalar),
                                             cudaMemcpyHostToDevice));
             PLAMATRIX_CHECK_CUDA(cudaMemcpy(state->inverseBlocks->data(),
-                                            inverse_blocks_cpu.data(),
-                                            static_cast<std::size_t>(inverse_blocks_cpu.rows()) * sizeof(Scalar),
+                                            inverse_blocks_cpu->data(),
+                                            static_cast<std::size_t>(inverse_blocks_cpu->rows()) * sizeof(Scalar),
                                             cudaMemcpyHostToDevice));
             IterativeSolverOptions cuda_iterative_options = iterative_options;
             cuda_iterative_options.convergenceCheckInterval = 8;
@@ -273,22 +307,50 @@ namespace plamatrix::block_schur_detail
             }
             report.deviceName = opencl::selectedOpenClDeviceName();
             const auto iterative_report =
-                opencl::blockPcg(matrix, rhs_cpu, solution_cpu, inverse_blocks_cpu, block_size, iterative_options);
+                opencl::blockPcg(matrix, rhs_cpu, solution_cpu, *inverse_blocks_cpu, block_size, iterative_options);
             copyReport(iterative_report, &report);
+        }
+        else if (options.linearBackend == SchurComplementLinearBackend::Vulkan)
+        {
+            if constexpr (std::is_same_v<Scalar, float>)
+            {
+                report.deviceName = vulkan::selectedVulkanDeviceName();
+                IterativeSolverOptions vulkan_iterative_options = iterative_options;
+                vulkan_iterative_options.convergenceCheckInterval = 8;
+                const auto iterative_report =
+                    options.schurValuesOnDevice
+                        ? solveLastVulkanSchurValues(matrix,
+                                                     rhs_cpu,
+                                                     solution_cpu,
+                                                     inverse_blocks_cpu.get(),
+                                                     block_size,
+                                                     build_device_block_jacobi,
+                                                     workspace,
+                                                     vulkan_iterative_options)
+                        : vulkan::blockPcg(
+                              matrix, rhs_cpu, solution_cpu, *inverse_blocks_cpu, block_size, vulkan_iterative_options);
+                copyReport(iterative_report, &report);
+                report.cooperativeMatrixUsed = options.schurValuesOnDevice;
+            }
+            else
+            {
+                throw std::invalid_argument("Vulkan Schur PCG currently requires float equations");
+            }
         }
         else
         {
-            throw std::invalid_argument("solveAcceleratedReducedSchur requires CUDA or OpenCL backend");
+            throw std::invalid_argument("solveAcceleratedReducedSchur requires CUDA, OpenCL, or Vulkan backend");
         }
 
         report.linearSolveSeconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - solve_start).count();
         solution->assign(solution_cpu.data(), solution_cpu.data() + solution_cpu.rows());
-        report.mixedPrecisionUsed = mixed_precision_used;
+        report.mixedPrecisionUsed =
+            mixed_precision_used || options.linearBackend == SchurComplementLinearBackend::Vulkan;
         return report;
     }
 
-    template SchurComplementSolverReport<float> solveAcceleratedReducedSchur(const CSRMatrix<float, Device::CPU>&,
+    template SchurComplementSolverReport<float> solveAcceleratedReducedSchur(const CsrStorage<float, Device::CPU>&,
                                                                              const std::vector<float>&,
                                                                              const std::vector<std::vector<float>>&,
                                                                              Index,
@@ -296,7 +358,7 @@ namespace plamatrix::block_schur_detail
                                                                              SchurComplementSolverWorkspace<float>&,
                                                                              std::vector<float>*);
     template SchurComplementSolverReport<double>
-    solveAcceleratedReducedSchur(const CSRMatrix<double, Device::CPU>&,
+    solveAcceleratedReducedSchur(const CsrStorage<double, Device::CPU>&,
                                  const std::vector<double>&,
                                  const std::vector<std::vector<double>>&,
                                  Index,
@@ -304,4 +366,4 @@ namespace plamatrix::block_schur_detail
                                  SchurComplementSolverWorkspace<double>&,
                                  std::vector<double>*);
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

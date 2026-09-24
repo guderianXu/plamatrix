@@ -1,15 +1,17 @@
-#include "plamatrix/vulkan/runtime.h"
+#include "plamatrix/internal/vulkan/runtime.h"
 
 #ifdef PLAMATRIX_WITH_VULKAN
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
 
-namespace plamatrix::vulkan
+namespace plamatrix::internal::vulkan
 {
     namespace
     {
@@ -80,6 +82,110 @@ namespace plamatrix::vulkan
             return std::numeric_limits<std::uint32_t>::max();
         }
 
+        bool hasDeviceExtension(VkPhysicalDevice physical, const char* name)
+        {
+            std::uint32_t count = 0;
+            checkVk(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr),
+                    "vkEnumerateDeviceExtensionProperties");
+            std::vector<VkExtensionProperties> extensions(count);
+            if (count != 0)
+            {
+                checkVk(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, extensions.data()),
+                        "vkEnumerateDeviceExtensionProperties");
+            }
+            return std::any_of(extensions.begin(),
+                               extensions.end(),
+                               [&](const VkExtensionProperties& extension)
+                               { return std::strcmp(extension.extensionName, name) == 0; });
+        }
+
+        CooperativeMatrixCapabilities queryCooperativeMatrixCapabilities(VkInstance instance, VkPhysicalDevice physical)
+        {
+            CooperativeMatrixCapabilities result;
+#if defined(VK_KHR_cooperative_matrix) && defined(VK_KHR_shader_float16_int8) && defined(VK_KHR_vulkan_memory_model)
+            if (!hasDeviceExtension(physical, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME) ||
+                !hasDeviceExtension(physical, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME) ||
+                !hasDeviceExtension(physical, VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME))
+            {
+                return result;
+            }
+
+            VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features{};
+            memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES;
+            VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_features{};
+            cooperative_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR;
+            cooperative_features.pNext = &memory_model_features;
+            VkPhysicalDeviceShaderFloat16Int8Features float16_features{};
+            float16_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
+            float16_features.pNext = &cooperative_features;
+            VkPhysicalDevice16BitStorageFeatures storage_features{};
+            storage_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+            storage_features.pNext = &float16_features;
+            VkPhysicalDeviceFeatures2 features{};
+            features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features.pNext = &storage_features;
+            vkGetPhysicalDeviceFeatures2(physical, &features);
+
+            VkPhysicalDeviceCooperativeMatrixPropertiesKHR cooperative_properties{};
+            cooperative_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+            VkPhysicalDeviceProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties.pNext = &cooperative_properties;
+            vkGetPhysicalDeviceProperties2(physical, &properties);
+
+            const auto query_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR>(
+                vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR"));
+            if (!query_properties || cooperative_features.cooperativeMatrix != VK_TRUE ||
+                float16_features.shaderFloat16 != VK_TRUE || storage_features.storageBuffer16BitAccess != VK_TRUE ||
+                memory_model_features.vulkanMemoryModel != VK_TRUE ||
+                (cooperative_properties.cooperativeMatrixSupportedStages & VK_SHADER_STAGE_COMPUTE_BIT) == 0)
+            {
+                return result;
+            }
+
+            std::uint32_t property_count = 0;
+            if (query_properties(physical, &property_count, nullptr) != VK_SUCCESS || property_count == 0)
+            {
+                return result;
+            }
+            std::vector<VkCooperativeMatrixPropertiesKHR> matrix_properties(property_count);
+            for (auto& property : matrix_properties)
+            {
+                property.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+            }
+            if (query_properties(physical, &property_count, matrix_properties.data()) != VK_SUCCESS)
+            {
+                return result;
+            }
+            const auto compatible = std::find_if(matrix_properties.begin(),
+                                                 matrix_properties.end(),
+                                                 [](const VkCooperativeMatrixPropertiesKHR& property)
+                                                 {
+                                                     return property.MSize == 16 && property.NSize == 16 &&
+                                                            property.KSize == 16 &&
+                                                            property.AType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                                                            property.BType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                                                            property.CType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                                                            property.ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                                                            property.scope == VK_SCOPE_SUBGROUP_KHR;
+                                                 });
+            if (compatible == matrix_properties.end())
+            {
+                return result;
+            }
+            result.hardwareSupported = true;
+            result.fp16InputsFp32Accumulation = true;
+            result.mSize = compatible->MSize;
+            result.nSize = compatible->NSize;
+            result.kSize = compatible->KSize;
+            result.extensionName = VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME;
+#else
+            static_cast<void>(instance);
+            static_cast<void>(physical);
+#endif
+            return result;
+        }
+
     } // namespace
 
     std::vector<VulkanDeviceInfo> enumerateVulkanDevices()
@@ -128,22 +234,27 @@ namespace plamatrix::vulkan
         return Runtime::instance().deviceName();
     }
 
+    CooperativeMatrixCapabilities selectedVulkanCooperativeMatrixCapabilities()
+    {
+        return Runtime::instance().cooperativeMatrixCapabilities();
+    }
+
     Runtime& Runtime::instance()
     {
-        static Runtime runtime;
+        static Runtime runtime(requestedDeviceIndex());
         return runtime;
     }
 
-    Runtime::Runtime()
+    Runtime::Runtime(std::size_t deviceIndex)
     {
         _instance = createInstance();
         try
         {
             const auto devices = physicalDevices(_instance);
-            const std::uint32_t requested = requestedDeviceIndex();
+            const std::size_t requested = deviceIndex;
             if (requested >= devices.size())
             {
-                throw std::out_of_range("PLAMATRIX_VULKAN_DEVICE_INDEX exceeds available Vulkan devices");
+                throw std::out_of_range("Requested Vulkan device index exceeds available Vulkan devices");
             }
             _physicalDevice = devices[requested];
             _queueFamily = computeQueueFamily(_physicalDevice);
@@ -173,6 +284,8 @@ namespace plamatrix::vulkan
                                               _subgroupSize != 0 && 128u % _subgroupSize == 0;
             }
 
+            _cooperativeMatrixCapabilities = queryCooperativeMatrixCapabilities(_instance, _physicalDevice);
+
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo queue_info{};
             queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -183,6 +296,35 @@ namespace plamatrix::vulkan
             device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
             device_info.queueCreateInfoCount = 1;
             device_info.pQueueCreateInfos = &queue_info;
+#if defined(PLAMATRIX_VULKAN_COOPERATIVE_MATRIX_SHADER) && defined(VK_KHR_cooperative_matrix) &&                       \
+    defined(VK_KHR_shader_float16_int8) && defined(VK_KHR_vulkan_memory_model)
+            std::vector<const char*> device_extensions;
+            VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features{};
+            VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_features{};
+            VkPhysicalDeviceShaderFloat16Int8Features float16_features{};
+            VkPhysicalDevice16BitStorageFeatures storage_features{};
+            if (_cooperativeMatrixCapabilities.hardwareSupported && _subgroupSize == 32)
+            {
+                memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES;
+                memory_model_features.vulkanMemoryModel = VK_TRUE;
+                cooperative_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR;
+                cooperative_features.cooperativeMatrix = VK_TRUE;
+                cooperative_features.pNext = &memory_model_features;
+                float16_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
+                float16_features.shaderFloat16 = VK_TRUE;
+                float16_features.pNext = &cooperative_features;
+                storage_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+                storage_features.storageBuffer16BitAccess = VK_TRUE;
+                storage_features.pNext = &float16_features;
+                device_extensions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+                device_extensions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
+                device_extensions.push_back(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME);
+                device_info.enabledExtensionCount = static_cast<std::uint32_t>(device_extensions.size());
+                device_info.ppEnabledExtensionNames = device_extensions.data();
+                device_info.pNext = &storage_features;
+                _cooperativeMatrixCapabilities.enabled = true;
+            }
+#endif
             checkVk(vkCreateDevice(_physicalDevice, &device_info, nullptr, &_device), "vkCreateDevice");
             vkGetDeviceQueue(_device, _queueFamily, 0, &_queue);
 
@@ -304,7 +446,7 @@ namespace plamatrix::vulkan
     }
 
     Buffer::Buffer(Runtime& runtime, VkDeviceSize size, VkBufferUsageFlags usage, BufferMemory memory)
-        : _runtime(&runtime), _size(size), _hostVisible(memory == BufferMemory::HostVisible)
+        : _runtime(&runtime), _size(size), _hostVisible(memory != BufferMemory::DeviceLocal)
     {
         if (size == 0)
             throw std::invalid_argument("Vulkan buffer size must be greater than zero");
@@ -314,18 +456,34 @@ namespace plamatrix::vulkan
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         checkVk(vkCreateBuffer(runtime.device(), &info, nullptr, &_buffer), "vkCreateBuffer");
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(runtime.device(), _buffer, &requirements);
-        VkMemoryAllocateInfo allocation{};
-        allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocation.allocationSize = requirements.size;
-        const VkMemoryPropertyFlags properties =
-            memory == BufferMemory::HostVisible
-                ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-        allocation.memoryTypeIndex = runtime.findMemoryType(requirements.memoryTypeBits, properties);
         try
         {
+            VkMemoryRequirements requirements{};
+            vkGetBufferMemoryRequirements(runtime.device(), _buffer, &requirements);
+            VkMemoryAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocation.allocationSize = requirements.size;
+            const VkMemoryPropertyFlags host_visible_properties =
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            if (memory == BufferMemory::HostVisibleCached)
+            {
+                try
+                {
+                    allocation.memoryTypeIndex = runtime.findMemoryType(
+                        requirements.memoryTypeBits, host_visible_properties | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+                }
+                catch (const std::runtime_error&)
+                {
+                    allocation.memoryTypeIndex =
+                        runtime.findMemoryType(requirements.memoryTypeBits, host_visible_properties);
+                }
+            }
+            else
+            {
+                const VkMemoryPropertyFlags properties =
+                    memory == BufferMemory::HostVisible ? host_visible_properties : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                allocation.memoryTypeIndex = runtime.findMemoryType(requirements.memoryTypeBits, properties);
+            }
             checkVk(vkAllocateMemory(runtime.device(), &allocation, nullptr, &_memory), "vkAllocateMemory");
             checkVk(vkBindBufferMemory(runtime.device(), _buffer, _memory, 0), "vkBindBufferMemory");
         }
@@ -393,6 +551,6 @@ namespace plamatrix::vulkan
         _hostVisible = false;
     }
 
-} // namespace plamatrix::vulkan
+} // namespace plamatrix::internal::vulkan
 
 #endif

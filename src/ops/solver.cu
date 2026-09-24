@@ -5,11 +5,11 @@
 
 #include <cusolverDn.h>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/core/cuda_buffer.h"
-#include "plamatrix/ops/solver.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/core/cuda_buffer.h"
+#include "plamatrix/internal/ops/solver.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -52,8 +52,8 @@ int checkedCusolverInt(Index value, const char* name)
 /// @param B  Right-hand side matrix on GPU (n x nrhs)
 /// @return  Solution matrix X on GPU (n x nrhs)
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A,
-                                                const DenseMatrix<Scalar, Device::GPU>& B)
+DenseStorage<Scalar, Device::GPU> solveGpuImpl(const DenseStorage<Scalar, Device::GPU>& A,
+                                                const DenseStorage<Scalar, Device::GPU>& B)
 {
     Index n = A.rows();
     Index nrhs = B.cols();
@@ -82,14 +82,14 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
     int ldb       = n_int;
 
     // Copy A to device work matrix (getrf overwrites A)
-    DenseMatrix<Scalar, Device::GPU> A_work(n, n);
+    DenseStorage<Scalar, Device::GPU> A_work(n, n);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(A_work.data(), A.data(),
                    static_cast<std::size_t>(n * n) * sizeof(Scalar),
                    cudaMemcpyDeviceToDevice));
 
     // Copy B to device work matrix (getrs overwrites B)
-    DenseMatrix<Scalar, Device::GPU> B_work(n, nrhs);
+    DenseStorage<Scalar, Device::GPU> B_work(n, nrhs);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(B_work.data(), B.data(),
                    static_cast<std::size_t>(n * nrhs) * sizeof(Scalar),
@@ -183,8 +183,8 @@ DenseMatrix<Scalar, Device::GPU> solveGpuImpl(const DenseMatrix<Scalar, Device::
 // Explicit specializations for GPU
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-DenseMatrix<float, Device::GPU> solve<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& A,
-                                                            const DenseMatrix<float, Device::GPU>& B)
+DenseStorage<float, Device::GPU> solve<float, Device::GPU>(const DenseStorage<float, Device::GPU>& A,
+                                                            const DenseStorage<float, Device::GPU>& B)
 {
     return solveGpuImpl(A, B);
 }
@@ -192,11 +192,11 @@ DenseMatrix<float, Device::GPU> solve<float, Device::GPU>(const DenseMatrix<floa
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-DenseMatrix<double, Device::GPU> solve<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& A,
-                                                              const DenseMatrix<double, Device::GPU>& B)
+DenseStorage<double, Device::GPU> solve<double, Device::GPU>(const DenseStorage<double, Device::GPU>& A,
+                                                              const DenseStorage<double, Device::GPU>& B)
 {
     return solveGpuImpl(A, B);
 }
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

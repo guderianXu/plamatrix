@@ -4,9 +4,10 @@
 #include <gtest/gtest.h>
 #include <omp.h>
 
-#include <plamatrix/ops/gemm.h>
+#include <plamatrix/internal/ops/gemm.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 // GEMM: multiply_2x3_by_3x2_CpuSerial
 // A(2x3) * B(3x2) = C(2x2), single-threaded for deterministic output
@@ -14,8 +15,8 @@ TEST(GEMM, multiply_2x3_by_3x2_CpuSerial)
 {
     omp_set_num_threads(1);
 
-    DenseMatrix<float, Device::CPU> A(2, 3);
-    DenseMatrix<float, Device::CPU> B(3, 2);
+    DenseStorage<float, Device::CPU> A(2, 3);
+    DenseStorage<float, Device::CPU> B(3, 2);
 
     // A = [1  3  5;  2  4  6] in column-major
     A.setValue(0, 0, 1.0f);
@@ -50,8 +51,8 @@ TEST(GEMM, multiply_RectangularMatricesAcrossNativeTiles)
     constexpr Index rows = 137;
     constexpr Index inner = 73;
     constexpr Index columns = 35;
-    DenseMatrix<double, Device::CPU> A(rows, inner);
-    DenseMatrix<double, Device::CPU> B(inner, columns);
+    DenseStorage<double, Device::CPU> A(rows, inner);
+    DenseStorage<double, Device::CPU> B(inner, columns);
 
     for (Index column = 0; column < inner; ++column)
     {
@@ -88,8 +89,8 @@ TEST(GEMM, multiply_RectangularMatricesAcrossNativeTiles)
 
 TEST(GEMM, multiply_EmptyInnerDimensionReturnsZeros)
 {
-    DenseMatrix<float, Device::CPU> A(7, 0);
-    DenseMatrix<float, Device::CPU> B(0, 5);
+    DenseStorage<float, Device::CPU> A(7, 0);
+    DenseStorage<float, Device::CPU> B(0, 5);
 
     auto C = gemm(A, B);
 
@@ -108,8 +109,8 @@ TEST(GEMM, multiply_EmptyInnerDimensionReturnsZeros)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(GEMM, multiply_2x3_by_3x2_Gpu)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     // A = [1  3  5;  2  4  6]
     A_cpu.setValue(0, 0, 1.0f);
@@ -140,8 +141,8 @@ TEST(GEMM, multiply_2x3_by_3x2_Gpu)
 
 TEST(GEMM, multiply_2x3_by_3x2_GpuOutputReuse)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
@@ -159,7 +160,7 @@ TEST(GEMM, multiply_2x3_by_3x2_GpuOutputReuse)
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> C_gpu(2, 2);
+    DenseStorage<float, Device::GPU> C_gpu(2, 2);
 
     gemm(A_gpu, B_gpu, C_gpu);
 
@@ -172,8 +173,8 @@ TEST(GEMM, multiply_2x3_by_3x2_GpuOutputReuse)
 
 TEST(GEMM, multiply_2x3_by_3x2_GpuAsync)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
@@ -201,12 +202,12 @@ TEST(GEMM, multiply_2x3_by_3x2_GpuAsync)
 
 TEST(GEMM, rejectsGpuOutputDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> C_gpu(3, 2);
+    DenseStorage<float, Device::GPU> C_gpu(3, 2);
 
     EXPECT_THROW(gemm(A_gpu, B_gpu, C_gpu), std::runtime_error);
     EXPECT_THROW(gemmAsync(A_gpu, B_gpu, C_gpu), std::runtime_error);
@@ -216,8 +217,8 @@ TEST(GEMM, rejectsGpuOutputDimensionMismatch)
 TEST(GEMM, multiply_Larger_CpuVsGpuConsistency)
 {
     constexpr Index N = 256;
-    DenseMatrix<float, Device::CPU> A_cpu(N, N);
-    DenseMatrix<float, Device::CPU> B_cpu(N, N);
+    DenseStorage<float, Device::CPU> A_cpu(N, N);
+    DenseStorage<float, Device::CPU> B_cpu(N, N);
 
     // Fill with pseudo-random values (simple LCG for reproducibility)
     std::srand(42);
@@ -248,3 +249,5 @@ TEST(GEMM, multiply_Larger_CpuVsGpuConsistency)
     }
 }
 #endif
+
+} // namespace plamatrix::internal

@@ -11,7 +11,7 @@
 #include <string_view>
 #include <utility>
 
-namespace plamatrix::benchmark
+namespace plamatrix::internal::benchmark
 {
     namespace
     {
@@ -39,12 +39,12 @@ namespace plamatrix::benchmark
             adjacency[static_cast<std::size_t>(column)].push_back(row);
         }
 
-        CSRMatrix<float, Device::CPU> finalizeMatrix(const SparseRows& sparse)
+        CsrStorage<float, Device::CPU> finalizeMatrix(const SparseRows& sparse)
         {
             Index nnz = 0;
             for (const Row& row : sparse.rows)
                 nnz += static_cast<Index>(row.size());
-            CSRMatrix<float, Device::CPU> matrix(sparse.dimension, sparse.dimension, nnz);
+            CsrStorage<float, Device::CPU> matrix(sparse.dimension, sparse.dimension, nnz);
             Index offset = 0;
             for (Index row = 0; row < sparse.dimension; ++row)
             {
@@ -64,7 +64,7 @@ namespace plamatrix::benchmark
         BackendFixture makeFixture(std::string scenario, Index parameter, SparseRows sparse)
         {
             auto matrix = finalizeMatrix(sparse);
-            DenseMatrix<float, Device::CPU> rhs(sparse.dimension, 1);
+            DenseStorage<float, Device::CPU> rhs(sparse.dimension, 1);
             for (Index row = 0; row < sparse.dimension; ++row)
             {
                 const float coordinate = static_cast<float>(row + 1);
@@ -252,8 +252,8 @@ namespace plamatrix::benchmark
 
     BackendFixture::BackendFixture(std::string scenarioName,
                                    Index scenarioParameter,
-                                   CSRMatrix<float, Device::CPU>&& matrixValue,
-                                   DenseMatrix<float, Device::CPU>&& rhsValue)
+                                   CsrStorage<float, Device::CPU>&& matrixValue,
+                                   DenseStorage<float, Device::CPU>&& rhsValue)
         : scenario(std::move(scenarioName)), parameter(scenarioParameter), matrix(std::move(matrixValue)),
           rhs(std::move(rhsValue))
     {
@@ -376,4 +376,4 @@ namespace plamatrix::benchmark
                 {"mvs_visibility", 256}};
     }
 
-} // namespace plamatrix::benchmark
+} // namespace plamatrix::internal::benchmark

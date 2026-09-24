@@ -1,12 +1,12 @@
 #pragma once
 
-#include "plamatrix/opencl/runtime.h"
+#include "plamatrix/internal/opencl/runtime.h"
 
 #include <cstddef>
 #include <string>
 #include <vector>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace opencl
 {
@@ -37,4 +37,4 @@ std::vector<DeviceCandidate> enumerateDeviceCandidates(
 
 } // namespace detail
 } // namespace opencl
-} // namespace plamatrix
+} // namespace plamatrix::internal

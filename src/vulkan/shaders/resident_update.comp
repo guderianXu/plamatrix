@@ -1,0 +1,14 @@
+#version 450
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) buffer Solution { float solution[]; };
+layout(std430, binding = 1) buffer Residual { float residual[]; };
+layout(std430, binding = 2) readonly buffer Direction { float direction[]; };
+layout(std430, binding = 3) readonly buffer MatrixDirection { float matrix_direction[]; };
+layout(push_constant) uniform Params { uint count; float alpha; } params;
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= params.count) return;
+    solution[index] += params.alpha * direction[index];
+    residual[index] -= params.alpha * matrix_direction[index];
+}

@@ -1,27 +1,28 @@
 #include <gtest/gtest.h>
 
-#include <plamatrix/sparse/coo_matrix.h>
-#include <plamatrix/sparse/csr_matrix.h>
+#include <plamatrix/internal/sparse/coo_storage.h>
+#include <plamatrix/internal/sparse/csr_storage.h>
 
-using namespace plamatrix;
-
-TEST(COOMatrix, construction)
+namespace plamatrix::internal
 {
-    COOMatrix<float, Device::CPU> mat(4, 4);
+
+TEST(CooStorage, construction)
+{
+    CooStorage<float, Device::CPU> mat(4, 4);
     EXPECT_EQ(mat.rows(), 4);
     EXPECT_EQ(mat.cols(), 4);
     EXPECT_EQ(mat.nnz(), 0);
 }
 
-TEST(COOMatrix, construction_RejectsNegativeDimensions)
+TEST(CooStorage, construction_RejectsNegativeDimensions)
 {
-    EXPECT_THROW((COOMatrix<float, Device::CPU>(-1, 4)), std::invalid_argument);
-    EXPECT_THROW((COOMatrix<float, Device::CPU>(4, -1)), std::invalid_argument);
+    EXPECT_THROW((CooStorage<float, Device::CPU>(-1, 4)), std::invalid_argument);
+    EXPECT_THROW((CooStorage<float, Device::CPU>(4, -1)), std::invalid_argument);
 }
 
-TEST(COOMatrix, addAndBuild)
+TEST(CooStorage, addAndBuild)
 {
-    COOMatrix<float, Device::CPU> mat(4, 4);
+    CooStorage<float, Device::CPU> mat(4, 4);
     mat.add(0, 0, 1.0f);
     mat.add(1, 1, 2.0f);
     mat.add(2, 2, 3.0f);
@@ -31,9 +32,9 @@ TEST(COOMatrix, addAndBuild)
     EXPECT_EQ(mat.nnz(), 5);
 }
 
-TEST(COOMatrix, add_RejectsOutOfBoundsTriplet)
+TEST(CooStorage, add_RejectsOutOfBoundsTriplet)
 {
-    COOMatrix<float, Device::CPU> mat(2, 3);
+    CooStorage<float, Device::CPU> mat(2, 3);
 
     EXPECT_THROW(mat.add(-1, 0, 1.0f), std::out_of_range);
     EXPECT_THROW(mat.add(0, -1, 1.0f), std::out_of_range);
@@ -41,9 +42,9 @@ TEST(COOMatrix, add_RejectsOutOfBoundsTriplet)
     EXPECT_THROW(mat.add(0, 3, 1.0f), std::out_of_range);
 }
 
-TEST(COOMatrix, toCsr_Cpu)
+TEST(CooStorage, toCsr_Cpu)
 {
-    COOMatrix<float, Device::CPU> mat(4, 4);
+    CooStorage<float, Device::CPU> mat(4, 4);
     mat.add(0, 0, 1.0f);
     mat.add(1, 1, 2.0f);
     mat.add(2, 2, 3.0f);
@@ -76,9 +77,9 @@ TEST(COOMatrix, toCsr_Cpu)
     EXPECT_EQ(csr.rowOffsets()[4], 5);
 }
 
-TEST(COOMatrix, toCsr_Gpu)
+TEST(CooStorage, toCsr_Gpu)
 {
-    COOMatrix<float, Device::GPU> mat(3, 3);
+    CooStorage<float, Device::GPU> mat(3, 3);
     mat.add(0, 0, 1.0f);
     mat.add(1, 1, 2.0f);
     mat.add(2, 2, 3.0f);
@@ -126,3 +127,5 @@ TEST(COOMatrix, toCsr_Gpu)
     EXPECT_THROW(static_cast<void>(mat.toCsr()), std::runtime_error);
 #endif
 }
+
+} // namespace plamatrix::internal

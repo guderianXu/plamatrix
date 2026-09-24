@@ -2,7 +2,7 @@
 
 #include "iterative_solver_cuda_detail.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
     namespace iterative_solver_detail
     {
@@ -283,4 +283,4 @@ namespace plamatrix
         }
 
     } // namespace iterative_solver_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

@@ -5,9 +5,9 @@
 
 #include <cublas_v2.h>
 
-#include "plamatrix/ops/gemm.h"
+#include "plamatrix/internal/ops/gemm.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -45,8 +45,8 @@ int checkedCublasInt(Index value, const char* name)
 }
 
 template <typename Scalar>
-void checkGemmDimensions(const DenseMatrix<Scalar, Device::GPU>& A,
-                         const DenseMatrix<Scalar, Device::GPU>& B)
+void checkGemmDimensions(const DenseStorage<Scalar, Device::GPU>& A,
+                         const DenseStorage<Scalar, Device::GPU>& B)
 {
     Index m = A.rows();
     Index k = A.cols();
@@ -62,7 +62,7 @@ void checkGemmDimensions(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-void checkGemmOutputDimensions(const DenseMatrix<Scalar, Device::GPU>& C,
+void checkGemmOutputDimensions(const DenseStorage<Scalar, Device::GPU>& C,
                                Index rows,
                                Index cols)
 {
@@ -78,9 +78,9 @@ void checkGemmOutputDimensions(const DenseMatrix<Scalar, Device::GPU>& C,
 } // anonymous namespace
 
 template <typename Scalar>
-void gemmAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-               const DenseMatrix<Scalar, Device::GPU>& B,
-               DenseMatrix<Scalar, Device::GPU>& C,
+void gemmAsync(const DenseStorage<Scalar, Device::GPU>& A,
+               const DenseStorage<Scalar, Device::GPU>& B,
+               DenseStorage<Scalar, Device::GPU>& C,
                cudaStream_t stream)
 {
     Index m = A.rows();
@@ -132,19 +132,19 @@ void gemmAsync(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> gemmAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-                                           const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> gemmAsync(const DenseStorage<Scalar, Device::GPU>& A,
+                                           const DenseStorage<Scalar, Device::GPU>& B,
                                            cudaStream_t stream)
 {
     checkGemmDimensions(A, B);
-    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), B.cols(), stream);
+    auto C = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(A.rows(), B.cols(), stream);
     gemmAsync(A, B, C, stream);
     return C;
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> gemm(const DenseMatrix<Scalar, Device::GPU>& A,
-                                       const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> gemm(const DenseStorage<Scalar, Device::GPU>& A,
+                                       const DenseStorage<Scalar, Device::GPU>& B,
                                        cudaStream_t stream)
 {
     auto C = gemmAsync(A, B, stream);
@@ -153,9 +153,9 @@ DenseMatrix<Scalar, Device::GPU> gemm(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-void gemm(const DenseMatrix<Scalar, Device::GPU>& A,
-          const DenseMatrix<Scalar, Device::GPU>& B,
-          DenseMatrix<Scalar, Device::GPU>& C,
+void gemm(const DenseStorage<Scalar, Device::GPU>& A,
+          const DenseStorage<Scalar, Device::GPU>& B,
+          DenseStorage<Scalar, Device::GPU>& C,
           cudaStream_t stream)
 {
     gemmAsync(A, B, C, stream);
@@ -164,43 +164,43 @@ void gemm(const DenseMatrix<Scalar, Device::GPU>& A,
 
 // Explicit template instantiations
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> gemmAsync(const DenseMatrix<float, Device::GPU>&,
-                                                   const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> gemmAsync(const DenseStorage<float, Device::GPU>&,
+                                                   const DenseStorage<float, Device::GPU>&,
                                                    cudaStream_t);
 
-template void gemmAsync(const DenseMatrix<float, Device::GPU>&,
-                        const DenseMatrix<float, Device::GPU>&,
-                        DenseMatrix<float, Device::GPU>&,
+template void gemmAsync(const DenseStorage<float, Device::GPU>&,
+                        const DenseStorage<float, Device::GPU>&,
+                        DenseStorage<float, Device::GPU>&,
                         cudaStream_t);
 
-template DenseMatrix<float, Device::GPU> gemm(const DenseMatrix<float, Device::GPU>&,
-                                                const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> gemm(const DenseStorage<float, Device::GPU>&,
+                                                const DenseStorage<float, Device::GPU>&,
                                                 cudaStream_t);
 
-template void gemm(const DenseMatrix<float, Device::GPU>&,
-                   const DenseMatrix<float, Device::GPU>&,
-                   DenseMatrix<float, Device::GPU>&,
+template void gemm(const DenseStorage<float, Device::GPU>&,
+                   const DenseStorage<float, Device::GPU>&,
+                   DenseStorage<float, Device::GPU>&,
                    cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> gemmAsync(const DenseMatrix<double, Device::GPU>&,
-                                                    const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> gemmAsync(const DenseStorage<double, Device::GPU>&,
+                                                    const DenseStorage<double, Device::GPU>&,
                                                     cudaStream_t);
 
-template void gemmAsync(const DenseMatrix<double, Device::GPU>&,
-                        const DenseMatrix<double, Device::GPU>&,
-                        DenseMatrix<double, Device::GPU>&,
+template void gemmAsync(const DenseStorage<double, Device::GPU>&,
+                        const DenseStorage<double, Device::GPU>&,
+                        DenseStorage<double, Device::GPU>&,
                         cudaStream_t);
 
-template DenseMatrix<double, Device::GPU> gemm(const DenseMatrix<double, Device::GPU>&,
-                                                 const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> gemm(const DenseStorage<double, Device::GPU>&,
+                                                 const DenseStorage<double, Device::GPU>&,
                                                  cudaStream_t);
 
-template void gemm(const DenseMatrix<double, Device::GPU>&,
-                   const DenseMatrix<double, Device::GPU>&,
-                   DenseMatrix<double, Device::GPU>&,
+template void gemm(const DenseStorage<double, Device::GPU>&,
+                   const DenseStorage<double, Device::GPU>&,
+                   DenseStorage<double, Device::GPU>&,
                    cudaStream_t);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

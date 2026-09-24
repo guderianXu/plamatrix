@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 
 # ---- Project definition (CXX always; CUDA added conditionally) ----
 project(plamatrix
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "High-performance matrix library for point cloud processing"
     LANGUAGES CXX
 )
@@ -50,6 +50,84 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     endif()
 endif()
 
+option(PLAMATRIX_WITH_EIGEN_REFERENCE
+    "Build optional Eigen differential tests and comparison benchmark" OFF)
+option(PLAMATRIX_FETCH_EIGEN_REFERENCE
+    "Download the pinned Eigen 5 reference when it is not installed" OFF)
+set(PLAMATRIX_EIGEN3_INCLUDE_DIR "" CACHE PATH
+    "Eigen3 include directory used by optional reference validation")
+if(PLAMATRIX_FETCH_EIGEN_REFERENCE)
+    set(PLAMATRIX_WITH_EIGEN_REFERENCE ON CACHE BOOL
+        "Build optional Eigen differential tests and comparison benchmark" FORCE)
+endif()
+if(PLAMATRIX_WITH_EIGEN_REFERENCE)
+    if(PLAMATRIX_FETCH_EIGEN_REFERENCE AND TARGET Eigen3::Eigen)
+        message(FATAL_ERROR
+            "PLAMATRIX_FETCH_EIGEN_REFERENCE cannot replace an existing Eigen3::Eigen target. "
+            "Configure PlaMatrix as a top-level project or disable fetching and provide Eigen 5.0.1.")
+    endif()
+    if(PLAMATRIX_FETCH_EIGEN_REFERENCE)
+        include(FetchContent)
+        FetchContent_Declare(plamatrix_eigen_reference_source
+            URL https://gitlab.com/libeigen/eigen/-/archive/5.0.1/eigen-5.0.1.tar.gz
+            URL_HASH SHA256=e9c326dc8c05cd1e044c71f30f1b2e34a6161a3b6ecf445d56b53ff1669e3dec
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_GetProperties(plamatrix_eigen_reference_source)
+        if(NOT plamatrix_eigen_reference_source_POPULATED)
+            FetchContent_Populate(plamatrix_eigen_reference_source)
+        endif()
+        add_library(plamatrix_eigen_reference INTERFACE)
+        add_library(Eigen3::Eigen ALIAS plamatrix_eigen_reference)
+        target_include_directories(plamatrix_eigen_reference SYSTEM INTERFACE
+            ${plamatrix_eigen_reference_source_SOURCE_DIR})
+    endif()
+    if(NOT TARGET Eigen3::Eigen)
+        find_package(Eigen3 5.0 CONFIG QUIET)
+    endif()
+    if(NOT TARGET Eigen3::Eigen)
+        if(PLAMATRIX_EIGEN3_INCLUDE_DIR)
+            set(_PLAMATRIX_EIGEN3_INCLUDE_DIR ${PLAMATRIX_EIGEN3_INCLUDE_DIR})
+        else()
+            find_path(_PLAMATRIX_EIGEN3_INCLUDE_DIR Eigen/Core PATH_SUFFIXES eigen3)
+        endif()
+        if(NOT EXISTS "${_PLAMATRIX_EIGEN3_INCLUDE_DIR}/Eigen/Core")
+            message(FATAL_ERROR
+                "PLAMATRIX_WITH_EIGEN_REFERENCE=ON requires Eigen3. Set Eigen3_DIR or "
+                "PLAMATRIX_EIGEN3_INCLUDE_DIR to an Eigen include directory.")
+        endif()
+        add_library(plamatrix_eigen_reference INTERFACE)
+        add_library(Eigen3::Eigen ALIAS plamatrix_eigen_reference)
+        target_include_directories(plamatrix_eigen_reference SYSTEM INTERFACE
+            ${_PLAMATRIX_EIGEN3_INCLUDE_DIR})
+    endif()
+
+    include(CheckCXXSourceCompiles)
+    get_target_property(_PLAMATRIX_EIGEN_REQUIRED_INCLUDES Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
+    set(_PLAMATRIX_SAVED_CMAKE_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
+    list(APPEND CMAKE_REQUIRED_INCLUDES ${_PLAMATRIX_EIGEN_REQUIRED_INCLUDES})
+    unset(PLAMATRIX_EIGEN5_REFERENCE_API_AVAILABLE CACHE)
+    check_cxx_source_compiles([=[
+        #include <Eigen/Core>
+        #include <Eigen/Geometry>
+        #if EIGEN_MAJOR_VERSION < 5
+        #error PlaMatrix differential tests require Eigen 5
+        #endif
+        int main()
+        {
+            Eigen::Matrix3d matrix = Eigen::Matrix3d::Identity();
+            auto reshaped = matrix.reshaped();
+            auto angles = matrix.canonicalEulerAngles(2, 1, 0);
+            return static_cast<int>(reshaped.size() + angles.size());
+        }
+    ]=] PLAMATRIX_EIGEN5_REFERENCE_API_AVAILABLE)
+    set(CMAKE_REQUIRED_INCLUDES "${_PLAMATRIX_SAVED_CMAKE_REQUIRED_INCLUDES}")
+    if(NOT PLAMATRIX_EIGEN5_REFERENCE_API_AVAILABLE)
+        message(FATAL_ERROR
+            "PLAMATRIX_WITH_EIGEN_REFERENCE=ON requires Eigen 5.0 or newer with reshaped() and "
+            "canonicalEulerAngles(). Set Eigen3_DIR or PLAMATRIX_EIGEN3_INCLUDE_DIR accordingly.")
+    endif()
+endif()
+
 set(_PLAMATRIX_BUILD_DOCS_USER_DEFINED OFF)
 if(DEFINED PLAMATRIX_BUILD_DOCS)
     set(_PLAMATRIX_BUILD_DOCS_USER_DEFINED ON)
@@ -64,15 +142,19 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 
 # ---- Detect CUDA ----
-find_package(CUDAToolkit QUIET)
-
-if(CUDAToolkit_FOUND)
-    set(PLAMATRIX_CUDA_DEFAULT ON)
-else()
-    set(PLAMATRIX_CUDA_DEFAULT OFF)
+set(_PLAMATRIX_WITH_CUDA_USER_DEFINED OFF)
+if(DEFINED PLAMATRIX_WITH_CUDA)
+    set(_PLAMATRIX_WITH_CUDA_USER_DEFINED ON)
 endif()
+option(PLAMATRIX_WITH_CUDA "Build with CUDA GPU acceleration" OFF)
 
-option(PLAMATRIX_WITH_CUDA "Build with CUDA GPU acceleration" ${PLAMATRIX_CUDA_DEFAULT})
+include(CheckLanguage)
+if(PLAMATRIX_WITH_CUDA OR NOT _PLAMATRIX_WITH_CUDA_USER_DEFINED)
+    check_language(CUDA)
+    if(NOT _PLAMATRIX_WITH_CUDA_USER_DEFINED AND CMAKE_CUDA_COMPILER)
+        set(PLAMATRIX_WITH_CUDA ON CACHE BOOL "Build with CUDA GPU acceleration" FORCE)
+    endif()
+endif()
 
 if(PLAMATRIX_WITH_CUDA)
     set(_PLAMATRIX_CMAKE_CUDA_ARCHITECTURES_USER_DEFINED OFF)
@@ -81,11 +163,23 @@ if(PLAMATRIX_WITH_CUDA)
         set(_PLAMATRIX_REQUESTED_CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
     endif()
 
-    if(NOT CUDAToolkit_FOUND)
-        message(FATAL_ERROR "PLAMATRIX_WITH_CUDA=ON but CUDA Toolkit not found. "
-                            "Install CUDA Toolkit or set -DPLAMATRIX_WITH_CUDA=OFF for CPU-only build.")
+    if(NOT CMAKE_CUDA_COMPILER)
+        message(FATAL_ERROR "PLAMATRIX_WITH_CUDA=ON but no CUDA compiler was found. "
+                            "Set CMAKE_CUDA_COMPILER to nvcc or disable CUDA.")
     endif()
     enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" _PLAMATRIX_CUDA_COMPILER_SERIES
+        "${CMAKE_CUDA_COMPILER_VERSION}")
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" _PLAMATRIX_CUDA_TOOLKIT_SERIES
+        "${CUDAToolkit_VERSION}")
+    if(_PLAMATRIX_CUDA_COMPILER_SERIES AND _PLAMATRIX_CUDA_TOOLKIT_SERIES
+            AND NOT _PLAMATRIX_CUDA_COMPILER_SERIES STREQUAL _PLAMATRIX_CUDA_TOOLKIT_SERIES)
+        message(FATAL_ERROR
+            "CUDA compiler ${CMAKE_CUDA_COMPILER} reports ${CMAKE_CUDA_COMPILER_VERSION}, "
+            "but FindCUDAToolkit selected ${CUDAToolkit_VERSION} at "
+            "${CUDAToolkit_LIBRARY_ROOT}. Select one coherent CUDA installation.")
+    endif()
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     if(NOT DEFINED PLAMATRIX_CUDA_ARCHITECTURES)
@@ -145,6 +239,7 @@ if(PLAMATRIX_WITH_OPENCL)
 endif()
 
 # ---- Optional Vulkan Compute backend ----
+set(PLAMATRIX_VULKAN_COOPERATIVE_MATRIX_SHADER OFF)
 if(PLAMATRIX_WITH_VULKAN)
     find_package(Vulkan 1.1 QUIET)
     find_program(PLAMATRIX_GLSLANG_VALIDATOR glslangValidator)
@@ -154,6 +249,22 @@ if(PLAMATRIX_WITH_VULKAN)
         endif()
         message(STATUS "PlaMatrix Vulkan disabled because Vulkan 1.1 or glslangValidator was not found")
         set(PLAMATRIX_WITH_VULKAN OFF CACHE BOOL "Build the Vulkan Compute backend" FORCE)
+    endif()
+    if(PLAMATRIX_WITH_VULKAN)
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles")
+        execute_process(
+            COMMAND ${PLAMATRIX_GLSLANG_VALIDATOR} -V --target-env vulkan1.1
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan/shaders/batched_gemm_cooperative.comp"
+                -o "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/plamatrix-cooperative-matrix-probe.spv"
+            RESULT_VARIABLE _PLAMATRIX_COOPERATIVE_MATRIX_SHADER_RESULT
+            OUTPUT_QUIET
+            ERROR_QUIET)
+        file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/plamatrix-cooperative-matrix-probe.spv")
+        if(_PLAMATRIX_COOPERATIVE_MATRIX_SHADER_RESULT EQUAL 0)
+            set(PLAMATRIX_VULKAN_COOPERATIVE_MATRIX_SHADER ON)
+        else()
+            message(STATUS "PlaMatrix Vulkan cooperative matrices disabled because glslangValidator lacks support")
+        endif()
     endif()
 endif()
 
@@ -165,6 +276,8 @@ add_library(plamatrix)
 add_library(plamatrix::plamatrix ALIAS plamatrix)
 
 target_compile_features(plamatrix PUBLIC cxx_std_17)
+
+target_compile_definitions(plamatrix PRIVATE PLAMATRIX_BUILDING_LIBRARY=1)
 
 if(PLAMATRIX_WITH_CUDA)
     set_target_properties(plamatrix PROPERTIES
@@ -215,6 +328,9 @@ if(PLAMATRIX_WITH_VULKAN)
     set(PLAMATRIX_VULKAN_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/vulkan-shaders")
     target_compile_definitions(plamatrix PUBLIC
         PLAMATRIX_VULKAN_SHADER_DIR=\"${PLAMATRIX_VULKAN_SHADER_DIR}\")
+    if(PLAMATRIX_VULKAN_COOPERATIVE_MATRIX_SHADER)
+        target_compile_definitions(plamatrix PRIVATE PLAMATRIX_VULKAN_COOPERATIVE_MATRIX_SHADER=1)
+    endif()
 else()
     target_compile_definitions(plamatrix PUBLIC PLAMATRIX_NO_VULKAN=1)
 endif()
@@ -285,5 +401,7 @@ message(STATUS "  Float64 support: ${PLAMATRIX_USE_DOUBLE}")
 message(STATUS "  CPU linalg:      native")
 message(STATUS "  Build tests:     ${PLAMATRIX_BUILD_TESTS}")
 message(STATUS "  Build benchmarks:${PLAMATRIX_BUILD_BENCHMARKS}")
+message(STATUS "  Eigen reference: ${PLAMATRIX_WITH_EIGEN_REFERENCE}")
+message(STATUS "  Fetch Eigen reference: ${PLAMATRIX_FETCH_EIGEN_REFERENCE}")
 message(STATUS "  Build docs:      ${PLAMATRIX_BUILD_DOCS}")
 message(STATUS "")

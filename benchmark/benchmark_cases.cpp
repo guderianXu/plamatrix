@@ -14,15 +14,15 @@
 
 #include <omp.h>
 
-#include "plamatrix/core/allocator.h"
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/dense/dense_ops.h"
-#include "plamatrix/ops/gemm.h"
-#include "plamatrix/ops/decomposition.h"
-#include "plamatrix/ops/solver.h"
-#include "plamatrix/ops/point_cloud.h"
+#include "plamatrix/internal/core/allocator.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/dense/dense_ops.h"
+#include "plamatrix/internal/ops/gemm.h"
+#include "plamatrix/internal/ops/decomposition.h"
+#include "plamatrix/internal/ops/solver.h"
+#include "plamatrix/internal/ops/point_cloud.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 // ============================================================================
@@ -67,7 +67,7 @@ double measure(BenchmarkFn fn, int warmup, int trials)
 namespace
 {
 
-using FloatMatrix = DenseMatrix<float, Device::CPU>;
+using FloatMatrix = DenseStorage<float, Device::CPU>;
 
 void randomFill(FloatMatrix& mat)
 {
@@ -452,10 +452,10 @@ void runPointTransformSerial(CaseResult& r, Index N)
 {
     OmpThreadGuard guard(1);
     auto points = makeRandom(N, 3);
-    Vec3<float> axis{0.0f, 0.0f, 1.0f};
+    PackedVector3<float> axis{0.0f, 0.0f, 1.0f};
     float angle = 0.5f;
     auto R = rotationMatrix<float, Device::CPU>(axis, angle);
-    Vec3<float> t{1.0f, 2.0f, 3.0f};
+    PackedVector3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
     
@@ -469,10 +469,10 @@ void runPointTransformSerial(CaseResult& r, Index N)
 void runPointTransformOmp(CaseResult& r, Index N)
 {
     auto points = makeRandom(N, 3);
-    Vec3<float> axis{0.0f, 0.0f, 1.0f};
+    PackedVector3<float> axis{0.0f, 0.0f, 1.0f};
     float angle = 0.5f;
     auto R = rotationMatrix<float, Device::CPU>(axis, angle);
-    Vec3<float> t{1.0f, 2.0f, 3.0f};
+    PackedVector3<float> t{1.0f, 2.0f, 3.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
     
@@ -673,4 +673,4 @@ std::vector<std::string> getAllCaseNames()
     };
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

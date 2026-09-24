@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <immintrin.h>
 
-namespace plamatrix::detail
+namespace plamatrix::internal::detail
 {
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -124,4 +124,4 @@ void packedGemmMicrokernelAvx2(const float* left,
 
 #undef PLAMATRIX_AVX2_TARGET
 
-} // namespace plamatrix::detail
+} // namespace plamatrix::internal::detail

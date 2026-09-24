@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-namespace plamatrix::benchmark
+namespace plamatrix::internal::benchmark
 {
 
     TEST(BackendScenarios, BuildsStructuredSparseSystems)
@@ -47,4 +47,4 @@ namespace plamatrix::benchmark
         fixture.matrix.validateStructure();
     }
 
-} // namespace plamatrix::benchmark
+} // namespace plamatrix::internal::benchmark

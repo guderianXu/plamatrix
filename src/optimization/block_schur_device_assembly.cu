@@ -2,7 +2,7 @@
 
 #include "block_schur_sparse_assembly.h"
 
-#include "plamatrix/core/error_check.h"
+#include "plamatrix/internal/core/error_check.h"
 
 #include <cuda_runtime.h>
 
@@ -11,7 +11,7 @@
 #include <memory>
 #include <utility>
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
     namespace
     {
@@ -437,4 +437,4 @@ namespace plamatrix::block_schur_detail
     template void copyLastCudaSchurValuesToDevice(float*, std::size_t, SchurComplementSolverWorkspace<float>&);
     template void copyLastCudaSchurValuesToDevice(double*, std::size_t, SchurComplementSolverWorkspace<double>&);
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

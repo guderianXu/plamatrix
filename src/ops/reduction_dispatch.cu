@@ -12,7 +12,7 @@
 #include "reduction_detail.h"
 #include "reduction_kernels.cuh"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace reduction_detail
 {
@@ -48,7 +48,7 @@ void requireNonEmptyLanes(const char* operation, const ReductionPlan& plan)
 
 template <typename Scalar>
 void checkOutput(const char* operation,
-                 const DenseMatrix<Scalar, Device::GPU>& output,
+                 const DenseStorage<Scalar, Device::GPU>& output,
                  const ReductionPlan& plan)
 {
     if (output.rows() != plan.output_rows || output.cols() != plan.output_cols)
@@ -107,7 +107,7 @@ Stage* reserveCubWorkspace(ReductionWorkspace& workspace,
 template <typename Scalar, typename Iterator>
 void launchCubSum(Iterator input,
                   Index item_count,
-                  DenseMatrix<Scalar, Device::GPU>& output,
+                  DenseStorage<Scalar, Device::GPU>& output,
                   ReductionWorkspace& workspace,
                   cudaStream_t stream)
 {
@@ -122,8 +122,8 @@ void launchCubSum(Iterator input,
 }
 
 template <typename Scalar>
-void launchCubMean(const DenseMatrix<Scalar, Device::GPU>& input,
-                   DenseMatrix<Scalar, Device::GPU>& output,
+void launchCubMean(const DenseStorage<Scalar, Device::GPU>& input,
+                   DenseStorage<Scalar, Device::GPU>& output,
                    ReductionWorkspace& workspace,
                    cudaStream_t stream)
 {
@@ -176,8 +176,8 @@ void launchCubMean(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <bool FindMinimum, typename Scalar>
-void launchCubExtreme(const DenseMatrix<Scalar, Device::GPU>& input,
-                      DenseMatrix<Scalar, Device::GPU>& values,
+void launchCubExtreme(const DenseStorage<Scalar, Device::GPU>& input,
+                      DenseStorage<Scalar, Device::GPU>& values,
                       Index* indices,
                       ReductionWorkspace& workspace,
                       cudaStream_t stream)
@@ -230,9 +230,9 @@ ReductionPlan validatedIndexedPlan(const char* operation,
 template <typename Scalar>
 void launchValueReduction(ValueOperation operation,
                           const char* operation_name,
-                          const DenseMatrix<Scalar, Device::GPU>& input,
+                          const DenseStorage<Scalar, Device::GPU>& input,
                           ReductionAxis axis,
-                          DenseMatrix<Scalar, Device::GPU>& output,
+                          DenseStorage<Scalar, Device::GPU>& output,
                           ReductionWorkspace& workspace,
                           cudaStream_t stream)
 {
@@ -300,10 +300,10 @@ void launchValueReduction(ValueOperation operation,
 
 template <bool FindMinimum, typename Scalar>
 void launchIndexedReduction(const char* operation,
-                            const DenseMatrix<Scalar, Device::GPU>& input,
+                            const DenseStorage<Scalar, Device::GPU>& input,
                             ReductionAxis axis,
-                            DenseMatrix<Scalar, Device::GPU>& values,
-                            DenseMatrix<Index, Device::GPU>& indices,
+                            DenseStorage<Scalar, Device::GPU>& values,
+                            DenseStorage<Index, Device::GPU>& indices,
                             ReductionWorkspace& workspace,
                             cudaStream_t stream)
 {
@@ -332,16 +332,16 @@ void launchIndexedReduction(const char* operation,
 
 #define PLAMATRIX_INSTANTIATE_DISPATCH(Scalar)                                          \
     template void launchValueReduction<Scalar>(                                        \
-        ValueOperation, const char*, const DenseMatrix<Scalar, Device::GPU>&,           \
-        ReductionAxis, DenseMatrix<Scalar, Device::GPU>&, ReductionWorkspace&,          \
+        ValueOperation, const char*, const DenseStorage<Scalar, Device::GPU>&,           \
+        ReductionAxis, DenseStorage<Scalar, Device::GPU>&, ReductionWorkspace&,          \
         cudaStream_t);                                                                  \
     template void launchIndexedReduction<true, Scalar>(                                 \
-        const char*, const DenseMatrix<Scalar, Device::GPU>&, ReductionAxis,            \
-        DenseMatrix<Scalar, Device::GPU>&, DenseMatrix<Index, Device::GPU>&,            \
+        const char*, const DenseStorage<Scalar, Device::GPU>&, ReductionAxis,            \
+        DenseStorage<Scalar, Device::GPU>&, DenseStorage<Index, Device::GPU>&,            \
         ReductionWorkspace&, cudaStream_t);                                             \
     template void launchIndexedReduction<false, Scalar>(                                \
-        const char*, const DenseMatrix<Scalar, Device::GPU>&, ReductionAxis,            \
-        DenseMatrix<Scalar, Device::GPU>&, DenseMatrix<Index, Device::GPU>&,            \
+        const char*, const DenseStorage<Scalar, Device::GPU>&, ReductionAxis,            \
+        DenseStorage<Scalar, Device::GPU>&, DenseStorage<Index, Device::GPU>&,            \
         ReductionWorkspace&, cudaStream_t)
 
 #ifdef PLAMATRIX_USE_FLOAT
@@ -355,4 +355,4 @@ PLAMATRIX_INSTANTIATE_DISPATCH(double);
 #undef PLAMATRIX_INSTANTIATE_DISPATCH
 
 } // namespace reduction_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

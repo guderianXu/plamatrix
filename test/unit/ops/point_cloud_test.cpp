@@ -2,15 +2,16 @@
 
 #include <gtest/gtest.h>
 
-#include <plamatrix/ops/point_cloud.h>
+#include <plamatrix/internal/ops/point_cloud.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 // PointCloud: rotationMatrix_ZAxis_90deg_Cpu — rotate (1,0,0) by 90 degrees around Z → (0,1,0)
 TEST(PointCloud, rotationMatrix_ZAxis_90deg_Cpu)
 {
     constexpr double pi = 3.14159265358979323846;
-    Vec3<double> axis = {0.0, 0.0, 1.0};
+    PackedVector3<double> axis = {0.0, 0.0, 1.0};
     double angle = pi / 2.0;
 
     auto R = rotationMatrix<double, Device::CPU>(axis, angle);
@@ -36,7 +37,7 @@ TEST(PointCloud, rotationMatrix_ZAxis_90deg_Cpu)
     EXPECT_NEAR(R(2, 2), 1.0, 1e-9);
 
     // Verify transformation: R * (1, 0, 0) should give (0, 1, 0)
-    DenseMatrix<double, Device::CPU> point(1, 3);
+    DenseStorage<double, Device::CPU> point(1, 3);
     point.setValue(0, 0, 1.0);
     point.setValue(0, 1, 0.0);
     point.setValue(0, 2, 0.0);
@@ -54,13 +55,13 @@ TEST(PointCloud, rotationMatrix_ZAxis_90deg_Cpu)
 TEST(PointCloud, rigidTransform_4x4)
 {
     // Identity rotation
-    DenseMatrix<double, Device::CPU> R(3, 3);
+    DenseStorage<double, Device::CPU> R(3, 3);
     for (Index i = 0; i < 3; ++i)
     {
         R.setValue(i, i, 1.0);
     }
 
-    Vec3<double> t = {10.0, 20.0, 30.0};
+    PackedVector3<double> t = {10.0, 20.0, 30.0};
 
     auto T = rigidTransform<double, Device::CPU>(R, t);
 
@@ -89,8 +90,8 @@ TEST(PointCloud, rigidTransform_4x4)
 
 TEST(PointCloud, rigidTransform_RejectsNon3x3Rotation)
 {
-    DenseMatrix<double, Device::CPU> bad_R(3, 4);
-    Vec3<double> t = {1.0, 2.0, 3.0};
+    DenseStorage<double, Device::CPU> bad_R(3, 4);
+    PackedVector3<double> t = {1.0, 2.0, 3.0};
 
     EXPECT_THROW((rigidTransform<double, Device::CPU>(bad_R, t)), std::runtime_error);
 }
@@ -99,7 +100,7 @@ TEST(PointCloud, rigidTransform_RejectsNon3x3Rotation)
 TEST(PointCloud, covarianceMatrix_4Points_Cpu)
 {
     // 4 points: (1,0,0), (0,1,0), (0,0,1), (0,0,0)
-    DenseMatrix<double, Device::CPU> points(4, 3);
+    DenseStorage<double, Device::CPU> points(4, 3);
     points.setValue(0, 0, 1.0);
     points.setValue(0, 1, 0.0);
     points.setValue(0, 2, 0.0);
@@ -145,7 +146,7 @@ TEST(PointCloud, covarianceMatrix_4Points_Cpu)
 TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_MediumCloud)
 {
     constexpr Index N = 4096;
-    DenseMatrix<float, Device::CPU> points(N, 3);
+    DenseStorage<float, Device::CPU> points(N, 3);
     for (Index i = 0; i < N; ++i)
     {
         float x = static_cast<float>((i % 97) - 48) * 0.25f;
@@ -172,7 +173,7 @@ TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_MediumCloud)
 TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_WithLargeOffset)
 {
     constexpr Index N = 4096;
-    DenseMatrix<float, Device::CPU> points(N, 3);
+    DenseStorage<float, Device::CPU> points(N, 3);
     for (Index i = 0; i < N; ++i)
     {
         float dx = static_cast<float>((i % 17) - 8) * 0.125f;
@@ -229,7 +230,7 @@ TEST(PointCloud, covarianceMatrix_GpuMatchesCpu_WithLargeOffset)
 
 TEST(PointCloud, covarianceMatrix_GpuOutputReuseAndAsyncWorkspace)
 {
-    DenseMatrix<float, Device::CPU> points(4, 3);
+    DenseStorage<float, Device::CPU> points(4, 3);
     points.setValue(0, 0, 1.0f);
     points.setValue(0, 1, 0.0f);
     points.setValue(0, 2, 0.0f);
@@ -245,8 +246,8 @@ TEST(PointCloud, covarianceMatrix_GpuOutputReuseAndAsyncWorkspace)
 
     auto expected = covarianceMatrix<float, Device::CPU>(points);
     auto points_gpu = points.toGpu();
-    DenseMatrix<float, Device::GPU> sync_output(3, 3);
-    DenseMatrix<float, Device::GPU> async_output(3, 3);
+    DenseStorage<float, Device::GPU> sync_output(3, 3);
+    DenseStorage<float, Device::GPU> async_output(3, 3);
     GpuCovarianceWorkspace<float> workspace;
 
     covarianceMatrix(points_gpu, sync_output);
@@ -271,8 +272,8 @@ TEST(PointCloud, covarianceMatrix_GpuOutputReuseAndAsyncWorkspace)
 
 TEST(PointCloud, covarianceMatrix_GpuWorkspaceHandlesAsyncGrowth)
 {
-    DenseMatrix<float, Device::CPU> small_points(4, 3);
-    DenseMatrix<float, Device::CPU> large_points(300, 3);
+    DenseStorage<float, Device::CPU> small_points(4, 3);
+    DenseStorage<float, Device::CPU> large_points(300, 3);
 
     for (Index i = 0; i < small_points.rows(); ++i)
     {
@@ -292,8 +293,8 @@ TEST(PointCloud, covarianceMatrix_GpuWorkspaceHandlesAsyncGrowth)
     auto small_gpu = small_points.toGpu();
     auto large_gpu = large_points.toGpu();
 
-    DenseMatrix<float, Device::GPU> small_output(3, 3);
-    DenseMatrix<float, Device::GPU> large_output(3, 3);
+    DenseStorage<float, Device::GPU> small_output(3, 3);
+    DenseStorage<float, Device::GPU> large_output(3, 3);
     GpuCovarianceWorkspace<float> workspace;
 
     cudaStream_t stream = nullptr;
@@ -319,9 +320,9 @@ TEST(PointCloud, covarianceMatrix_GpuWorkspaceHandlesAsyncGrowth)
 
 TEST(PointCloud, covarianceMatrix_GpuRejectsOutputDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> points(4, 3);
+    DenseStorage<float, Device::CPU> points(4, 3);
     auto points_gpu = points.toGpu();
-    DenseMatrix<float, Device::GPU> bad_output(3, 2);
+    DenseStorage<float, Device::GPU> bad_output(3, 2);
 
     EXPECT_THROW(covarianceMatrix(points_gpu, bad_output), std::runtime_error);
 }
@@ -331,17 +332,17 @@ TEST(PointCloud, covarianceMatrix_GpuRejectsOutputDimensionMismatch)
 TEST(PointCloud, transformPoints_Cpu)
 {
     // Identity rotation + translation (10, 0, 0)
-    DenseMatrix<double, Device::CPU> R(3, 3);
+    DenseStorage<double, Device::CPU> R(3, 3);
     for (Index i = 0; i < 3; ++i)
     {
         R.setValue(i, i, 1.0);
     }
 
-    Vec3<double> t = {10.0, 0.0, 0.0};
+    PackedVector3<double> t = {10.0, 0.0, 0.0};
     auto T = rigidTransform<double, Device::CPU>(R, t);
 
     // 2 points: (1, 2, 3) and (4, 5, 6)
-    DenseMatrix<double, Device::CPU> points(2, 3);
+    DenseStorage<double, Device::CPU> points(2, 3);
     points.setValue(0, 0, 1.0);
     points.setValue(0, 1, 2.0);
     points.setValue(0, 2, 3.0);
@@ -369,16 +370,16 @@ TEST(PointCloud, transformPoints_Cpu)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(PointCloud, transformPoints_GpuOutputReuseAndAsync)
 {
-    DenseMatrix<float, Device::CPU> R(3, 3);
+    DenseStorage<float, Device::CPU> R(3, 3);
     for (Index i = 0; i < 3; ++i)
     {
         R.setValue(i, i, 1.0f);
     }
 
-    Vec3<float> t = {10.0f, 0.0f, 0.0f};
+    PackedVector3<float> t = {10.0f, 0.0f, 0.0f};
     auto T_gpu = rigidTransform<float, Device::CPU>(R, t).toGpu();
 
-    DenseMatrix<float, Device::CPU> points(2, 3);
+    DenseStorage<float, Device::CPU> points(2, 3);
     points.setValue(0, 0, 1.0f);
     points.setValue(0, 1, 2.0f);
     points.setValue(0, 2, 3.0f);
@@ -387,8 +388,8 @@ TEST(PointCloud, transformPoints_GpuOutputReuseAndAsync)
     points.setValue(1, 2, 6.0f);
     auto points_gpu = points.toGpu();
 
-    DenseMatrix<float, Device::GPU> sync_output(2, 3);
-    DenseMatrix<float, Device::GPU> async_output(2, 3);
+    DenseStorage<float, Device::GPU> sync_output(2, 3);
+    DenseStorage<float, Device::GPU> async_output(2, 3);
 
     transformPoints(T_gpu, points_gpu, sync_output);
 
@@ -413,18 +414,20 @@ TEST(PointCloud, transformPoints_GpuOutputReuseAndAsync)
 
 TEST(PointCloud, transformPoints_GpuRejectsOutputDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> R(3, 3);
+    DenseStorage<float, Device::CPU> R(3, 3);
     for (Index i = 0; i < 3; ++i)
     {
         R.setValue(i, i, 1.0f);
     }
 
-    Vec3<float> t = {0.0f, 0.0f, 0.0f};
+    PackedVector3<float> t = {0.0f, 0.0f, 0.0f};
     auto T_gpu = rigidTransform<float, Device::CPU>(R, t).toGpu();
-    DenseMatrix<float, Device::CPU> points(2, 3);
+    DenseStorage<float, Device::CPU> points(2, 3);
     auto points_gpu = points.toGpu();
-    DenseMatrix<float, Device::GPU> bad_output(3, 3);
+    DenseStorage<float, Device::GPU> bad_output(3, 3);
 
     EXPECT_THROW(transformPoints(T_gpu, points_gpu, bad_output), std::runtime_error);
 }
 #endif
+
+} // namespace plamatrix::internal

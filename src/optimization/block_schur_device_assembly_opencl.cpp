@@ -2,7 +2,7 @@
 
 #include "block_schur_sparse_assembly.h"
 
-#include "plamatrix/opencl/execution.h"
+#include "plamatrix/internal/opencl/execution.h"
 
 #include <algorithm>
 #include <memory>
@@ -10,7 +10,7 @@
 #include <string>
 #include <type_traits>
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 namespace
 {
@@ -302,4 +302,4 @@ template std::vector<double> assembleSchurValuesOnOpenCl(
     const std::vector<Index>&, const std::vector<Index>&,
     SchurComplementSolverWorkspace<double>&, bool);
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

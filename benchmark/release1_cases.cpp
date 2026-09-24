@@ -11,21 +11,21 @@
 
 #include <omp.h>
 
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/dense/elementwise.h"
-#include "plamatrix/ops/indexing.h"
-#include "plamatrix/ops/reduction.h"
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/dense/elementwise.h"
+#include "plamatrix/internal/ops/indexing.h"
+#include "plamatrix/internal/ops/reduction.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace detail
 {
 namespace
 {
 
-using FloatMatrix = DenseMatrix<float, Device::CPU>;
-using MaskMatrix = DenseMatrix<std::uint8_t, Device::CPU>;
+using FloatMatrix = DenseStorage<float, Device::CPU>;
+using MaskMatrix = DenseStorage<std::uint8_t, Device::CPU>;
 
 class OmpThreadGuard
 {
@@ -272,4 +272,4 @@ void runRelease1Cases(Index size,
 }
 
 } // namespace detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

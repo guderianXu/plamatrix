@@ -7,13 +7,13 @@
 #include <vector>
 
 #include "backend_scenarios.h"
-#include "plamatrix/opencl/iterative_solver.h"
-#include "plamatrix/opencl/runtime.h"
-#include "plamatrix/vulkan/iterative_solver.h"
-#include "plamatrix/vulkan/runtime.h"
+#include "plamatrix/internal/opencl/iterative_solver.h"
+#include "plamatrix/internal/opencl/runtime.h"
+#include "plamatrix/internal/vulkan/iterative_solver.h"
+#include "plamatrix/internal/vulkan/runtime.h"
 
-using namespace plamatrix;
-using namespace plamatrix::benchmark;
+namespace plamatrix::internal::benchmark
+{
 
 namespace
 {
@@ -30,7 +30,7 @@ namespace
         options.relativeTolerance = 1.0e-5;
         options.requireConvergence = true;
         options.convergenceCheckInterval = convergenceCheckInterval;
-        DenseMatrix<float, Device::CPU> solution(fixture.matrix.rows(), 1);
+        DenseStorage<float, Device::CPU> solution(fixture.matrix.rows(), 1);
         solution.fill(0.0f);
         solution.fill(0.0f);
         const auto coldStart = std::chrono::steady_clock::now();
@@ -55,7 +55,9 @@ namespace
             {
                 std::sort(timings.begin(), timings.end());
                 const char* spmvKernel =
-                    std::string(backend) == "vulkan" ? (report.subgroupSpmv ? "subgroup" : "scalar") : "n/a";
+                    std::string(backend) == "vulkan"
+                        ? (report.blockSpmv ? "block" : (report.subgroupSpmv ? "subgroup" : "scalar"))
+                        : "n/a";
                 std::cout << fixture.scenario << ',' << backend << ',' << device << ',' << fixture.matrix.rows() << ','
                           << fixture.matrix.nnz() << ',' << report.iterations << ',' << std::setprecision(9)
                           << report.initialResidual << ',' << report.finalResidual << ',' << report.commandSubmissions
@@ -69,7 +71,7 @@ namespace
 
 } // namespace
 
-int main(int argc, char** argv)
+int runBenchmark(int argc, char** argv)
 {
     std::string scenario = "tridiagonal";
     std::vector<Index> sizes;
@@ -209,4 +211,11 @@ int main(int argc, char** argv)
         runFixture(makeBackendFixture(scenario, size));
     }
     return 0;
+}
+
+}
+
+int main(int argc, char** argv)
+{
+    return plamatrix::internal::benchmark::runBenchmark(argc, argv);
 }

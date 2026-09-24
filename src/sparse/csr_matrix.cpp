@@ -1,31 +1,31 @@
-#include "plamatrix/sparse/coo_matrix.h"
-#include "plamatrix/sparse/csr_matrix.h"
+#include "plamatrix/internal/sparse/coo_storage.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 // Explicit instantiations for supported scalar types and devices
 
-// CSRMatrix
+// CsrStorage
 #ifdef PLAMATRIX_USE_FLOAT
-template class CSRMatrix<float, Device::CPU>;
-template class CSRMatrix<float, Device::GPU>;
+template class CsrStorage<float, Device::CPU>;
+template class CsrStorage<float, Device::GPU>;
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template class CSRMatrix<double, Device::CPU>;
-template class CSRMatrix<double, Device::GPU>;
+template class CsrStorage<double, Device::CPU>;
+template class CsrStorage<double, Device::GPU>;
 #endif
 
-// COOMatrix
+// CooStorage
 #ifdef PLAMATRIX_USE_FLOAT
-template class COOMatrix<float, Device::CPU>;
-template class COOMatrix<float, Device::GPU>;
+template class CooStorage<float, Device::CPU>;
+template class CooStorage<float, Device::GPU>;
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template class COOMatrix<double, Device::CPU>;
-template class COOMatrix<double, Device::GPU>;
+template class CooStorage<double, Device::CPU>;
+template class CooStorage<double, Device::GPU>;
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

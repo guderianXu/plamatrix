@@ -6,11 +6,11 @@
 #include <cublas_v2.h>
 #include <cusolverDn.h>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/core/cuda_buffer.h"
-#include "plamatrix/ops/decomposition.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/core/cuda_buffer.h"
+#include "plamatrix/internal/ops/decomposition.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -48,8 +48,8 @@ int checkedCusolverInt(Index value, const char* name)
 }
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
-svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+svdGpuImpl(const DenseStorage<Scalar, Device::GPU>& A)
 {
     Index m = A.rows();
     Index n = A.cols();
@@ -82,16 +82,16 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     int min_mn   = (m_int < n_int) ? m_int : n_int;  // std::min with plain ints
 
     // Copy A to device (gesvd overwrites A)
-    DenseMatrix<Scalar, Device::GPU> A_copy(m, n);
+    DenseStorage<Scalar, Device::GPU> A_copy(m, n);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(A_copy.data(), A.data(),
                    static_cast<std::size_t>(m * n) * sizeof(Scalar),
                    cudaMemcpyDeviceToDevice));
 
     // Output matrices on GPU
-    DenseMatrix<Scalar, Device::GPU> U_gpu(m, m);
-    DenseMatrix<Scalar, Device::GPU> S_gpu(min_mn, 1);
-    DenseMatrix<Scalar, Device::GPU> Vt_gpu(n, n);
+    DenseStorage<Scalar, Device::GPU> U_gpu(m, m);
+    DenseStorage<Scalar, Device::GPU> S_gpu(min_mn, 1);
+    DenseStorage<Scalar, Device::GPU> Vt_gpu(n, n);
 
     // Query workspace size
     int lwork = 0;
@@ -167,29 +167,29 @@ svdGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
 } // anonymous namespace
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
-svd(const DenseMatrix<Scalar, Device::GPU>& A)
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+svd(const DenseStorage<Scalar, Device::GPU>& A)
 {
     return svdGpuImpl(A);
 }
 
 // Explicit template instantiations
 #ifdef PLAMATRIX_USE_FLOAT
-template std::tuple<DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>>
-svd(const DenseMatrix<float, Device::GPU>&);
+template std::tuple<DenseStorage<float, Device::GPU>, DenseStorage<float, Device::GPU>, DenseStorage<float, Device::GPU>>
+svd(const DenseStorage<float, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template std::tuple<DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>>
-svd(const DenseMatrix<double, Device::GPU>&);
+template std::tuple<DenseStorage<double, Device::GPU>, DenseStorage<double, Device::GPU>, DenseStorage<double, Device::GPU>>
+svd(const DenseStorage<double, Device::GPU>&);
 #endif
 
 namespace
 {
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
-qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+qrGpuImpl(const DenseStorage<Scalar, Device::GPU>& A)
 {
     Index m = A.rows();
     Index n = A.cols();
@@ -207,7 +207,7 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     int min_mn = (m_int < n_int) ? m_int : n_int;
 
     // Copy A to device (geqrf overwrites A)
-    DenseMatrix<Scalar, Device::GPU> R(m, n);
+    DenseStorage<Scalar, Device::GPU> R(m, n);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(R.data(), A.data(),
                    static_cast<std::size_t>(m * n) * sizeof(Scalar),
@@ -270,7 +270,7 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     // On output, A contains Q (first k columns are orthonormal)
 
     // Allocate Q matrix: copy of R, then orgqr fills it with Q
-    DenseMatrix<Scalar, Device::GPU> Q_full(m, m);
+    DenseStorage<Scalar, Device::GPU> Q_full(m, m);
     // Copy the first n columns from R to Q_full (orgqr works on the input matrix)
     // For m > n, we need to pad Q to m x m dimensions
     // Easy approach: create m x m matrix, set to identity, copy R's first n cols
@@ -281,7 +281,7 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
         cudaMemset(Q_full.data(), 0, static_cast<std::size_t>(m * m) * sizeof(Scalar)));
     // Set diagonal to 1 (CPU side for simplicity)
     {
-        DenseMatrix<Scalar, Device::CPU> Q_cpu(m, m);
+        DenseStorage<Scalar, Device::CPU> Q_cpu(m, m);
         for (Index i = 0; i < m; ++i)
         {
             Q_cpu(i, i) = Scalar(1);
@@ -353,7 +353,7 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
     // Zero out sub-diagonal elements of R to get clean upper triangular
     // We do this on CPU for simplicity since R stays on GPU
     // Start with a zero matrix and copy upper triangular part
-    DenseMatrix<Scalar, Device::GPU> R_clean(m, n);
+    DenseStorage<Scalar, Device::GPU> R_clean(m, n);
     PLAMATRIX_CHECK_CUDA(
         cudaMemset(R_clean.data(), 0, static_cast<std::size_t>(m * n) * sizeof(Scalar)));
 
@@ -378,7 +378,7 @@ qrGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> eighGpuImpl(const DenseMatrix<Scalar, Device::GPU>& A)
+DenseStorage<Scalar, Device::GPU> eighGpuImpl(const DenseStorage<Scalar, Device::GPU>& A)
 {
     Index n = A.rows();
 
@@ -402,10 +402,10 @@ DenseMatrix<Scalar, Device::GPU> eighGpuImpl(const DenseMatrix<Scalar, Device::G
     cublasFillMode_t uplo = CUBLAS_FILL_MODE_LOWER;
 
     // Allocate eigenvalue array on GPU
-    DenseMatrix<Scalar, Device::GPU> eigvals_gpu(n, 1);
+    DenseStorage<Scalar, Device::GPU> eigvals_gpu(n, 1);
 
     // Copy A to GPU work matrix (syevd overwrites A)
-    DenseMatrix<Scalar, Device::GPU> A_work(n, n);
+    DenseStorage<Scalar, Device::GPU> A_work(n, n);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(A_work.data(), A.data(),
                    static_cast<std::size_t>(n * n) * sizeof(Scalar),
@@ -474,7 +474,7 @@ DenseMatrix<Scalar, Device::GPU> eighGpuImpl(const DenseMatrix<Scalar, Device::G
 
     // cuSOLVER returns eigenvalues in ascending order; sort to descending
     {
-        DenseMatrix<Scalar, Device::CPU> eigvals_cpu(n, 1);
+        DenseStorage<Scalar, Device::CPU> eigvals_cpu(n, 1);
         PLAMATRIX_CHECK_CUDA(
             cudaMemcpy(eigvals_cpu.data(), eigvals_gpu.data(),
                        static_cast<std::size_t>(n) * sizeof(Scalar),
@@ -508,39 +508,206 @@ DenseMatrix<Scalar, Device::GPU> eighGpuImpl(const DenseMatrix<Scalar, Device::G
     return eigvals_gpu;
 }
 
+template <typename Scalar>
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+eighDecompositionGpuImpl(const DenseStorage<Scalar, Device::GPU>& input)
+{
+    const Index n = input.rows();
+    if (n == 0 || input.cols() != n)
+    {
+        throw std::runtime_error("Eigh: input matrix must be non-empty and square");
+    }
+    const int dimension = checkedCusolverInt(n, "Eigh n");
+    auto vectors = DenseStorage<Scalar, Device::GPU>::uninitialized(n, n);
+    PLAMATRIX_CHECK_CUDA(cudaMemcpy(vectors.data(),
+                                   input.data(),
+                                   static_cast<std::size_t>(n * n) * sizeof(Scalar),
+                                   cudaMemcpyDeviceToDevice));
+    auto values = DenseStorage<Scalar, Device::GPU>::uninitialized(n, 1);
+    cusolverDnHandle_t handle = getCusolverHandle();
+    const auto mode = CUSOLVER_EIG_MODE_VECTOR;
+    const auto triangle = CUBLAS_FILL_MODE_LOWER;
+    int workspace_size = 0;
+    if constexpr (std::is_same_v<Scalar, float>)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnSsyevd_bufferSize(handle,
+                                                             mode,
+                                                             triangle,
+                                                             dimension,
+                                                             vectors.data(),
+                                                             dimension,
+                                                             values.data(),
+                                                             &workspace_size));
+    }
+    else
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDsyevd_bufferSize(handle,
+                                                             mode,
+                                                             triangle,
+                                                             dimension,
+                                                             vectors.data(),
+                                                             dimension,
+                                                             values.data(),
+                                                             &workspace_size));
+    }
+    detail::CudaBuffer workspace(static_cast<std::size_t>(workspace_size) * sizeof(Scalar));
+    detail::CudaBuffer status(sizeof(int));
+    if constexpr (std::is_same_v<Scalar, float>)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnSsyevd(handle,
+                                                  mode,
+                                                  triangle,
+                                                  dimension,
+                                                  vectors.data(),
+                                                  dimension,
+                                                  values.data(),
+                                                  workspace.as<Scalar>(),
+                                                  workspace_size,
+                                                  status.as<int>()));
+    }
+    else
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDsyevd(handle,
+                                                  mode,
+                                                  triangle,
+                                                  dimension,
+                                                  vectors.data(),
+                                                  dimension,
+                                                  values.data(),
+                                                  workspace.as<Scalar>(),
+                                                  workspace_size,
+                                                  status.as<int>()));
+    }
+    int host_status = 0;
+    PLAMATRIX_CHECK_CUDA(cudaMemcpy(&host_status, status.as<int>(), sizeof(int), cudaMemcpyDeviceToHost));
+    if (host_status != 0)
+    {
+        throw std::runtime_error(host_status < 0 ? "Eigh: cuSOLVER rejected an argument"
+                                                : "Eigh: cuSOLVER failed to converge");
+    }
+    return {std::move(vectors), std::move(values)};
+}
+
+template <typename Scalar>
+DenseStorage<Scalar, Device::GPU> choleskyGpuImpl(const DenseStorage<Scalar, Device::GPU>& input)
+{
+    const Index n = input.rows();
+    if (n == 0 || input.cols() != n)
+    {
+        throw std::runtime_error("Cholesky: input matrix must be non-empty and square");
+    }
+    const int dimension = checkedCusolverInt(n, "Cholesky n");
+    auto factor = DenseStorage<Scalar, Device::GPU>::uninitialized(n, n);
+    PLAMATRIX_CHECK_CUDA(cudaMemcpy(factor.data(),
+                                   input.data(),
+                                   static_cast<std::size_t>(n * n) * sizeof(Scalar),
+                                   cudaMemcpyDeviceToDevice));
+    cusolverDnHandle_t handle = getCusolverHandle();
+    int workspace_size = 0;
+    if constexpr (std::is_same_v<Scalar, float>)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnSpotrf_bufferSize(handle,
+                                                             CUBLAS_FILL_MODE_LOWER,
+                                                             dimension,
+                                                             factor.data(),
+                                                             dimension,
+                                                             &workspace_size));
+    }
+    else
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDpotrf_bufferSize(handle,
+                                                             CUBLAS_FILL_MODE_LOWER,
+                                                             dimension,
+                                                             factor.data(),
+                                                             dimension,
+                                                             &workspace_size));
+    }
+    detail::CudaBuffer workspace(static_cast<std::size_t>(workspace_size) * sizeof(Scalar));
+    detail::CudaBuffer status(sizeof(int));
+    if constexpr (std::is_same_v<Scalar, float>)
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnSpotrf(handle,
+                                                  CUBLAS_FILL_MODE_LOWER,
+                                                  dimension,
+                                                  factor.data(),
+                                                  dimension,
+                                                  workspace.as<Scalar>(),
+                                                  workspace_size,
+                                                  status.as<int>()));
+    }
+    else
+    {
+        PLAMATRIX_CHECK_CUSOLVER(cusolverDnDpotrf(handle,
+                                                  CUBLAS_FILL_MODE_LOWER,
+                                                  dimension,
+                                                  factor.data(),
+                                                  dimension,
+                                                  workspace.as<Scalar>(),
+                                                  workspace_size,
+                                                  status.as<int>()));
+    }
+    int host_status = 0;
+    PLAMATRIX_CHECK_CUDA(cudaMemcpy(&host_status, status.as<int>(), sizeof(int), cudaMemcpyDeviceToHost));
+    if (host_status != 0)
+    {
+        throw std::runtime_error(host_status < 0 ? "Cholesky: cuSOLVER rejected an argument"
+                                                : "Cholesky: matrix is not positive definite");
+    }
+    return factor;
+}
+
 } // anonymous namespace
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::GPU>, DenseMatrix<Scalar, Device::GPU>>
-qr(const DenseMatrix<Scalar, Device::GPU>& A)
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+qr(const DenseStorage<Scalar, Device::GPU>& A)
 {
     return qrGpuImpl(A);
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> eigh(const DenseMatrix<Scalar, Device::GPU>& A)
+DenseStorage<Scalar, Device::GPU> eigh(const DenseStorage<Scalar, Device::GPU>& A)
 {
     return eighGpuImpl(A);
 }
 
+template <typename Scalar>
+std::tuple<DenseStorage<Scalar, Device::GPU>, DenseStorage<Scalar, Device::GPU>>
+eighDecomposition(const DenseStorage<Scalar, Device::GPU>& input)
+{
+    return eighDecompositionGpuImpl(input);
+}
+
+template <typename Scalar>
+DenseStorage<Scalar, Device::GPU> cholesky(const DenseStorage<Scalar, Device::GPU>& input)
+{
+    return choleskyGpuImpl(input);
+}
+
 // Explicit template instantiations for qr
 #ifdef PLAMATRIX_USE_FLOAT
-template std::tuple<DenseMatrix<float, Device::GPU>, DenseMatrix<float, Device::GPU>>
-qr(const DenseMatrix<float, Device::GPU>&);
+template std::tuple<DenseStorage<float, Device::GPU>, DenseStorage<float, Device::GPU>>
+qr(const DenseStorage<float, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template std::tuple<DenseMatrix<double, Device::GPU>, DenseMatrix<double, Device::GPU>>
-qr(const DenseMatrix<double, Device::GPU>&);
+template std::tuple<DenseStorage<double, Device::GPU>, DenseStorage<double, Device::GPU>>
+qr(const DenseStorage<double, Device::GPU>&);
 #endif
 
 // Explicit template instantiations for eigh
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> eigh(const DenseMatrix<float, Device::GPU>&);
+template DenseStorage<float, Device::GPU> eigh(const DenseStorage<float, Device::GPU>&);
+template std::tuple<DenseStorage<float, Device::GPU>, DenseStorage<float, Device::GPU>>
+eighDecomposition(const DenseStorage<float, Device::GPU>&);
+template DenseStorage<float, Device::GPU> cholesky(const DenseStorage<float, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> eigh(const DenseMatrix<double, Device::GPU>&);
+template DenseStorage<double, Device::GPU> eigh(const DenseStorage<double, Device::GPU>&);
+template std::tuple<DenseStorage<double, Device::GPU>, DenseStorage<double, Device::GPU>>
+eighDecomposition(const DenseStorage<double, Device::GPU>&);
+template DenseStorage<double, Device::GPU> cholesky(const DenseStorage<double, Device::GPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

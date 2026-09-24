@@ -8,7 +8,7 @@
 
 #ifdef PLAMATRIX_WITH_CUDA
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -98,7 +98,7 @@ TEST(IndexingWorkspaceCudaTest, NormalResetRejectsUnconsumedOverflowStatus)
     auto counts = makeMatrix<Index>(2, 1, {
         std::numeric_limits<Index>::max(), Index(1)
     }).toGpu();
-    DenseMatrix<Index, Device::GPU> output(2, 1);
+    DenseStorage<Index, Device::GPU> output(2, 1);
     test::CudaStreamGuard stream;
     IndexingWorkspace workspace;
     workspace.reserveBytes(1024U * 1024U);
@@ -125,7 +125,7 @@ TEST(IndexingWorkspaceCudaTest, AsyncCloseRejectsUnconsumedOutOfRangeStatus)
 {
     auto input = makeMatrix<float>(1, 1, {10.0F}).toGpu();
     auto indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
-    DenseMatrix<float, Device::GPU> output(1, 1);
+    DenseStorage<float, Device::GPU> output(1, 1);
     test::CudaStreamGuard stream;
     IndexingWorkspace workspace;
 
@@ -152,7 +152,7 @@ TEST(IndexingScanCudaTest, AsyncCallDoesNotWaitForQueuedHostWork)
     auto counts = makeMatrix<Index>(4, 1, {1, 2, 3, 4}).toGpu();
     test::CudaStreamGuard stream;
     IndexingWorkspace workspace;
-    DenseMatrix<Index, Device::GPU> output(4, 1);
+    DenseStorage<Index, Device::GPU> output(4, 1);
     exclusiveScanAsync(counts, output, workspace, stream.get());
     stream.synchronize();
     workspace.checkStatus("exclusiveScanAsync warmup");
@@ -189,6 +189,6 @@ TEST(IndexingScanCudaTest, AsyncCallDoesNotWaitForQueuedHostWork)
 }
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal
 
 #endif

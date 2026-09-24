@@ -7,10 +7,10 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/sparse/sparse_ops.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/sparse/sparse_ops.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -77,8 +77,8 @@ unsigned int checkedGrid(Index count)
 
 void checkMetadata(Index rows,
                    Index cols,
-                   const DenseMatrix<Index, Device::GPU>& row_indices,
-                   const DenseMatrix<Index, Device::GPU>& col_indices,
+                   const DenseStorage<Index, Device::GPU>& row_indices,
+                   const DenseStorage<Index, Device::GPU>& col_indices,
                    Index value_rows,
                    Index value_cols)
 {
@@ -279,13 +279,13 @@ struct SparseCooWorkspaceAccess
     static void finalizeOutput(void* output, bool trusted) noexcept
     {
         detail::CSRMatrixAccess::completeAsyncWrite(
-            *static_cast<CSRMatrix<Scalar, Device::GPU>*>(output), trusted);
+            *static_cast<CsrStorage<Scalar, Device::GPU>*>(output), trusted);
     }
 
     template <typename Scalar>
     static void beginStatus(
         SparseOpsWorkspace& workspace,
-        CSRMatrix<Scalar, Device::GPU>* output) noexcept
+        CsrStorage<Scalar, Device::GPU>* output) noexcept
     {
         workspace._hasStatusBatch = true;
         workspace._statusOutput = output;
@@ -430,10 +430,10 @@ CooSlices reserveCooSlices(Index count,
 template <typename Scalar>
 void launchCooConversion(Index rows,
                          Index cols,
-                         const DenseMatrix<Index, Device::GPU>& row_indices,
-                         const DenseMatrix<Index, Device::GPU>& col_indices,
-                         const DenseMatrix<Scalar, Device::GPU>& values,
-                         CSRMatrix<Scalar, Device::GPU>* output,
+                         const DenseStorage<Index, Device::GPU>& row_indices,
+                         const DenseStorage<Index, Device::GPU>& col_indices,
+                         const DenseStorage<Scalar, Device::GPU>& values,
+                         CsrStorage<Scalar, Device::GPU>* output,
                          SparseOpsWorkspace& workspace,
                          cudaStream_t stream)
 {
@@ -534,24 +534,24 @@ void SparseOpsWorkspace::checkStatus(const char* operation)
 }
 
 template <typename Scalar>
-CSRMatrix<Scalar, Device::GPU> cooToCsr(
+CsrStorage<Scalar, Device::GPU> cooToCsr(
     Index rows,
     Index cols,
-    const DenseMatrix<Index, Device::GPU>& row_indices,
-    const DenseMatrix<Index, Device::GPU>& col_indices,
-    const DenseMatrix<Scalar, Device::GPU>& values,
+    const DenseStorage<Index, Device::GPU>& row_indices,
+    const DenseStorage<Index, Device::GPU>& col_indices,
+    const DenseStorage<Scalar, Device::GPU>& values,
     SparseOpsWorkspace& workspace)
 {
     launchCooConversion(
         rows, cols, row_indices, col_indices, values,
-        static_cast<CSRMatrix<Scalar, Device::GPU>*>(nullptr), workspace, nullptr);
+        static_cast<CsrStorage<Scalar, Device::GPU>*>(nullptr), workspace, nullptr);
     if (row_indices.rows() == 0)
     {
-        return CSRMatrix<Scalar, Device::GPU>(rows, cols, 0);
+        return CsrStorage<Scalar, Device::GPU>(rows, cols, 0);
     }
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
     const CooStatus status = SparseCooWorkspaceAccess::consumeStatus(workspace, "cooToCsr");
-    CSRMatrix<Scalar, Device::GPU> output(rows, cols, status.actualNnz);
+    CsrStorage<Scalar, Device::GPU> output(rows, cols, status.actualNnz);
     launchCooConversion(
         rows, cols, row_indices, col_indices, values, &output, workspace, nullptr);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
@@ -564,10 +564,10 @@ template <typename Scalar>
 void cooToCsrAsync(
     Index rows,
     Index cols,
-    const DenseMatrix<Index, Device::GPU>& row_indices,
-    const DenseMatrix<Index, Device::GPU>& col_indices,
-    const DenseMatrix<Scalar, Device::GPU>& values,
-    CSRMatrix<Scalar, Device::GPU>& output,
+    const DenseStorage<Index, Device::GPU>& row_indices,
+    const DenseStorage<Index, Device::GPU>& col_indices,
+    const DenseStorage<Scalar, Device::GPU>& values,
+    CsrStorage<Scalar, Device::GPU>& output,
     SparseOpsWorkspace& workspace,
     cudaStream_t stream)
 {
@@ -576,25 +576,25 @@ void cooToCsrAsync(
 }
 
 #ifdef PLAMATRIX_USE_FLOAT
-template CSRMatrix<float, Device::GPU> cooToCsr<float>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<float, Device::GPU>&,
+template CsrStorage<float, Device::GPU> cooToCsr<float>(
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<float, Device::GPU>&,
     SparseOpsWorkspace&);
 template void cooToCsrAsync<float>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<float, Device::GPU>&,
-    CSRMatrix<float, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<float, Device::GPU>&,
+    CsrStorage<float, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template CSRMatrix<double, Device::GPU> cooToCsr<double>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<double, Device::GPU>&,
+template CsrStorage<double, Device::GPU> cooToCsr<double>(
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<double, Device::GPU>&,
     SparseOpsWorkspace&);
 template void cooToCsrAsync<double>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<double, Device::GPU>&,
-    CSRMatrix<double, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<double, Device::GPU>&,
+    CsrStorage<double, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

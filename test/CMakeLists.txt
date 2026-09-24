@@ -4,7 +4,23 @@ add_executable(plamatrix_tests
     unit/core/checked_math_test.cpp
     unit/core/device_matrix_test.cpp
     unit/core/parallel_test.cpp
+    unit/core/type_contract_test.cpp
+    unit/core/execution_context_test.cpp
+    unit/core/error_test.cpp
+    unit/core/capabilities_test.cpp
+    unit/device/device_residency_test.cpp
     unit/dense/dense_matrix_test.cpp
+    unit/dense/eigen_core_compatibility_test.cpp
+    unit/dense/eigen_style_api_test.cpp
+    unit/dense/eigen_style_extended_test.cpp
+    unit/dense/matrix_structured_views_test.cpp
+    unit/dense/matrix_reductions_cwise_test.cpp
+    unit/dense/dense_decompositions_test.cpp
+    unit/dense/matrix_expression_test.cpp
+    unit/dense/matrix_map_test.cpp
+    unit/dense/self_adjoint_eigen_solver_test.cpp
+    unit/dense/matrix_view_test.cpp
+    unit/geometry/geometry_test.cpp
     unit/dense/dense_ops_test.cpp
     unit/dense/elementwise_test.cpp
     unit/ops/gemm_test.cpp
@@ -15,8 +31,16 @@ add_executable(plamatrix_tests
     integration/no_cuda_behavior_test.cpp
     integration/point_cloud_workflow_test.cpp
     integration/numpy_reference_test.cpp
+    unit/vulkan/cooperative_matrix_fallback_test.cpp
 )
 target_link_libraries(plamatrix_tests PRIVATE plamatrix GTest::gtest)
+add_test(NAME PlaMatrix.PublicApiBoundary
+    COMMAND ${CMAKE_COMMAND}
+        -S "${CMAKE_CURRENT_SOURCE_DIR}/public_api_contract"
+        -B "${CMAKE_CURRENT_BINARY_DIR}/public_api_contract"
+        -G "${CMAKE_GENERATOR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DPLAMATRIX_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../include")
 target_include_directories(plamatrix_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(plamatrix_tests PRIVATE
     TEST_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference"
@@ -28,6 +52,14 @@ gtest_discover_tests(plamatrix_tests
     DISCOVERY_MODE PRE_TEST
     PROPERTIES SKIP_RETURN_CODE 77
 )
+
+add_executable(plamatrix_fixed_allocation_tests unit/dense/fixed_allocation_test.cpp)
+target_link_libraries(plamatrix_fixed_allocation_tests PRIVATE plamatrix GTest::gtest_main)
+gtest_discover_tests(plamatrix_fixed_allocation_tests
+    TEST_PREFIX plamatrix.
+    DISCOVERY_MODE PRE_TEST
+)
+add_dependencies(plamatrix_tests plamatrix_fixed_allocation_tests)
 
 add_executable(plamatrix_opencl_tests
     unit/opencl/iterative_solver_opencl_test.cpp
@@ -44,6 +76,8 @@ add_dependencies(plamatrix_tests plamatrix_opencl_tests)
 
 if(PLAMATRIX_WITH_VULKAN)
     add_executable(plamatrix_vulkan_tests
+        unit/vulkan/block_schur_vulkan_test.cpp
+        unit/vulkan/cooperative_matrix_test.cpp
         unit/vulkan/vulkan_runtime_test.cpp
     )
     target_link_libraries(plamatrix_vulkan_tests PRIVATE plamatrix GTest::gtest_main)
@@ -54,6 +88,9 @@ if(PLAMATRIX_WITH_VULKAN)
 endif()
 
 set(PLAMATRIX_SPARSE_TEST_SOURCES
+    unit/sparse/eigen_style_sparse_test.cpp
+    unit/sparse/sparse_direct_solver_test.cpp
+    unit/sparse/sparse_mature_api_test.cpp
     unit/sparse/csr_matrix_test.cpp
     unit/sparse/iterative_solver_test.cpp
     unit/sparse/sparse_ops_test.cpp
@@ -108,6 +145,19 @@ gtest_discover_tests(plamatrix_indexing_tests
 
 add_dependencies(plamatrix_tests plamatrix_indexing_tests)
 
+add_executable(plamatrix_grouping_tests
+    unit/ops/grouping_cuda_test.cpp
+    unit/ops/grouping_test.cpp
+)
+target_link_libraries(plamatrix_grouping_tests PRIVATE plamatrix GTest::gtest_main)
+
+gtest_discover_tests(plamatrix_grouping_tests
+    TEST_PREFIX plamatrix.
+    DISCOVERY_MODE PRE_TEST
+)
+
+add_dependencies(plamatrix_tests plamatrix_grouping_tests)
+
 add_executable(plamatrix_small_matrix_tests
     unit/ops/small_matrix_async_test.cpp
     unit/ops/small_matrix_cuda_test.cpp
@@ -144,6 +194,7 @@ gtest_discover_tests(plamatrix_optimization_tests
 add_dependencies(plamatrix_tests plamatrix_optimization_tests)
 
 add_executable(plamatrix_statistics_tests
+    unit/ops/statistics_cuda_test.cpp
     unit/ops/statistics_test.cpp
 )
 target_link_libraries(plamatrix_statistics_tests PRIVATE plamatrix GTest::gtest_main)
@@ -164,3 +215,8 @@ gtest_discover_tests(plamatrix_vector_tests
     TEST_PREFIX plamatrix.
     DISCOVERY_MODE PRE_TEST
 )
+
+if(PLAMATRIX_WITH_EIGEN_REFERENCE)
+    target_sources(plamatrix_tests PRIVATE integration/eigen_reference_test.cpp)
+    target_link_libraries(plamatrix_tests PRIVATE Eigen3::Eigen)
+endif()

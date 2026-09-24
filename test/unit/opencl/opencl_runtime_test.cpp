@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include "plamatrix/opencl/runtime.h"
+#include "plamatrix/internal/opencl/runtime.h"
 
 #include <stdexcept>
 
 #ifdef PLAMATRIX_WITH_OPENCL
-#include "plamatrix/opencl/execution.h"
+#include "plamatrix/internal/opencl/execution.h"
 
 #include <CL/cl.h>
 
@@ -25,27 +25,27 @@ namespace
 
 bool hasUsableOpenClDevice()
 {
-    return plamatrix::opencl::hasUsableOpenClDevice();
+    return plamatrix::internal::opencl::hasUsableOpenClDevice();
 }
 
 int runSingleValueKernel(
-    plamatrix::opencl::OpenClRuntime& runtime,
+    plamatrix::internal::opencl::OpenClRuntime& runtime,
     cl_program program)
 {
-    plamatrix::opencl::CommandQueue queue(runtime.createQueue());
-    plamatrix::opencl::DeviceBuffer output_buffer(
+    plamatrix::internal::opencl::CommandQueue queue(runtime.createQueue());
+    plamatrix::internal::opencl::DeviceBuffer output_buffer(
         runtime.context(), CL_MEM_WRITE_ONLY, sizeof(cl_int));
-    plamatrix::opencl::CompiledKernel kernel(program, "cacheProbe");
-    plamatrix::opencl::kernelBufferArg(kernel, 0, output_buffer);
+    plamatrix::internal::opencl::CompiledKernel kernel(program, "cacheProbe");
+    plamatrix::internal::opencl::kernelBufferArg(kernel, 0, output_buffer);
 
     const std::size_t global_size = 1;
-    plamatrix::opencl::checkOpenCl(
+    plamatrix::internal::opencl::checkOpenCl(
         clEnqueueNDRangeKernel(
             queue.get(), kernel.get(), 1, nullptr, &global_size, nullptr, 0, nullptr, nullptr),
         "clEnqueueNDRangeKernel(cacheProbe)");
 
     std::vector<cl_int> output(1, 0);
-    plamatrix::opencl::readVector(queue.get(), output_buffer, output);
+    plamatrix::internal::opencl::readVector(queue.get(), output_buffer, output);
     return output.front();
 }
 
@@ -62,11 +62,11 @@ TEST(OpenClRuntime, EnumerationContainsSelectedDevice)
         GTEST_SKIP() << "No usable OpenCL GPU with an online compiler";
     }
 
-    const auto devices = plamatrix::opencl::enumerateOpenClGpuDevices();
+    const auto devices = plamatrix::internal::opencl::enumerateOpenClGpuDevices();
     ASSERT_FALSE(devices.empty());
-    EXPECT_NO_THROW(plamatrix::opencl::requireUsableOpenClDevice());
+    EXPECT_NO_THROW(plamatrix::internal::opencl::requireUsableOpenClDevice());
 
-    const int selected_index = plamatrix::opencl::selectedOpenClDeviceIndex();
+    const int selected_index = plamatrix::internal::opencl::selectedOpenClDeviceIndex();
     ASSERT_GE(selected_index, 0);
     const auto selected = std::find_if(devices.begin(), devices.end(), [&](const auto& device)
     {
@@ -75,7 +75,7 @@ TEST(OpenClRuntime, EnumerationContainsSelectedDevice)
     ASSERT_NE(selected, devices.end());
     EXPECT_TRUE(selected->available);
     EXPECT_TRUE(selected->compilerAvailable);
-    EXPECT_EQ(plamatrix::opencl::selectedOpenClDeviceName(), selected->name);
+    EXPECT_EQ(plamatrix::internal::opencl::selectedOpenClDeviceName(), selected->name);
 }
 
 TEST(OpenClRuntime, UploadDownloadAndKernelExecution)
@@ -85,12 +85,12 @@ TEST(OpenClRuntime, UploadDownloadAndKernelExecution)
         GTEST_SKIP() << "No usable OpenCL GPU with an online compiler";
     }
 
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
-    plamatrix::opencl::CommandQueue queue(runtime.createQueue());
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
+    plamatrix::internal::opencl::CommandQueue queue(runtime.createQueue());
     const std::vector<cl_int> input{1, -2, 7, 21};
     std::vector<cl_int> output(input.size(), 0);
-    auto input_buffer = plamatrix::opencl::inputVector(runtime, input);
-    auto output_buffer = plamatrix::opencl::inOutVector(runtime, output);
+    auto input_buffer = plamatrix::internal::opencl::inputVector(runtime, input);
+    auto output_buffer = plamatrix::internal::opencl::inOutVector(runtime, output);
 
     const std::string source = R"CLC(
         __kernel void addDelta(
@@ -103,18 +103,18 @@ TEST(OpenClRuntime, UploadDownloadAndKernelExecution)
         }
     )CLC";
     cl_program program = runtime.program("plamatrix_test_add_delta", source);
-    plamatrix::opencl::CompiledKernel kernel(program, "addDelta");
+    plamatrix::internal::opencl::CompiledKernel kernel(program, "addDelta");
     const cl_int delta = 5;
-    plamatrix::opencl::kernelBufferArg(kernel, 0, input_buffer);
-    plamatrix::opencl::kernelBufferArg(kernel, 1, output_buffer);
-    plamatrix::opencl::kernelArg(kernel, 2, delta);
+    plamatrix::internal::opencl::kernelBufferArg(kernel, 0, input_buffer);
+    plamatrix::internal::opencl::kernelBufferArg(kernel, 1, output_buffer);
+    plamatrix::internal::opencl::kernelArg(kernel, 2, delta);
 
     const std::size_t global_size = input.size();
-    plamatrix::opencl::checkOpenCl(
+    plamatrix::internal::opencl::checkOpenCl(
         clEnqueueNDRangeKernel(
             queue.get(), kernel.get(), 1, nullptr, &global_size, nullptr, 0, nullptr, nullptr),
         "clEnqueueNDRangeKernel(addDelta)");
-    plamatrix::opencl::readVector(queue.get(), output_buffer, output);
+    plamatrix::internal::opencl::readVector(queue.get(), output_buffer, output);
 
     EXPECT_EQ(output, (std::vector<cl_int>{6, 3, 12, 26}));
 }
@@ -126,7 +126,7 @@ TEST(OpenClRuntime, ProgramCacheSeparatesCallerSourceAndOptions)
         GTEST_SKIP() << "No usable OpenCL GPU with an online compiler";
     }
 
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
     const std::string source_one = R"CLC(
         __kernel void cacheProbe(__global int* output)
         {
@@ -163,7 +163,7 @@ TEST(OpenClRuntime, ProgramCacheIsSharedAcrossThreads)
         GTEST_SKIP() << "No usable OpenCL GPU with an online compiler";
     }
 
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
     const std::string source = R"CLC(
         __kernel void threadedCacheProbe(__global int* output)
         {
@@ -193,17 +193,17 @@ TEST(OpenClExecution, ResourceOwnersMoveAndValidateReadBounds)
         GTEST_SKIP() << "No usable OpenCL GPU with an online compiler";
     }
 
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
-    plamatrix::opencl::CommandQueue original_queue(runtime.createQueue());
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
+    plamatrix::internal::opencl::CommandQueue original_queue(runtime.createQueue());
     const cl_command_queue queue_handle = original_queue.get();
-    plamatrix::opencl::CommandQueue moved_queue(std::move(original_queue));
+    plamatrix::internal::opencl::CommandQueue moved_queue(std::move(original_queue));
     EXPECT_EQ(original_queue.get(), nullptr);
     EXPECT_EQ(moved_queue.get(), queue_handle);
 
-    plamatrix::opencl::DeviceBuffer original_buffer(
+    plamatrix::internal::opencl::DeviceBuffer original_buffer(
         runtime.context(), CL_MEM_READ_WRITE, sizeof(cl_int));
     const cl_mem buffer_handle = original_buffer.get();
-    plamatrix::opencl::DeviceBuffer moved_buffer(std::move(original_buffer));
+    plamatrix::internal::opencl::DeviceBuffer moved_buffer(std::move(original_buffer));
     EXPECT_EQ(original_buffer.get(), nullptr);
     EXPECT_EQ(original_buffer.size(), 0U);
     EXPECT_EQ(moved_buffer.get(), buffer_handle);
@@ -211,19 +211,19 @@ TEST(OpenClExecution, ResourceOwnersMoveAndValidateReadBounds)
 
     std::vector<cl_int> too_large(2, 0);
     EXPECT_THROW(
-        plamatrix::opencl::readVector(moved_queue.get(), moved_buffer, too_large),
+        plamatrix::internal::opencl::readVector(moved_queue.get(), moved_buffer, too_large),
         std::out_of_range);
-    EXPECT_EQ(plamatrix::opencl::byteSize<cl_int>(3), 3U * sizeof(cl_int));
+    EXPECT_EQ(plamatrix::internal::opencl::byteSize<cl_int>(3), 3U * sizeof(cl_int));
     EXPECT_THROW(
-        plamatrix::opencl::byteSize<cl_int>(std::numeric_limits<std::size_t>::max()),
+        plamatrix::internal::opencl::byteSize<cl_int>(std::numeric_limits<std::size_t>::max()),
         std::overflow_error);
 }
 
 TEST(OpenClExecution, BuildOptionsUseCallerMacro)
 {
-    EXPECT_TRUE(plamatrix::opencl::realBuildOptions<float>("PROJECT_REAL_DOUBLE").empty());
+    EXPECT_TRUE(plamatrix::internal::opencl::realBuildOptions<float>("PROJECT_REAL_DOUBLE").empty());
     EXPECT_EQ(
-        plamatrix::opencl::realBuildOptions<double>("PROJECT_REAL_DOUBLE"),
+        plamatrix::internal::opencl::realBuildOptions<double>("PROJECT_REAL_DOUBLE"),
         "-DPROJECT_REAL_DOUBLE=1");
 }
 
@@ -231,11 +231,11 @@ TEST(OpenClExecution, BuildOptionsUseCallerMacro)
 
 TEST(OpenClRuntime, DisabledBuildUsesPublicStubs)
 {
-    EXPECT_TRUE(plamatrix::opencl::enumerateOpenClGpuDevices().empty());
-    EXPECT_FALSE(plamatrix::opencl::hasUsableOpenClDevice());
-    EXPECT_THROW(plamatrix::opencl::requireUsableOpenClDevice(), std::runtime_error);
-    EXPECT_TRUE(plamatrix::opencl::selectedOpenClDeviceName().empty());
-    EXPECT_EQ(plamatrix::opencl::selectedOpenClDeviceIndex(), -1);
+    EXPECT_TRUE(plamatrix::internal::opencl::enumerateOpenClGpuDevices().empty());
+    EXPECT_FALSE(plamatrix::internal::opencl::hasUsableOpenClDevice());
+    EXPECT_THROW(plamatrix::internal::opencl::requireUsableOpenClDevice(), std::runtime_error);
+    EXPECT_TRUE(plamatrix::internal::opencl::selectedOpenClDeviceName().empty());
+    EXPECT_EQ(plamatrix::internal::opencl::selectedOpenClDeviceIndex(), -1);
 }
 
 #endif

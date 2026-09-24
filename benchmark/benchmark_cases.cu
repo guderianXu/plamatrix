@@ -11,21 +11,21 @@
 
 #include <cuda_runtime.h>
 
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/dense/dense_ops.h"
-#include "plamatrix/ops/gemm.h"
-#include "plamatrix/ops/decomposition.h"
-#include "plamatrix/ops/solver.h"
-#include "plamatrix/ops/point_cloud.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/dense/dense_ops.h"
+#include "plamatrix/internal/ops/gemm.h"
+#include "plamatrix/internal/ops/decomposition.h"
+#include "plamatrix/internal/ops/solver.h"
+#include "plamatrix/internal/ops/point_cloud.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace detail
 {
 
 using Clock = std::chrono::high_resolution_clock;
-using FloatMatrix = DenseMatrix<float, Device::CPU>;
-using GpuFloatMatrix = DenseMatrix<float, Device::GPU>;
+using FloatMatrix = DenseStorage<float, Device::CPU>;
+using GpuFloatMatrix = DenseStorage<float, Device::GPU>;
 
 // ============================================================================
 // Shared GPU helpers
@@ -404,10 +404,10 @@ void runPointTransformCuda(CaseResult& r, Index N)
 {
     auto pts_cpu = makeRandom(N, 3);
 
-    Vec3<float> axis{0.0f, 0.0f, 1.0f};
+    PackedVector3<float> axis{0.0f, 0.0f, 1.0f};
     float angle = 0.5f;
     auto R_cpu = rotationMatrix<float, Device::CPU>(axis, angle);
-    Vec3<float> t{1.0f, 2.0f, 3.0f};
+    PackedVector3<float> t{1.0f, 2.0f, 3.0f};
     auto T_cpu = rigidTransform<float, Device::CPU>(R_cpu, t);
 
     // Measure transfer time for both transform matrix and points
@@ -442,4 +442,4 @@ void runPointTransformCuda(CaseResult& r, Index N)
 }
 
 } // namespace detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

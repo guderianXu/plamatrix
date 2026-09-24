@@ -1,6 +1,6 @@
 #pragma once
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace iterative_solver_detail
 {
@@ -11,4 +11,4 @@ void setFixedSolverCompletionGate(void* event) noexcept;
 #endif
 
 } // namespace iterative_solver_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

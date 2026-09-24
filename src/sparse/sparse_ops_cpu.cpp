@@ -1,4 +1,4 @@
-#include "plamatrix/sparse/sparse_ops.h"
+#include "plamatrix/internal/sparse/sparse_ops.h"
 
 #include <algorithm>
 #include <limits>
@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -97,7 +97,7 @@ template <typename Scalar>
 void writeCombinedCoo(Index rows,
                       Index cols,
                       const CombinedCoo<Scalar>& combined,
-                      CSRMatrix<Scalar, Device::CPU>& output)
+                      CsrStorage<Scalar, Device::CPU>& output)
 {
     const Index combined_count = static_cast<Index>(combined.values.size());
     if (output.rows() != rows || output.cols() != cols)
@@ -134,9 +134,9 @@ void writeCombinedCoo(Index rows,
 }
 
 template <typename Scalar>
-void checkSpmvDimensions(const CSRMatrix<Scalar, Device::CPU>& csr,
-                         const DenseMatrix<Scalar, Device::CPU>& x,
-                         const DenseMatrix<Scalar, Device::CPU>& output)
+void checkSpmvDimensions(const CsrStorage<Scalar, Device::CPU>& csr,
+                         const DenseStorage<Scalar, Device::CPU>& x,
+                         const DenseStorage<Scalar, Device::CPU>& output)
 {
     if (x.rows() != csr.cols() || x.cols() != 1)
     {
@@ -155,9 +155,9 @@ void checkSpmvDimensions(const CSRMatrix<Scalar, Device::CPU>& csr,
 }
 
 template <typename Scalar>
-void checkSpmmDimensions(const CSRMatrix<Scalar, Device::CPU>& csr,
-                         const DenseMatrix<Scalar, Device::CPU>& B,
-                         const DenseMatrix<Scalar, Device::CPU>& output)
+void checkSpmmDimensions(const CsrStorage<Scalar, Device::CPU>& csr,
+                         const DenseStorage<Scalar, Device::CPU>& B,
+                         const DenseStorage<Scalar, Device::CPU>& output)
 {
     if (B.rows() != csr.cols())
     {
@@ -178,14 +178,14 @@ void checkSpmmDimensions(const CSRMatrix<Scalar, Device::CPU>& csr,
 } // namespace
 
 template <typename Scalar>
-CSRMatrix<Scalar, Device::CPU> cooToCsr(Index rows,
+CsrStorage<Scalar, Device::CPU> cooToCsr(Index rows,
                                         Index cols,
                                         const std::vector<Index>& row_indices,
                                         const std::vector<Index>& col_indices,
                                         const std::vector<Scalar>& values)
 {
     auto combined = combineCoo(rows, cols, row_indices, col_indices, values);
-    CSRMatrix<Scalar, Device::CPU> output(rows, cols, static_cast<Index>(combined.values.size()));
+    CsrStorage<Scalar, Device::CPU> output(rows, cols, static_cast<Index>(combined.values.size()));
     writeCombinedCoo(rows, cols, combined, output);
     return output;
 }
@@ -196,25 +196,25 @@ void cooToCsr(Index rows,
               const std::vector<Index>& row_indices,
               const std::vector<Index>& col_indices,
               const std::vector<Scalar>& values,
-              CSRMatrix<Scalar, Device::CPU>& output)
+              CsrStorage<Scalar, Device::CPU>& output)
 {
     const auto combined = combineCoo(rows, cols, row_indices, col_indices, values);
     writeCombinedCoo(rows, cols, combined, output);
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> spmv(const CSRMatrix<Scalar, Device::CPU>& csr,
-                                      const DenseMatrix<Scalar, Device::CPU>& x)
+DenseStorage<Scalar, Device::CPU> spmv(const CsrStorage<Scalar, Device::CPU>& csr,
+                                      const DenseStorage<Scalar, Device::CPU>& x)
 {
-    DenseMatrix<Scalar, Device::CPU> output(csr.rows(), 1);
+    DenseStorage<Scalar, Device::CPU> output(csr.rows(), 1);
     spmv(csr, x, output);
     return output;
 }
 
 template <typename Scalar>
-void spmv(const CSRMatrix<Scalar, Device::CPU>& csr,
-          const DenseMatrix<Scalar, Device::CPU>& x,
-          DenseMatrix<Scalar, Device::CPU>& output)
+void spmv(const CsrStorage<Scalar, Device::CPU>& csr,
+          const DenseStorage<Scalar, Device::CPU>& x,
+          DenseStorage<Scalar, Device::CPU>& output)
 {
     checkSpmvDimensions(csr, x, output);
     if (x.data() != nullptr && x.data() == output.data())
@@ -233,18 +233,18 @@ void spmv(const CSRMatrix<Scalar, Device::CPU>& csr,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> spmm(const CSRMatrix<Scalar, Device::CPU>& csr,
-                                      const DenseMatrix<Scalar, Device::CPU>& B)
+DenseStorage<Scalar, Device::CPU> spmm(const CsrStorage<Scalar, Device::CPU>& csr,
+                                      const DenseStorage<Scalar, Device::CPU>& B)
 {
-    DenseMatrix<Scalar, Device::CPU> output(csr.rows(), B.cols());
+    DenseStorage<Scalar, Device::CPU> output(csr.rows(), B.cols());
     spmm(csr, B, output);
     return output;
 }
 
 template <typename Scalar>
-void spmm(const CSRMatrix<Scalar, Device::CPU>& csr,
-          const DenseMatrix<Scalar, Device::CPU>& B,
-          DenseMatrix<Scalar, Device::CPU>& output)
+void spmm(const CsrStorage<Scalar, Device::CPU>& csr,
+          const DenseStorage<Scalar, Device::CPU>& B,
+          DenseStorage<Scalar, Device::CPU>& output)
 {
     checkSpmmDimensions(csr, B, output);
     if (B.data() != nullptr && B.data() == output.data())
@@ -281,12 +281,12 @@ namespace
 } // anonymous namespace
 
 template <typename Scalar>
-CSRMatrix<Scalar, Device::GPU> cooToCsr(
+CsrStorage<Scalar, Device::GPU> cooToCsr(
     Index,
     Index,
-    const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Scalar, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Scalar, Device::GPU>&,
     SparseOpsWorkspace&)
 {
     throwGpuSparseUnavailable("cooToCsr GPU");
@@ -296,10 +296,10 @@ template <typename Scalar>
 void cooToCsrAsync(
     Index,
     Index,
-    const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Scalar, Device::GPU>&,
-    CSRMatrix<Scalar, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Scalar, Device::GPU>&,
+    CsrStorage<Scalar, Device::GPU>&,
     SparseOpsWorkspace&,
     cudaStream_t)
 {
@@ -307,25 +307,25 @@ void cooToCsrAsync(
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> spmv(
-    const CSRMatrix<Scalar, Device::GPU>&,
-    const DenseMatrix<Scalar, Device::GPU>&)
+DenseStorage<Scalar, Device::GPU> spmv(
+    const CsrStorage<Scalar, Device::GPU>&,
+    const DenseStorage<Scalar, Device::GPU>&)
 {
     throwGpuSparseUnavailable("spmv GPU");
 }
 
 template <typename Scalar>
-void spmv(const CSRMatrix<Scalar, Device::GPU>&,
-          const DenseMatrix<Scalar, Device::GPU>&,
-          DenseMatrix<Scalar, Device::GPU>&)
+void spmv(const CsrStorage<Scalar, Device::GPU>&,
+          const DenseStorage<Scalar, Device::GPU>&,
+          DenseStorage<Scalar, Device::GPU>&)
 {
     throwGpuSparseUnavailable("spmv GPU");
 }
 
 template <typename Scalar>
-void spmvAsync(const CSRMatrix<Scalar, Device::GPU>&,
-               const DenseMatrix<Scalar, Device::GPU>&,
-               DenseMatrix<Scalar, Device::GPU>&,
+void spmvAsync(const CsrStorage<Scalar, Device::GPU>&,
+               const DenseStorage<Scalar, Device::GPU>&,
+               DenseStorage<Scalar, Device::GPU>&,
                SparseOpsWorkspace&,
                cudaStream_t)
 {
@@ -333,25 +333,25 @@ void spmvAsync(const CSRMatrix<Scalar, Device::GPU>&,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> spmm(
-    const CSRMatrix<Scalar, Device::GPU>&,
-    const DenseMatrix<Scalar, Device::GPU>&)
+DenseStorage<Scalar, Device::GPU> spmm(
+    const CsrStorage<Scalar, Device::GPU>&,
+    const DenseStorage<Scalar, Device::GPU>&)
 {
     throwGpuSparseUnavailable("spmm GPU");
 }
 
 template <typename Scalar>
-void spmm(const CSRMatrix<Scalar, Device::GPU>&,
-          const DenseMatrix<Scalar, Device::GPU>&,
-          DenseMatrix<Scalar, Device::GPU>&)
+void spmm(const CsrStorage<Scalar, Device::GPU>&,
+          const DenseStorage<Scalar, Device::GPU>&,
+          DenseStorage<Scalar, Device::GPU>&)
 {
     throwGpuSparseUnavailable("spmm GPU");
 }
 
 template <typename Scalar>
-void spmmAsync(const CSRMatrix<Scalar, Device::GPU>&,
-               const DenseMatrix<Scalar, Device::GPU>&,
-               DenseMatrix<Scalar, Device::GPU>&,
+void spmmAsync(const CsrStorage<Scalar, Device::GPU>&,
+               const DenseStorage<Scalar, Device::GPU>&,
+               DenseStorage<Scalar, Device::GPU>&,
                SparseOpsWorkspace&,
                cudaStream_t)
 {
@@ -361,7 +361,7 @@ void spmmAsync(const CSRMatrix<Scalar, Device::GPU>&,
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template CSRMatrix<float, Device::CPU> cooToCsr<float>(
+template CsrStorage<float, Device::CPU> cooToCsr<float>(
     Index,
     Index,
     const std::vector<Index>&,
@@ -372,55 +372,55 @@ template void cooToCsr<float>(Index,
                               const std::vector<Index>&,
                               const std::vector<Index>&,
                               const std::vector<float>&,
-                              CSRMatrix<float, Device::CPU>&);
-template DenseMatrix<float, Device::CPU> spmv<float>(
-    const CSRMatrix<float, Device::CPU>&,
-    const DenseMatrix<float, Device::CPU>&);
-template void spmv<float>(const CSRMatrix<float, Device::CPU>&,
-                          const DenseMatrix<float, Device::CPU>&,
-                          DenseMatrix<float, Device::CPU>&);
-template DenseMatrix<float, Device::CPU> spmm<float>(
-    const CSRMatrix<float, Device::CPU>&,
-    const DenseMatrix<float, Device::CPU>&);
-template void spmm<float>(const CSRMatrix<float, Device::CPU>&,
-                          const DenseMatrix<float, Device::CPU>&,
-                          DenseMatrix<float, Device::CPU>&);
+                              CsrStorage<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> spmv<float>(
+    const CsrStorage<float, Device::CPU>&,
+    const DenseStorage<float, Device::CPU>&);
+template void spmv<float>(const CsrStorage<float, Device::CPU>&,
+                          const DenseStorage<float, Device::CPU>&,
+                          DenseStorage<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> spmm<float>(
+    const CsrStorage<float, Device::CPU>&,
+    const DenseStorage<float, Device::CPU>&);
+template void spmm<float>(const CsrStorage<float, Device::CPU>&,
+                          const DenseStorage<float, Device::CPU>&,
+                          DenseStorage<float, Device::CPU>&);
 #ifdef PLAMATRIX_NO_CUDA
-template CSRMatrix<float, Device::GPU> cooToCsr<float>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<float, Device::GPU>&,
+template CsrStorage<float, Device::GPU> cooToCsr<float>(
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<float, Device::GPU>&,
     SparseOpsWorkspace&);
 template void cooToCsrAsync<float>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<float, Device::GPU>&,
-    CSRMatrix<float, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
-template DenseMatrix<float, Device::GPU> spmv<float>(
-    const CSRMatrix<float, Device::GPU>&,
-    const DenseMatrix<float, Device::GPU>&);
-template void spmv<float>(const CSRMatrix<float, Device::GPU>&,
-                          const DenseMatrix<float, Device::GPU>&,
-                          DenseMatrix<float, Device::GPU>&);
-template void spmvAsync<float>(const CSRMatrix<float, Device::GPU>&,
-                               const DenseMatrix<float, Device::GPU>&,
-                               DenseMatrix<float, Device::GPU>&,
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<float, Device::GPU>&,
+    CsrStorage<float, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
+template DenseStorage<float, Device::GPU> spmv<float>(
+    const CsrStorage<float, Device::GPU>&,
+    const DenseStorage<float, Device::GPU>&);
+template void spmv<float>(const CsrStorage<float, Device::GPU>&,
+                          const DenseStorage<float, Device::GPU>&,
+                          DenseStorage<float, Device::GPU>&);
+template void spmvAsync<float>(const CsrStorage<float, Device::GPU>&,
+                               const DenseStorage<float, Device::GPU>&,
+                               DenseStorage<float, Device::GPU>&,
                                SparseOpsWorkspace&,
                                cudaStream_t);
-template DenseMatrix<float, Device::GPU> spmm<float>(
-    const CSRMatrix<float, Device::GPU>&,
-    const DenseMatrix<float, Device::GPU>&);
-template void spmm<float>(const CSRMatrix<float, Device::GPU>&,
-                          const DenseMatrix<float, Device::GPU>&,
-                          DenseMatrix<float, Device::GPU>&);
-template void spmmAsync<float>(const CSRMatrix<float, Device::GPU>&,
-                               const DenseMatrix<float, Device::GPU>&,
-                               DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> spmm<float>(
+    const CsrStorage<float, Device::GPU>&,
+    const DenseStorage<float, Device::GPU>&);
+template void spmm<float>(const CsrStorage<float, Device::GPU>&,
+                          const DenseStorage<float, Device::GPU>&,
+                          DenseStorage<float, Device::GPU>&);
+template void spmmAsync<float>(const CsrStorage<float, Device::GPU>&,
+                               const DenseStorage<float, Device::GPU>&,
+                               DenseStorage<float, Device::GPU>&,
                                SparseOpsWorkspace&,
                                cudaStream_t);
 #endif
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template CSRMatrix<double, Device::CPU> cooToCsr<double>(
+template CsrStorage<double, Device::CPU> cooToCsr<double>(
     Index,
     Index,
     const std::vector<Index>&,
@@ -431,51 +431,51 @@ template void cooToCsr<double>(Index,
                                const std::vector<Index>&,
                                const std::vector<Index>&,
                                const std::vector<double>&,
-                               CSRMatrix<double, Device::CPU>&);
-template DenseMatrix<double, Device::CPU> spmv<double>(
-    const CSRMatrix<double, Device::CPU>&,
-    const DenseMatrix<double, Device::CPU>&);
-template void spmv<double>(const CSRMatrix<double, Device::CPU>&,
-                           const DenseMatrix<double, Device::CPU>&,
-                           DenseMatrix<double, Device::CPU>&);
-template DenseMatrix<double, Device::CPU> spmm<double>(
-    const CSRMatrix<double, Device::CPU>&,
-    const DenseMatrix<double, Device::CPU>&);
-template void spmm<double>(const CSRMatrix<double, Device::CPU>&,
-                           const DenseMatrix<double, Device::CPU>&,
-                           DenseMatrix<double, Device::CPU>&);
+                               CsrStorage<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> spmv<double>(
+    const CsrStorage<double, Device::CPU>&,
+    const DenseStorage<double, Device::CPU>&);
+template void spmv<double>(const CsrStorage<double, Device::CPU>&,
+                           const DenseStorage<double, Device::CPU>&,
+                           DenseStorage<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> spmm<double>(
+    const CsrStorage<double, Device::CPU>&,
+    const DenseStorage<double, Device::CPU>&);
+template void spmm<double>(const CsrStorage<double, Device::CPU>&,
+                           const DenseStorage<double, Device::CPU>&,
+                           DenseStorage<double, Device::CPU>&);
 #ifdef PLAMATRIX_NO_CUDA
-template CSRMatrix<double, Device::GPU> cooToCsr<double>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<double, Device::GPU>&,
+template CsrStorage<double, Device::GPU> cooToCsr<double>(
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<double, Device::GPU>&,
     SparseOpsWorkspace&);
 template void cooToCsrAsync<double>(
-    Index, Index, const DenseMatrix<Index, Device::GPU>&,
-    const DenseMatrix<Index, Device::GPU>&, const DenseMatrix<double, Device::GPU>&,
-    CSRMatrix<double, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
-template DenseMatrix<double, Device::GPU> spmv<double>(
-    const CSRMatrix<double, Device::GPU>&,
-    const DenseMatrix<double, Device::GPU>&);
-template void spmv<double>(const CSRMatrix<double, Device::GPU>&,
-                           const DenseMatrix<double, Device::GPU>&,
-                           DenseMatrix<double, Device::GPU>&);
-template void spmvAsync<double>(const CSRMatrix<double, Device::GPU>&,
-                                const DenseMatrix<double, Device::GPU>&,
-                                DenseMatrix<double, Device::GPU>&,
+    Index, Index, const DenseStorage<Index, Device::GPU>&,
+    const DenseStorage<Index, Device::GPU>&, const DenseStorage<double, Device::GPU>&,
+    CsrStorage<double, Device::GPU>&, SparseOpsWorkspace&, cudaStream_t);
+template DenseStorage<double, Device::GPU> spmv<double>(
+    const CsrStorage<double, Device::GPU>&,
+    const DenseStorage<double, Device::GPU>&);
+template void spmv<double>(const CsrStorage<double, Device::GPU>&,
+                           const DenseStorage<double, Device::GPU>&,
+                           DenseStorage<double, Device::GPU>&);
+template void spmvAsync<double>(const CsrStorage<double, Device::GPU>&,
+                                const DenseStorage<double, Device::GPU>&,
+                                DenseStorage<double, Device::GPU>&,
                                 SparseOpsWorkspace&,
                                 cudaStream_t);
-template DenseMatrix<double, Device::GPU> spmm<double>(
-    const CSRMatrix<double, Device::GPU>&,
-    const DenseMatrix<double, Device::GPU>&);
-template void spmm<double>(const CSRMatrix<double, Device::GPU>&,
-                           const DenseMatrix<double, Device::GPU>&,
-                           DenseMatrix<double, Device::GPU>&);
-template void spmmAsync<double>(const CSRMatrix<double, Device::GPU>&,
-                                const DenseMatrix<double, Device::GPU>&,
-                                DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> spmm<double>(
+    const CsrStorage<double, Device::GPU>&,
+    const DenseStorage<double, Device::GPU>&);
+template void spmm<double>(const CsrStorage<double, Device::GPU>&,
+                           const DenseStorage<double, Device::GPU>&,
+                           DenseStorage<double, Device::GPU>&);
+template void spmmAsync<double>(const CsrStorage<double, Device::GPU>&,
+                                const DenseStorage<double, Device::GPU>&,
+                                DenseStorage<double, Device::GPU>&,
                                 SparseOpsWorkspace&,
                                 cudaStream_t);
 #endif
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

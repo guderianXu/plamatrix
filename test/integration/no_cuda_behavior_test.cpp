@@ -1,11 +1,12 @@
 #include <gtest/gtest.h>
 
-#include <plamatrix/dense/dense_matrix.h>
-#include <plamatrix/dense/dense_ops.h>
-#include <plamatrix/ops/gemm.h>
-#include <plamatrix/ops/point_cloud.h>
+#include <plamatrix/internal/dense/dense_storage.h>
+#include <plamatrix/internal/dense/dense_ops.h>
+#include <plamatrix/internal/ops/gemm.h>
+#include <plamatrix/internal/ops/point_cloud.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 #ifdef PLAMATRIX_NO_CUDA
 TEST(NoCudaStubs, checkMacros_ThrowOnStubbedErrors)
@@ -17,7 +18,7 @@ TEST(NoCudaStubs, checkMacros_ThrowOnStubbedErrors)
 
 TEST(NoCudaStubs, transfer_RoundTripUsesStubbedDeviceMemory)
 {
-    DenseMatrix<double, Device::CPU> cpu(2, 3);
+    DenseStorage<double, Device::CPU> cpu(2, 3);
     cpu(0, 0) = 1.0;
     cpu(1, 0) = 2.0;
     cpu(0, 1) = 3.0;
@@ -43,7 +44,7 @@ TEST(NoCudaStubs, transfer_RoundTripUsesStubbedDeviceMemory)
 
 TEST(NoCudaStubs, transferAsync_RoundTripUsesStubbedDeviceMemory)
 {
-    auto cpu = DenseMatrix<double, Device::CPU>::pinned(2, 2);
+    auto cpu = DenseStorage<double, Device::CPU>::pinned(2, 2);
     cpu(0, 0) = 1.0;
     cpu(1, 0) = 2.0;
     cpu(0, 1) = 3.0;
@@ -54,7 +55,7 @@ TEST(NoCudaStubs, transferAsync_RoundTripUsesStubbedDeviceMemory)
     PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&stream));
 
     auto device = cpu.toGpuAsync(stream);
-    auto back = DenseMatrix<double, Device::CPU>::pinned(2, 2);
+    auto back = DenseStorage<double, Device::CPU>::pinned(2, 2);
     device.copyToCpuAsync(back, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     PLAMATRIX_CHECK_CUDA(cudaStreamDestroy(stream));
@@ -67,7 +68,7 @@ TEST(NoCudaStubs, transferAsync_RoundTripUsesStubbedDeviceMemory)
 
 TEST(NoCudaStubs, transfer_ZeroSizedDeviceMatrixRoundTrips)
 {
-    DenseMatrix<float, Device::CPU> cpu(0, 7);
+    DenseStorage<float, Device::CPU> cpu(0, 7);
 
     auto device = cpu.toGpu();
     EXPECT_EQ(device.rows(), 0);
@@ -84,8 +85,8 @@ TEST(NoCudaStubs, transfer_ZeroSizedDeviceMatrixRoundTrips)
 
 TEST(NoCudaStubs, gpuDenseAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCudaObjects)
 {
-    DenseMatrix<float, Device::GPU> A(2, 2);
-    DenseMatrix<float, Device::GPU> B(2, 2);
+    DenseStorage<float, Device::GPU> A(2, 2);
+    DenseStorage<float, Device::GPU> B(2, 2);
 
     EXPECT_THROW(A.fill(1.0f), std::runtime_error);
     EXPECT_THROW(A.transpose(), std::runtime_error);
@@ -99,10 +100,10 @@ TEST(NoCudaStubs, gpuDenseAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCuda
 
 TEST(NoCudaStubs, gpuPointCloudAlgorithms_ThrowClearErrorsInsteadOfLinkingMissingCudaObjects)
 {
-    DenseMatrix<float, Device::GPU> T(4, 4);
-    DenseMatrix<float, Device::GPU> points(2, 3);
-    DenseMatrix<float, Device::GPU> transformed(2, 3);
-    DenseMatrix<float, Device::GPU> covariance(3, 3);
+    DenseStorage<float, Device::GPU> T(4, 4);
+    DenseStorage<float, Device::GPU> points(2, 3);
+    DenseStorage<float, Device::GPU> transformed(2, 3);
+    DenseStorage<float, Device::GPU> covariance(3, 3);
     GpuCovarianceWorkspace<float> workspace;
 
     EXPECT_THROW(transformPoints(T, points), std::runtime_error);
@@ -114,3 +115,5 @@ TEST(NoCudaStubs, gpuPointCloudAlgorithms_ThrowClearErrorsInsteadOfLinkingMissin
     EXPECT_THROW(covarianceMatrixAsync(points, covariance, workspace), std::runtime_error);
 }
 #endif
+
+} // namespace plamatrix::internal

@@ -4,10 +4,10 @@
 
 #include <cusparse.h>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/sparse/sparse_ops.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/sparse/sparse_ops.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -48,9 +48,9 @@ cusparseDnMatDescr_t asMatrixDescriptor(void* descriptor)
 }
 
 template <typename Scalar>
-void checkSpmvDimensions(const CSRMatrix<Scalar, Device::GPU>& csr,
-                         const DenseMatrix<Scalar, Device::GPU>& x,
-                         const DenseMatrix<Scalar, Device::GPU>& output)
+void checkSpmvDimensions(const CsrStorage<Scalar, Device::GPU>& csr,
+                         const DenseStorage<Scalar, Device::GPU>& x,
+                         const DenseStorage<Scalar, Device::GPU>& output)
 {
     if (x.rows() != csr.cols() || x.cols() != 1)
     {
@@ -85,7 +85,7 @@ void checkStorageStream(const char* name, const Matrix& matrix, cudaStream_t str
 
 template <typename Scalar>
 void checkCsrStructureStream(
-    const char* name, const CSRMatrix<Scalar, Device::GPU>& matrix, cudaStream_t stream)
+    const char* name, const CsrStorage<Scalar, Device::GPU>& matrix, cudaStream_t stream)
 {
     if (!matrix.isStructureUsableOnStream(stream))
     {
@@ -97,9 +97,9 @@ void checkCsrStructureStream(
 }
 
 template <typename Scalar>
-void checkSpmmDimensions(const CSRMatrix<Scalar, Device::GPU>& csr,
-                         const DenseMatrix<Scalar, Device::GPU>& input,
-                         const DenseMatrix<Scalar, Device::GPU>& output)
+void checkSpmmDimensions(const CsrStorage<Scalar, Device::GPU>& csr,
+                         const DenseStorage<Scalar, Device::GPU>& input,
+                         const DenseStorage<Scalar, Device::GPU>& output)
 {
     if (input.rows() != csr.cols())
     {
@@ -191,7 +191,7 @@ struct SparseOpsWorkspaceAccess
 
     template <typename Scalar>
     static void prepareSparse(
-        SparseOpsWorkspace& workspace, const CSRMatrix<Scalar, Device::GPU>& csr)
+        SparseOpsWorkspace& workspace, const CsrStorage<Scalar, Device::GPU>& csr)
     {
         const int scalar_type = static_cast<int>(scalarDataType<Scalar>());
         const bool recreate = workspace._sparseDescriptor == nullptr
@@ -232,8 +232,8 @@ struct SparseOpsWorkspaceAccess
 
     template <typename Scalar>
     static void prepareVectors(SparseOpsWorkspace& workspace,
-                               const DenseMatrix<Scalar, Device::GPU>& input,
-                               DenseMatrix<Scalar, Device::GPU>& output)
+                               const DenseStorage<Scalar, Device::GPU>& input,
+                               DenseStorage<Scalar, Device::GPU>& output)
     {
         const bool recreate = workspace._inputDescriptor == nullptr
             || workspace._outputDescriptor == nullptr || workspace._descriptorsAreMatrices
@@ -306,8 +306,8 @@ struct SparseOpsWorkspaceAccess
 
     template <typename Scalar>
     static void prepareMatrices(SparseOpsWorkspace& workspace,
-                                const DenseMatrix<Scalar, Device::GPU>& input,
-                                DenseMatrix<Scalar, Device::GPU>& output)
+                                const DenseStorage<Scalar, Device::GPU>& input,
+                                DenseStorage<Scalar, Device::GPU>& output)
     {
         const bool recreate = workspace._inputDescriptor == nullptr
             || workspace._outputDescriptor == nullptr || !workspace._descriptorsAreMatrices
@@ -685,9 +685,9 @@ void SparseOpsWorkspace::closeAsyncAllocation()
 }
 
 template <typename Scalar>
-void spmvAsync(const CSRMatrix<Scalar, Device::GPU>& csr,
-               const DenseMatrix<Scalar, Device::GPU>& input,
-               DenseMatrix<Scalar, Device::GPU>& output,
+void spmvAsync(const CsrStorage<Scalar, Device::GPU>& csr,
+               const DenseStorage<Scalar, Device::GPU>& input,
+               DenseStorage<Scalar, Device::GPU>& output,
                SparseOpsWorkspace& workspace,
                cudaStream_t stream)
 {
@@ -740,19 +740,19 @@ void spmvAsync(const CSRMatrix<Scalar, Device::GPU>& csr,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> spmv(
-    const CSRMatrix<Scalar, Device::GPU>& csr,
-    const DenseMatrix<Scalar, Device::GPU>& input)
+DenseStorage<Scalar, Device::GPU> spmv(
+    const CsrStorage<Scalar, Device::GPU>& csr,
+    const DenseStorage<Scalar, Device::GPU>& input)
 {
-    DenseMatrix<Scalar, Device::GPU> output(csr.rows(), 1);
+    DenseStorage<Scalar, Device::GPU> output(csr.rows(), 1);
     spmv(csr, input, output);
     return output;
 }
 
 template <typename Scalar>
-void spmv(const CSRMatrix<Scalar, Device::GPU>& csr,
-          const DenseMatrix<Scalar, Device::GPU>& input,
-          DenseMatrix<Scalar, Device::GPU>& output)
+void spmv(const CsrStorage<Scalar, Device::GPU>& csr,
+          const DenseStorage<Scalar, Device::GPU>& input,
+          DenseStorage<Scalar, Device::GPU>& output)
 {
     SparseOpsWorkspace workspace;
     spmvAsync(csr, input, output, workspace, nullptr);
@@ -760,9 +760,9 @@ void spmv(const CSRMatrix<Scalar, Device::GPU>& csr,
 }
 
 template <typename Scalar>
-void spmmAsync(const CSRMatrix<Scalar, Device::GPU>& csr,
-               const DenseMatrix<Scalar, Device::GPU>& input,
-               DenseMatrix<Scalar, Device::GPU>& output,
+void spmmAsync(const CsrStorage<Scalar, Device::GPU>& csr,
+               const DenseStorage<Scalar, Device::GPU>& input,
+               DenseStorage<Scalar, Device::GPU>& output,
                SparseOpsWorkspace& workspace,
                cudaStream_t stream)
 {
@@ -817,19 +817,19 @@ void spmmAsync(const CSRMatrix<Scalar, Device::GPU>& csr,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> spmm(
-    const CSRMatrix<Scalar, Device::GPU>& csr,
-    const DenseMatrix<Scalar, Device::GPU>& input)
+DenseStorage<Scalar, Device::GPU> spmm(
+    const CsrStorage<Scalar, Device::GPU>& csr,
+    const DenseStorage<Scalar, Device::GPU>& input)
 {
-    DenseMatrix<Scalar, Device::GPU> output(csr.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(csr.rows(), input.cols());
     spmm(csr, input, output);
     return output;
 }
 
 template <typename Scalar>
-void spmm(const CSRMatrix<Scalar, Device::GPU>& csr,
-          const DenseMatrix<Scalar, Device::GPU>& input,
-          DenseMatrix<Scalar, Device::GPU>& output)
+void spmm(const CsrStorage<Scalar, Device::GPU>& csr,
+          const DenseStorage<Scalar, Device::GPU>& input,
+          DenseStorage<Scalar, Device::GPU>& output)
 {
     SparseOpsWorkspace workspace;
     spmmAsync(csr, input, output, workspace, nullptr);
@@ -837,26 +837,26 @@ void spmm(const CSRMatrix<Scalar, Device::GPU>& csr,
 }
 
 #define PLAMATRIX_INSTANTIATE_GPU_SPARSE_PRODUCTS(Scalar)                              \
-    template DenseMatrix<Scalar, Device::GPU> spmv<Scalar>(                            \
-        const CSRMatrix<Scalar, Device::GPU>&,                                         \
-        const DenseMatrix<Scalar, Device::GPU>&);                                      \
-    template void spmv<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                  \
-                               const DenseMatrix<Scalar, Device::GPU>&,                 \
-                               DenseMatrix<Scalar, Device::GPU>&);                      \
-    template void spmvAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,             \
-                                    const DenseMatrix<Scalar, Device::GPU>&,            \
-                                    DenseMatrix<Scalar, Device::GPU>&,                  \
+    template DenseStorage<Scalar, Device::GPU> spmv<Scalar>(                            \
+        const CsrStorage<Scalar, Device::GPU>&,                                         \
+        const DenseStorage<Scalar, Device::GPU>&);                                      \
+    template void spmv<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                  \
+                               const DenseStorage<Scalar, Device::GPU>&,                 \
+                               DenseStorage<Scalar, Device::GPU>&);                      \
+    template void spmvAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,             \
+                                    const DenseStorage<Scalar, Device::GPU>&,            \
+                                    DenseStorage<Scalar, Device::GPU>&,                  \
                                     SparseOpsWorkspace&,                               \
                                     cudaStream_t);                                     \
-    template DenseMatrix<Scalar, Device::GPU> spmm<Scalar>(                            \
-        const CSRMatrix<Scalar, Device::GPU>&,                                         \
-        const DenseMatrix<Scalar, Device::GPU>&);                                      \
-    template void spmm<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                  \
-                               const DenseMatrix<Scalar, Device::GPU>&,                 \
-                               DenseMatrix<Scalar, Device::GPU>&);                      \
-    template void spmmAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,             \
-                                    const DenseMatrix<Scalar, Device::GPU>&,            \
-                                    DenseMatrix<Scalar, Device::GPU>&,                  \
+    template DenseStorage<Scalar, Device::GPU> spmm<Scalar>(                            \
+        const CsrStorage<Scalar, Device::GPU>&,                                         \
+        const DenseStorage<Scalar, Device::GPU>&);                                      \
+    template void spmm<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                  \
+                               const DenseStorage<Scalar, Device::GPU>&,                 \
+                               DenseStorage<Scalar, Device::GPU>&);                      \
+    template void spmmAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,             \
+                                    const DenseStorage<Scalar, Device::GPU>&,            \
+                                    DenseStorage<Scalar, Device::GPU>&,                  \
                                     SparseOpsWorkspace&,                               \
                                     cudaStream_t)
 
@@ -869,4 +869,4 @@ PLAMATRIX_INSTANTIATE_GPU_SPARSE_PRODUCTS(double);
 
 #undef PLAMATRIX_INSTANTIATE_GPU_SPARSE_PRODUCTS
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

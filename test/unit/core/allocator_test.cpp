@@ -3,11 +3,12 @@
 #include <limits>
 #include <string>
 
-#include <plamatrix/core/allocator.h>
+#include <plamatrix/internal/core/allocator.h>
 
 #include "support/cuda_test_utils.h"
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 TEST(CpuAllocator, allocate_ReturnsNonNull)
 {
@@ -189,3 +190,5 @@ TEST(AllocatorNoCuda, deallocateAsync_RejectsNonNullPointerAndAcceptsNull)
     }
 }
 #endif
+
+} // namespace plamatrix::internal

@@ -1,0 +1,67 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer CrossInput
+{
+    float values[];
+}
+cross_input;
+layout(std430, binding = 1) readonly buffer InverseInput
+{
+    float values[];
+}
+inverse_input;
+layout(std430, binding = 2) writeonly buffer PackedOutput
+{
+    float16_t values[];
+}
+packed_output;
+
+layout(push_constant) uniform Parameters
+{
+    uint cross_count;
+    uint eliminated_count;
+    uint primary_size;
+    uint eliminated_size;
+}
+parameters;
+
+void main()
+{
+    const uint tile = gl_WorkGroupID.x;
+    const uint element = gl_LocalInvocationID.x;
+    const uint row = element / 16u;
+    const uint column = element - row * 16u;
+    float value = 0.0;
+    if (tile < parameters.cross_count)
+    {
+        if (row < parameters.primary_size && column < parameters.eliminated_size)
+        {
+            const uint area = parameters.primary_size * parameters.eliminated_size;
+            value = cross_input.values[tile * area + row * parameters.eliminated_size + column];
+        }
+    }
+    else if (tile < parameters.cross_count * 2u)
+    {
+        const uint cross = tile - parameters.cross_count;
+        if (row < parameters.eliminated_size && column < parameters.primary_size)
+        {
+            const uint area = parameters.primary_size * parameters.eliminated_size;
+            value = cross_input.values[cross * area + column * parameters.eliminated_size + row];
+        }
+    }
+    else
+    {
+        const uint block = tile - parameters.cross_count * 2u;
+        if (block < parameters.eliminated_count && row < parameters.eliminated_size &&
+            column < parameters.eliminated_size)
+        {
+            const uint area = parameters.eliminated_size * parameters.eliminated_size;
+            value = inverse_input.values[block * area + row * parameters.eliminated_size + column];
+        }
+    }
+    packed_output.values[tile * 256u + element] = float16_t(value);
+}

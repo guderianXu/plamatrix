@@ -10,10 +10,10 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/ops/decomposition.h"
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/decomposition.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -31,10 +31,10 @@ protected:
         return Scalar(2e-11);
     }
 
-    static DenseMatrix<Scalar, Device::CPU> makeCompact(
+    static DenseStorage<Scalar, Device::CPU> makeCompact(
         const std::vector<std::array<Scalar, 6>>& rows)
     {
-        DenseMatrix<Scalar, Device::CPU> compact(static_cast<Index>(rows.size()), 6);
+        DenseStorage<Scalar, Device::CPU> compact(static_cast<Index>(rows.size()), 6);
         for (Index row = 0; row < compact.rows(); ++row)
         {
             for (Index col = 0; col < 6; ++col)
@@ -45,7 +45,7 @@ protected:
         return compact;
     }
 
-    static std::array<Scalar, 9> expand(const DenseMatrix<Scalar, Device::CPU>& compact, Index row)
+    static std::array<Scalar, 9> expand(const DenseStorage<Scalar, Device::CPU>& compact, Index row)
     {
         return {
             compact(row, 0), compact(row, 1), compact(row, 2),
@@ -55,7 +55,7 @@ protected:
     }
 
     static void expectValidDecomposition(
-        const DenseMatrix<Scalar, Device::CPU>& compact,
+        const DenseStorage<Scalar, Device::CPU>& compact,
         const SymmetricEigh3x3Result<Scalar, Device::CPU>& result)
     {
         ASSERT_EQ(result.eigenvalues.rows(), compact.rows());
@@ -270,7 +270,7 @@ TYPED_TEST(SmallMatrixTest, RepeatedEigenvalueUsesFixedAxisProjectionBasis)
 TYPED_TEST(SmallMatrixTest, EmptyBatchReturnsEmptyOutputs)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> compact(0, 6);
+    DenseStorage<Scalar, Device::CPU> compact(0, 6);
 
     auto result = symmetricEigh3x3Batched(compact);
 
@@ -283,9 +283,9 @@ TYPED_TEST(SmallMatrixTest, EmptyBatchReturnsEmptyOutputs)
 TYPED_TEST(SmallMatrixTest, InvalidShapeThrowsInvalidArgument)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> too_narrow(2, 5);
-    DenseMatrix<Scalar, Device::CPU> too_wide(2, 7);
-    DenseMatrix<Scalar, Device::CPU> empty_wrong_shape(0, 5);
+    DenseStorage<Scalar, Device::CPU> too_narrow(2, 5);
+    DenseStorage<Scalar, Device::CPU> too_wide(2, 7);
+    DenseStorage<Scalar, Device::CPU> empty_wrong_shape(0, 5);
 
     EXPECT_THROW(symmetricEigh3x3Batched(too_narrow), std::invalid_argument);
     EXPECT_THROW(symmetricEigh3x3Batched(too_wide), std::invalid_argument);
@@ -302,7 +302,7 @@ TEST(SmallLinearSolverTest, SolvesThreeByThreeSystemWithPartialPivoting)
     const std::array<double, 3> rhs{{3.0, 0.0, 7.0}};
     std::array<double, 3> solution{};
 
-    ASSERT_TRUE(plamatrix::solveSmallLinearSystem(matrix, rhs, &solution));
+    ASSERT_TRUE(plamatrix::internal::solveSmallLinearSystem(matrix, rhs, &solution));
     EXPECT_NEAR(solution[0], 1.0, 1e-12);
     EXPECT_NEAR(solution[1], 2.0, 1e-12);
     EXPECT_NEAR(solution[2], -1.0, 1e-12);
@@ -324,7 +324,7 @@ TEST(SmallLinearSolverTest, SolvesSixBySixDiagonalDominantSystem)
     }
 
     std::array<double, 6> solution{};
-    ASSERT_TRUE(plamatrix::solveSmallLinearSystem(matrix, rhs, &solution));
+    ASSERT_TRUE(plamatrix::internal::solveSmallLinearSystem(matrix, rhs, &solution));
     for (size_t index = 0; index < solution.size(); ++index)
     {
         EXPECT_NEAR(solution[index], expected[index], 1e-11);
@@ -340,11 +340,11 @@ TEST(SmallLinearSolverTest, RejectsSingularAndNonFiniteSystems)
     }};
     const std::array<double, 3> rhs{{1.0, 2.0, 1.0}};
     std::array<double, 3> solution{};
-    EXPECT_FALSE(plamatrix::solveSmallLinearSystem(singular, rhs, &solution));
+    EXPECT_FALSE(plamatrix::internal::solveSmallLinearSystem(singular, rhs, &solution));
 
     auto nonFinite = singular;
     nonFinite[0] = std::numeric_limits<double>::infinity();
-    EXPECT_FALSE(plamatrix::solveSmallLinearSystem(nonFinite, rhs, &solution));
+    EXPECT_FALSE(plamatrix::internal::solveSmallLinearSystem(nonFinite, rhs, &solution));
 }
 
 TEST(SmallLinearSolverTest, SolvesIllScaledDiagonalSystem)
@@ -362,7 +362,7 @@ TEST(SmallLinearSolverTest, SolvesIllScaledDiagonalSystem)
     std::array<double, 3> solution{};
 
     ASSERT_TRUE(
-        plamatrix::solveSmallLinearSystem(
+        plamatrix::internal::solveSmallLinearSystem(
             matrix, rhs, &solution));
     EXPECT_NEAR(solution[0], 2.0, 1.0e-12);
     EXPECT_NEAR(solution[1], -3.0, 1.0e-12);
@@ -446,7 +446,7 @@ TYPED_TEST(SmallMatrixTest, FixedRandomBlockEigenvaluesMatchGeneralEigh)
     for (Index row = 0; row < sample_count; ++row)
     {
         const auto values = TestFixture::expand(compact, row);
-        DenseMatrix<Scalar, Device::CPU> full(3, 3);
+        DenseStorage<Scalar, Device::CPU> full(3, 3);
         for (Index matrix_row = 0; matrix_row < 3; ++matrix_row)
         {
             for (Index matrix_col = 0; matrix_col < 3; ++matrix_col)
@@ -468,4 +468,4 @@ TYPED_TEST(SmallMatrixTest, FixedRandomBlockEigenvaluesMatchGeneralEigh)
 }
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

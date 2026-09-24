@@ -6,7 +6,7 @@
 
 #include "reduction_detail.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace reduction_detail
 {
@@ -364,4 +364,4 @@ __global__ void laneExtremeKernel(const Scalar* input,
 }
 
 } // namespace reduction_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

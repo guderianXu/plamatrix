@@ -9,7 +9,7 @@
 
 #include "benchmark/benchmark_cases.h"
 #include "benchmark/report_writer.h"
-#include "plamatrix/core/types.h"
+#include "plamatrix/internal/core/device.h"
 
 namespace
 {
@@ -87,7 +87,7 @@ std::vector<std::string> parseCases(const std::string& case_str)
 
 bool isKnownCase(const std::string& name)
 {
-    auto all = plamatrix::getAllCaseNames();
+    auto all = plamatrix::internal::getAllCaseNames();
     return std::find(all.begin(), all.end(), name) != all.end();
 }
 
@@ -143,7 +143,7 @@ int main(int argc, char** argv)
     // --list mode
     if (list_only)
     {
-        auto names = plamatrix::getAllCaseNames();
+        auto names = plamatrix::internal::getAllCaseNames();
         for (const auto& name : names)
         {
             std::cout << name << "\n";
@@ -230,7 +230,7 @@ int main(int argc, char** argv)
     std::cerr << "\n  Output: " << output_path << "\n" << std::endl;
 
     // Run benchmarks
-    plamatrix::BenchmarkReport report;
+    plamatrix::internal::BenchmarkReport report;
     report.captureEnvironment();
 
     std::cerr << "Environment:\n"
@@ -240,7 +240,7 @@ int main(int argc, char** argv)
               << "  OS: " << report.os_info << "\n" << std::endl;
 
     std::cerr << "Running benchmarks..." << std::endl;
-    plamatrix::runAllCases(sizes, run_serial, run_omp, run_cuda, report, case_filter);
+    plamatrix::internal::runAllCases(sizes, run_serial, run_omp, run_cuda, report, case_filter);
 
     std::cerr << "Completed " << report.results.size() << " benchmark results." << std::endl;
     if (report.results.empty())

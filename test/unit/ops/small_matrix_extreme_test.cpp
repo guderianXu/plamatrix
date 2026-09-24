@@ -5,9 +5,9 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -25,9 +25,9 @@ protected:
         return Scalar(2e-11);
     }
 
-    static DenseMatrix<Scalar, Device::CPU> makeCompact(const std::array<Scalar, 6>& values)
+    static DenseStorage<Scalar, Device::CPU> makeCompact(const std::array<Scalar, 6>& values)
     {
-        DenseMatrix<Scalar, Device::CPU> compact(1, 6);
+        DenseStorage<Scalar, Device::CPU> compact(1, 6);
         for (Index col = 0; col < 6; ++col)
         {
             compact(0, col) = values[static_cast<std::size_t>(col)];
@@ -36,7 +36,7 @@ protected:
     }
 
     static void expectValid(
-        const DenseMatrix<Scalar, Device::CPU>& compact,
+        const DenseStorage<Scalar, Device::CPU>& compact,
         const SymmetricEigh3x3Result<Scalar, Device::CPU>& result)
     {
         ASSERT_EQ(result.eigenvalues.rows(), 1);
@@ -169,4 +169,4 @@ TYPED_TEST(SmallMatrixExtremeTest, UnderflowedScaledOffDiagonalKeepsOutputsFinit
 }
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

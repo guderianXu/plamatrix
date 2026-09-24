@@ -4,10 +4,10 @@
 #include <stdexcept>
 #include <type_traits>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/ops/point_cloud.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/ops/point_cloud.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 // ---- CUDA kernel: transform points ----
@@ -49,8 +49,8 @@ int checkedCudaGrid1D(Index item_count, int block_size, const char* op)
 }
 
 template <typename Scalar>
-void checkTransformInputs(const DenseMatrix<Scalar, Device::GPU>& T,
-                          const DenseMatrix<Scalar, Device::GPU>& points)
+void checkTransformInputs(const DenseStorage<Scalar, Device::GPU>& T,
+                          const DenseStorage<Scalar, Device::GPU>& points)
 {
     if (T.rows() != 4 || T.cols() != 4)
     {
@@ -67,7 +67,7 @@ void checkTransformInputs(const DenseMatrix<Scalar, Device::GPU>& T,
 }
 
 template <typename Scalar>
-void checkTransformOutput(const DenseMatrix<Scalar, Device::GPU>& output, Index point_count)
+void checkTransformOutput(const DenseStorage<Scalar, Device::GPU>& output, Index point_count)
 {
     if (output.rows() != point_count || output.cols() != 3)
     {
@@ -80,7 +80,7 @@ void checkTransformOutput(const DenseMatrix<Scalar, Device::GPU>& output, Index 
 }
 
 template <typename Scalar>
-void checkCovarianceInputs(const DenseMatrix<Scalar, Device::GPU>& points)
+void checkCovarianceInputs(const DenseStorage<Scalar, Device::GPU>& points)
 {
     Index N = points.rows();
     if (N < 2)
@@ -96,7 +96,7 @@ void checkCovarianceInputs(const DenseMatrix<Scalar, Device::GPU>& points)
 }
 
 template <typename Scalar>
-void checkCovarianceOutput(const DenseMatrix<Scalar, Device::GPU>& output)
+void checkCovarianceOutput(const DenseStorage<Scalar, Device::GPU>& output)
 {
     if (output.rows() != 3 || output.cols() != 3)
     {
@@ -323,7 +323,7 @@ __global__ void covarianceCenteredFinalizeKernel(const Accum* partial, Scalar* c
 // ---- GPU implementations ----
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> rotationMatrixGpuImpl(const Vec3<Scalar>& axis, Scalar angle)
+DenseStorage<Scalar, Device::GPU> rotationMatrixGpuImpl(const PackedVector3<Scalar>& axis, Scalar angle)
 {
     // Compute Rodrigues formula on CPU, then transfer to GPU
     Scalar norm = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
@@ -352,7 +352,7 @@ DenseMatrix<Scalar, Device::GPU> rotationMatrixGpuImpl(const Vec3<Scalar>& axis,
     R_cpu_data[7] = -x * s + z * y * one_minus_c;    // R(1,2) = -x*s + z*y*(1-c)
     R_cpu_data[8] = c + z * z * one_minus_c;         // R(2,2) = c + z^2*(1-c)
 
-    DenseMatrix<Scalar, Device::GPU> R_gpu(3, 3);
+    DenseStorage<Scalar, Device::GPU> R_gpu(3, 3);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(R_gpu.data(), R_cpu_data, static_cast<std::size_t>(9) * sizeof(Scalar),
                    cudaMemcpyHostToDevice));
@@ -360,8 +360,8 @@ DenseMatrix<Scalar, Device::GPU> rotationMatrixGpuImpl(const Vec3<Scalar>& axis,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> rigidTransformGpuImpl(const DenseMatrix<Scalar, Device::GPU>& R,
-                                                         const Vec3<Scalar>& t)
+DenseStorage<Scalar, Device::GPU> rigidTransformGpuImpl(const DenseStorage<Scalar, Device::GPU>& R,
+                                                         const PackedVector3<Scalar>& t)
 {
     if (R.rows() != 3 || R.cols() != 3)
     {
@@ -401,7 +401,7 @@ DenseMatrix<Scalar, Device::GPU> rigidTransformGpuImpl(const DenseMatrix<Scalar,
     T_cpu[3 + 3 * 4] = static_cast<Scalar>(1);
 
     // Transfer to GPU
-    DenseMatrix<Scalar, Device::GPU> T_gpu(4, 4);
+    DenseStorage<Scalar, Device::GPU> T_gpu(4, 4);
     PLAMATRIX_CHECK_CUDA(
         cudaMemcpy(T_gpu.data(), T_cpu, static_cast<std::size_t>(16) * sizeof(Scalar),
                    cudaMemcpyHostToDevice));
@@ -409,8 +409,8 @@ DenseMatrix<Scalar, Device::GPU> rigidTransformGpuImpl(const DenseMatrix<Scalar,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> transformPointsGpuImpl(const DenseMatrix<Scalar, Device::GPU>& T,
-                                                          const DenseMatrix<Scalar, Device::GPU>& points)
+DenseStorage<Scalar, Device::GPU> transformPointsGpuImpl(const DenseStorage<Scalar, Device::GPU>& T,
+                                                          const DenseStorage<Scalar, Device::GPU>& points)
 {
     auto result = transformPointsAsync(T, points);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
@@ -418,9 +418,9 @@ DenseMatrix<Scalar, Device::GPU> transformPointsGpuImpl(const DenseMatrix<Scalar
 }
 
 template <typename Scalar>
-void transformPointsAsync(const DenseMatrix<Scalar, Device::GPU>& T,
-                          const DenseMatrix<Scalar, Device::GPU>& points,
-                          DenseMatrix<Scalar, Device::GPU>& output,
+void transformPointsAsync(const DenseStorage<Scalar, Device::GPU>& T,
+                          const DenseStorage<Scalar, Device::GPU>& points,
+                          DenseStorage<Scalar, Device::GPU>& output,
                           cudaStream_t stream)
 {
     checkTransformInputs(T, points);
@@ -438,20 +438,20 @@ void transformPointsAsync(const DenseMatrix<Scalar, Device::GPU>& T,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> transformPointsAsync(const DenseMatrix<Scalar, Device::GPU>& T,
-                                                      const DenseMatrix<Scalar, Device::GPU>& points,
+DenseStorage<Scalar, Device::GPU> transformPointsAsync(const DenseStorage<Scalar, Device::GPU>& T,
+                                                      const DenseStorage<Scalar, Device::GPU>& points,
                                                       cudaStream_t stream)
 {
     checkTransformInputs(T, points);
-    DenseMatrix<Scalar, Device::GPU> result(points.rows(), 3);
+    DenseStorage<Scalar, Device::GPU> result(points.rows(), 3);
     transformPointsAsync(T, points, result, stream);
     return result;
 }
 
 template <typename Scalar>
-void transformPoints(const DenseMatrix<Scalar, Device::GPU>& T,
-                     const DenseMatrix<Scalar, Device::GPU>& points,
-                     DenseMatrix<Scalar, Device::GPU>& output,
+void transformPoints(const DenseStorage<Scalar, Device::GPU>& T,
+                     const DenseStorage<Scalar, Device::GPU>& points,
+                     DenseStorage<Scalar, Device::GPU>& output,
                      cudaStream_t stream)
 {
     transformPointsAsync(T, points, output, stream);
@@ -459,8 +459,8 @@ void transformPoints(const DenseMatrix<Scalar, Device::GPU>& T,
 }
 
 template <typename Scalar>
-void covarianceMatrixGpuAsyncImpl(const DenseMatrix<Scalar, Device::GPU>& points,
-                                  DenseMatrix<Scalar, Device::GPU>& output,
+void covarianceMatrixGpuAsyncImpl(const DenseStorage<Scalar, Device::GPU>& points,
+                                  DenseStorage<Scalar, Device::GPU>& output,
                                   GpuCovarianceWorkspace<Scalar>& workspace,
                                   cudaStream_t stream)
 {
@@ -473,9 +473,9 @@ void covarianceMatrixGpuAsyncImpl(const DenseMatrix<Scalar, Device::GPU>& points
 
     using Accum = CovarianceAccum<Scalar>;
     workspace.reserveBlocks(block_count);
-    DenseMatrix<Accum, Device::GPU>& partial_mean = workspace.partialMean();
-    DenseMatrix<Accum, Device::GPU>& mean = workspace.mean();
-    DenseMatrix<Accum, Device::GPU>& partial_covariance = workspace.partialCovariance();
+    DenseStorage<Accum, Device::GPU>& partial_mean = workspace.partialMean();
+    DenseStorage<Accum, Device::GPU>& mean = workspace.mean();
+    DenseStorage<Accum, Device::GPU>& partial_covariance = workspace.partialCovariance();
 
     covarianceMeanPartialKernel<Scalar, Accum><<<block_count, block_size, 0, stream>>>(
         points.data(), partial_mean.data(), N);
@@ -492,10 +492,10 @@ void covarianceMatrixGpuAsyncImpl(const DenseMatrix<Scalar, Device::GPU>& points
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scalar, Device::GPU>& points)
+DenseStorage<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseStorage<Scalar, Device::GPU>& points)
 {
     checkCovarianceInputs(points);
-    DenseMatrix<Scalar, Device::GPU> output(3, 3);
+    DenseStorage<Scalar, Device::GPU> output(3, 3);
     GpuCovarianceWorkspace<Scalar> workspace;
     covarianceMatrixGpuAsyncImpl(points, output, workspace, nullptr);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(nullptr));
@@ -503,8 +503,8 @@ DenseMatrix<Scalar, Device::GPU> covarianceMatrixGpuImpl(const DenseMatrix<Scala
 }
 
 template <typename Scalar>
-void covarianceMatrix(const DenseMatrix<Scalar, Device::GPU>& points,
-                      DenseMatrix<Scalar, Device::GPU>& output,
+void covarianceMatrix(const DenseStorage<Scalar, Device::GPU>& points,
+                      DenseStorage<Scalar, Device::GPU>& output,
                       cudaStream_t stream)
 {
     GpuCovarianceWorkspace<Scalar> workspace;
@@ -513,8 +513,8 @@ void covarianceMatrix(const DenseMatrix<Scalar, Device::GPU>& points,
 }
 
 template <typename Scalar>
-void covarianceMatrixAsync(const DenseMatrix<Scalar, Device::GPU>& points,
-                           DenseMatrix<Scalar, Device::GPU>& output,
+void covarianceMatrixAsync(const DenseStorage<Scalar, Device::GPU>& points,
+                           DenseStorage<Scalar, Device::GPU>& output,
                            GpuCovarianceWorkspace<Scalar>& workspace,
                            cudaStream_t stream)
 {
@@ -525,7 +525,7 @@ void covarianceMatrixAsync(const DenseMatrix<Scalar, Device::GPU>& points,
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-DenseMatrix<float, Device::GPU> rotationMatrix<float, Device::GPU>(const Vec3<float>& axis, float angle)
+DenseStorage<float, Device::GPU> rotationMatrix<float, Device::GPU>(const PackedVector3<float>& axis, float angle)
 {
     return rotationMatrixGpuImpl(axis, angle);
 }
@@ -533,7 +533,7 @@ DenseMatrix<float, Device::GPU> rotationMatrix<float, Device::GPU>(const Vec3<fl
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-DenseMatrix<double, Device::GPU> rotationMatrix<double, Device::GPU>(const Vec3<double>& axis, double angle)
+DenseStorage<double, Device::GPU> rotationMatrix<double, Device::GPU>(const PackedVector3<double>& axis, double angle)
 {
     return rotationMatrixGpuImpl(axis, angle);
 }
@@ -541,8 +541,8 @@ DenseMatrix<double, Device::GPU> rotationMatrix<double, Device::GPU>(const Vec3<
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-DenseMatrix<float, Device::GPU> rigidTransform<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& R,
-                                                                      const Vec3<float>& t)
+DenseStorage<float, Device::GPU> rigidTransform<float, Device::GPU>(const DenseStorage<float, Device::GPU>& R,
+                                                                      const PackedVector3<float>& t)
 {
     return rigidTransformGpuImpl(R, t);
 }
@@ -550,8 +550,8 @@ DenseMatrix<float, Device::GPU> rigidTransform<float, Device::GPU>(const DenseMa
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-DenseMatrix<double, Device::GPU> rigidTransform<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& R,
-                                                                       const Vec3<double>& t)
+DenseStorage<double, Device::GPU> rigidTransform<double, Device::GPU>(const DenseStorage<double, Device::GPU>& R,
+                                                                       const PackedVector3<double>& t)
 {
     return rigidTransformGpuImpl(R, t);
 }
@@ -559,8 +559,8 @@ DenseMatrix<double, Device::GPU> rigidTransform<double, Device::GPU>(const Dense
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-DenseMatrix<float, Device::GPU> transformPoints<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& T,
-                                                                      const DenseMatrix<float, Device::GPU>& points)
+DenseStorage<float, Device::GPU> transformPoints<float, Device::GPU>(const DenseStorage<float, Device::GPU>& T,
+                                                                      const DenseStorage<float, Device::GPU>& points)
 {
     return transformPointsGpuImpl(T, points);
 }
@@ -568,48 +568,48 @@ DenseMatrix<float, Device::GPU> transformPoints<float, Device::GPU>(const DenseM
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-DenseMatrix<double, Device::GPU> transformPoints<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& T,
-                                                                        const DenseMatrix<double, Device::GPU>& points)
+DenseStorage<double, Device::GPU> transformPoints<double, Device::GPU>(const DenseStorage<double, Device::GPU>& T,
+                                                                        const DenseStorage<double, Device::GPU>& points)
 {
     return transformPointsGpuImpl(T, points);
 }
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> transformPointsAsync(const DenseMatrix<float, Device::GPU>&,
-                                                              const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> transformPointsAsync(const DenseStorage<float, Device::GPU>&,
+                                                              const DenseStorage<float, Device::GPU>&,
                                                               cudaStream_t);
 
-template void transformPointsAsync(const DenseMatrix<float, Device::GPU>&,
-                                   const DenseMatrix<float, Device::GPU>&,
-                                   DenseMatrix<float, Device::GPU>&,
+template void transformPointsAsync(const DenseStorage<float, Device::GPU>&,
+                                   const DenseStorage<float, Device::GPU>&,
+                                   DenseStorage<float, Device::GPU>&,
                                    cudaStream_t);
 
-template void transformPoints(const DenseMatrix<float, Device::GPU>&,
-                              const DenseMatrix<float, Device::GPU>&,
-                              DenseMatrix<float, Device::GPU>&,
+template void transformPoints(const DenseStorage<float, Device::GPU>&,
+                              const DenseStorage<float, Device::GPU>&,
+                              DenseStorage<float, Device::GPU>&,
                               cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> transformPointsAsync(const DenseMatrix<double, Device::GPU>&,
-                                                               const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> transformPointsAsync(const DenseStorage<double, Device::GPU>&,
+                                                               const DenseStorage<double, Device::GPU>&,
                                                                cudaStream_t);
 
-template void transformPointsAsync(const DenseMatrix<double, Device::GPU>&,
-                                   const DenseMatrix<double, Device::GPU>&,
-                                   DenseMatrix<double, Device::GPU>&,
+template void transformPointsAsync(const DenseStorage<double, Device::GPU>&,
+                                   const DenseStorage<double, Device::GPU>&,
+                                   DenseStorage<double, Device::GPU>&,
                                    cudaStream_t);
 
-template void transformPoints(const DenseMatrix<double, Device::GPU>&,
-                              const DenseMatrix<double, Device::GPU>&,
-                              DenseMatrix<double, Device::GPU>&,
+template void transformPoints(const DenseStorage<double, Device::GPU>&,
+                              const DenseStorage<double, Device::GPU>&,
+                              DenseStorage<double, Device::GPU>&,
                               cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-DenseMatrix<float, Device::GPU> covarianceMatrix<float, Device::GPU>(const DenseMatrix<float, Device::GPU>& points)
+DenseStorage<float, Device::GPU> covarianceMatrix<float, Device::GPU>(const DenseStorage<float, Device::GPU>& points)
 {
     return covarianceMatrixGpuImpl(points);
 }
@@ -617,32 +617,32 @@ DenseMatrix<float, Device::GPU> covarianceMatrix<float, Device::GPU>(const Dense
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-DenseMatrix<double, Device::GPU> covarianceMatrix<double, Device::GPU>(const DenseMatrix<double, Device::GPU>& points)
+DenseStorage<double, Device::GPU> covarianceMatrix<double, Device::GPU>(const DenseStorage<double, Device::GPU>& points)
 {
     return covarianceMatrixGpuImpl(points);
 }
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template void covarianceMatrix(const DenseMatrix<float, Device::GPU>&,
-                               DenseMatrix<float, Device::GPU>&,
+template void covarianceMatrix(const DenseStorage<float, Device::GPU>&,
+                               DenseStorage<float, Device::GPU>&,
                                cudaStream_t);
 
-template void covarianceMatrixAsync(const DenseMatrix<float, Device::GPU>&,
-                                    DenseMatrix<float, Device::GPU>&,
+template void covarianceMatrixAsync(const DenseStorage<float, Device::GPU>&,
+                                    DenseStorage<float, Device::GPU>&,
                                     GpuCovarianceWorkspace<float>&,
                                     cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template void covarianceMatrix(const DenseMatrix<double, Device::GPU>&,
-                               DenseMatrix<double, Device::GPU>&,
+template void covarianceMatrix(const DenseStorage<double, Device::GPU>&,
+                               DenseStorage<double, Device::GPU>&,
                                cudaStream_t);
 
-template void covarianceMatrixAsync(const DenseMatrix<double, Device::GPU>&,
-                                    DenseMatrix<double, Device::GPU>&,
+template void covarianceMatrixAsync(const DenseStorage<double, Device::GPU>&,
+                                    DenseStorage<double, Device::GPU>&,
                                     GpuCovarianceWorkspace<double>&,
                                     cudaStream_t);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

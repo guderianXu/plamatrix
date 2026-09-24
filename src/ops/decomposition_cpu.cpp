@@ -9,9 +9,9 @@
 
 #include <omp.h>
 
-#include "plamatrix/ops/decomposition.h"
+#include "plamatrix/internal/ops/decomposition.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -35,7 +35,7 @@ Scalar sign(Scalar val)
 }
 
 template <typename Scalar>
-bool normalizeColumnCandidate(DenseMatrix<Scalar, Device::CPU>& U,
+bool normalizeColumnCandidate(DenseStorage<Scalar, Device::CPU>& U,
                               Index col,
                               std::vector<Scalar>& candidate,
                               Scalar epsilon)
@@ -78,7 +78,7 @@ bool normalizeColumnCandidate(DenseMatrix<Scalar, Device::CPU>& U,
 }
 
 template <typename Scalar>
-void setOrthonormalColumn(DenseMatrix<Scalar, Device::CPU>& U,
+void setOrthonormalColumn(DenseStorage<Scalar, Device::CPU>& U,
                           Index col,
                           std::vector<Scalar> candidate,
                           Scalar epsilon)
@@ -103,8 +103,8 @@ void setOrthonormalColumn(DenseMatrix<Scalar, Device::CPU>& U,
 }
 
 template <typename Scalar>
-void applyOneSidedJacobiPair(DenseMatrix<Scalar, Device::CPU>& u,
-                             DenseMatrix<Scalar, Device::CPU>& vt,
+void applyOneSidedJacobiPair(DenseStorage<Scalar, Device::CPU>& u,
+                             DenseStorage<Scalar, Device::CPU>& vt,
                              Index first,
                              Index second,
                              Scalar epsilon,
@@ -154,8 +154,8 @@ void applyOneSidedJacobiPair(DenseMatrix<Scalar, Device::CPU>& u,
 }
 
 template <typename Scalar>
-void parallelRoundRobinJacobi(DenseMatrix<Scalar, Device::CPU>& u,
-                              DenseMatrix<Scalar, Device::CPU>& vt,
+void parallelRoundRobinJacobi(DenseStorage<Scalar, Device::CPU>& u,
+                              DenseStorage<Scalar, Device::CPU>& vt,
                               Scalar epsilon)
 {
     const Index column_count = u.cols();
@@ -204,7 +204,7 @@ void parallelRoundRobinJacobi(DenseMatrix<Scalar, Device::CPU>& u,
 
 template <typename Scalar>
 std::vector<Scalar> symmetricEigenvaluesHouseholderQl(
-    const DenseMatrix<Scalar, Device::CPU>& input)
+    const DenseStorage<Scalar, Device::CPU>& input)
 {
     const Index dimension = input.rows();
     std::vector<Scalar> matrix(static_cast<std::size_t>(dimension * dimension));
@@ -378,8 +378,8 @@ std::vector<Scalar> symmetricEigenvaluesHouseholderQl(
 } // anonymous namespace
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::CPU>, DenseMatrix<Scalar, Device::CPU>, DenseMatrix<Scalar, Device::CPU>>
-svd(const DenseMatrix<Scalar, Device::CPU>& A)
+std::tuple<DenseStorage<Scalar, Device::CPU>, DenseStorage<Scalar, Device::CPU>, DenseStorage<Scalar, Device::CPU>>
+svd(const DenseStorage<Scalar, Device::CPU>& A)
 {
     Index m = A.rows();
     Index n = A.cols();
@@ -390,7 +390,7 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     // U = copy of A (m x n), we work in-place on U (columns will become left singular vectors)
-    DenseMatrix<Scalar, Device::CPU> U(m, n);
+    DenseStorage<Scalar, Device::CPU> U(m, n);
     for (Index j = 0; j < n; ++j)
     {
         for (Index i = 0; i < m; ++i)
@@ -400,14 +400,14 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     // V = identity (n x n), stored transposed for efficiency
-    DenseMatrix<Scalar, Device::CPU> Vt(n, n);
+    DenseStorage<Scalar, Device::CPU> Vt(n, n);
     for (Index j = 0; j < n; ++j)
     {
         Vt(j, j) = Scalar(1);
     }
 
     // Singular values vector
-    DenseMatrix<Scalar, Device::CPU> S(n, 1);
+    DenseStorage<Scalar, Device::CPU> S(n, 1);
 
     // Jacobi sweeps
     Scalar epsilon = jacobiTolerance<Scalar>();
@@ -483,9 +483,9 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
 
     // Apply permutation to S, U, Vt
     // We need to create temporary copies since the permutation may have cycles
-    DenseMatrix<Scalar, Device::CPU> S_sorted(n, 1);
-    DenseMatrix<Scalar, Device::CPU> U_sorted(m, n);
-    DenseMatrix<Scalar, Device::CPU> Vt_sorted(n, n);
+    DenseStorage<Scalar, Device::CPU> S_sorted(n, 1);
+    DenseStorage<Scalar, Device::CPU> U_sorted(m, n);
+    DenseStorage<Scalar, Device::CPU> Vt_sorted(n, n);
 
     for (Index j = 0; j < n; ++j)
     {
@@ -502,13 +502,13 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     Index compact_singular_count = (m < n) ? m : n;
-    DenseMatrix<Scalar, Device::CPU> S_compact(compact_singular_count, 1);
+    DenseStorage<Scalar, Device::CPU> S_compact(compact_singular_count, 1);
     for (Index i = 0; i < compact_singular_count; ++i)
     {
         S_compact(i, 0) = S_sorted(i, 0);
     }
 
-    DenseMatrix<Scalar, Device::CPU> U_full(m, m);
+    DenseStorage<Scalar, Device::CPU> U_full(m, m);
     for (Index col = 0; col < m; ++col)
     {
         std::vector<Scalar> candidate(static_cast<std::size_t>(m), Scalar(0));
@@ -527,18 +527,18 @@ svd(const DenseMatrix<Scalar, Device::CPU>& A)
 
 // Explicit template instantiations
 #ifdef PLAMATRIX_USE_FLOAT
-template std::tuple<DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>>
-svd(const DenseMatrix<float, Device::CPU>&);
+template std::tuple<DenseStorage<float, Device::CPU>, DenseStorage<float, Device::CPU>, DenseStorage<float, Device::CPU>>
+svd(const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
-svd(const DenseMatrix<double, Device::CPU>&);
+template std::tuple<DenseStorage<double, Device::CPU>, DenseStorage<double, Device::CPU>, DenseStorage<double, Device::CPU>>
+svd(const DenseStorage<double, Device::CPU>&);
 #endif
 
 template <typename Scalar>
-std::tuple<DenseMatrix<Scalar, Device::CPU>, DenseMatrix<Scalar, Device::CPU>>
-qr(const DenseMatrix<Scalar, Device::CPU>& A)
+std::tuple<DenseStorage<Scalar, Device::CPU>, DenseStorage<Scalar, Device::CPU>>
+qr(const DenseStorage<Scalar, Device::CPU>& A)
 {
     Index m = A.rows();
     Index n = A.cols();
@@ -549,7 +549,7 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     // R = copy of A, work in place
-    DenseMatrix<Scalar, Device::CPU> R(m, n);
+    DenseStorage<Scalar, Device::CPU> R(m, n);
     for (Index j = 0; j < n; ++j)
     {
         for (Index i = 0; i < m; ++i)
@@ -630,7 +630,7 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     // Build Q = I
-    DenseMatrix<Scalar, Device::CPU> Q(m, m);
+    DenseStorage<Scalar, Device::CPU> Q(m, m);
     for (Index i = 0; i < m; ++i)
     {
         Q(i, i) = Scalar(1);
@@ -680,7 +680,7 @@ qr(const DenseMatrix<Scalar, Device::CPU>& A)
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
+DenseStorage<Scalar, Device::CPU> eigh(const DenseStorage<Scalar, Device::CPU>& A)
 {
     Index n = A.rows();
 
@@ -695,7 +695,7 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
     }
 
     const auto eigenvalues = symmetricEigenvaluesHouseholderQl(A);
-    DenseMatrix<Scalar, Device::CPU> eigvals(n, 1);
+    DenseStorage<Scalar, Device::CPU> eigvals(n, 1);
     for (Index i = 0; i < n; ++i)
     {
         eigvals(i, 0) = eigenvalues[static_cast<std::size_t>(i)];
@@ -706,22 +706,22 @@ DenseMatrix<Scalar, Device::CPU> eigh(const DenseMatrix<Scalar, Device::CPU>& A)
 
 // Explicit template instantiations for qr
 #ifdef PLAMATRIX_USE_FLOAT
-template std::tuple<DenseMatrix<float, Device::CPU>, DenseMatrix<float, Device::CPU>>
-qr(const DenseMatrix<float, Device::CPU>&);
+template std::tuple<DenseStorage<float, Device::CPU>, DenseStorage<float, Device::CPU>>
+qr(const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template std::tuple<DenseMatrix<double, Device::CPU>, DenseMatrix<double, Device::CPU>>
-qr(const DenseMatrix<double, Device::CPU>&);
+template std::tuple<DenseStorage<double, Device::CPU>, DenseStorage<double, Device::CPU>>
+qr(const DenseStorage<double, Device::CPU>&);
 #endif
 
 // Explicit template instantiations for eigh
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::CPU> eigh(const DenseMatrix<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> eigh(const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::CPU> eigh(const DenseMatrix<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> eigh(const DenseStorage<double, Device::CPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

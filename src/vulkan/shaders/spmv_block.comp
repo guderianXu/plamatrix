@@ -1,0 +1,45 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer BlockRowOffsets { uint block_row_offsets[]; };
+layout(std430, binding = 1) readonly buffer BlockColumns { uint block_columns[]; };
+layout(std430, binding = 2) readonly buffer Values { float values[]; };
+layout(std430, binding = 3) readonly buffer Input { float input_values[]; };
+layout(std430, binding = 4) writeonly buffer Output { float output_values[]; };
+
+layout(push_constant) uniform Parameters
+{
+    uint rows;
+    uint block_size;
+}
+parameters;
+
+void main()
+{
+    const uint row = gl_GlobalInvocationID.x;
+    if (row >= parameters.rows)
+    {
+        return;
+    }
+    const uint block_row = row / parameters.block_size;
+    const uint local_row = row - block_row * parameters.block_size;
+    const uint first_block = block_row_offsets[block_row];
+    const uint last_block = block_row_offsets[block_row + 1];
+    const uint blocks_in_row = last_block - first_block;
+    const uint scalar_row_offset =
+        first_block * parameters.block_size * parameters.block_size +
+        local_row * blocks_in_row * parameters.block_size;
+    float sum = 0.0;
+    for (uint block = first_block; block < last_block; ++block)
+    {
+        const uint local_block = block - first_block;
+        const uint value_offset = scalar_row_offset + local_block * parameters.block_size;
+        const uint input_offset = block_columns[block] * parameters.block_size;
+        for (uint column = 0; column < parameters.block_size; ++column)
+        {
+            sum += values[value_offset + column] * input_values[input_offset + column];
+        }
+    }
+    output_values[row] = sum;
+}

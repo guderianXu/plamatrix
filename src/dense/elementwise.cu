@@ -4,10 +4,10 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "plamatrix/dense/dense_ops.h"
-#include "plamatrix/dense/elementwise.h"
+#include "plamatrix/internal/dense/dense_ops.h"
+#include "plamatrix/internal/dense/elementwise.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -103,11 +103,11 @@ __global__ void elementwiseKernel(const Scalar* lhs,
 
 template <ElementwiseOperation Operation, typename Scalar>
 void launchElementwise(const char* operation,
-                       const DenseMatrix<Scalar, Device::GPU>& input,
-                       const DenseMatrix<Scalar, Device::GPU>* rhs,
+                       const DenseStorage<Scalar, Device::GPU>& input,
+                       const DenseStorage<Scalar, Device::GPU>* rhs,
                        Scalar first,
                        Scalar second,
-                       DenseMatrix<Scalar, Device::GPU>& output,
+                       DenseStorage<Scalar, Device::GPU>& output,
                        cudaStream_t stream)
 {
     detail::checkOutputDimensions(operation, output, input.rows(), input.cols());
@@ -145,9 +145,9 @@ void validateClampBounds(Scalar min_value, Scalar max_value)
 } // anonymous namespace
 
 template <typename Scalar>
-void scalarMultiplyAsync(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarMultiplyAsync(const DenseStorage<Scalar, Device::GPU>& input,
                          Scalar value,
-                         DenseMatrix<Scalar, Device::GPU>& output,
+                         DenseStorage<Scalar, Device::GPU>& output,
                          cudaStream_t stream)
 {
     launchElementwise<ElementwiseOperation::ScalarMultiply, Scalar>(
@@ -155,19 +155,19 @@ void scalarMultiplyAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarMultiplyAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarMultiplyAsync(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     scalarMultiplyAsync(input, value, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void scalarMultiply(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarMultiply(const DenseStorage<Scalar, Device::GPU>& input,
                     Scalar value,
-                    DenseMatrix<Scalar, Device::GPU>& output,
+                    DenseStorage<Scalar, Device::GPU>& output,
                     cudaStream_t stream)
 {
     scalarMultiplyAsync(input, value, output, stream);
@@ -175,19 +175,19 @@ void scalarMultiply(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarMultiply(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarMultiply(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     scalarMultiplyAsync(input, value, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void scalarAddAsync(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarAddAsync(const DenseStorage<Scalar, Device::GPU>& input,
                     Scalar value,
-                    DenseMatrix<Scalar, Device::GPU>& output,
+                    DenseStorage<Scalar, Device::GPU>& output,
                     cudaStream_t stream)
 {
     launchElementwise<ElementwiseOperation::ScalarAdd, Scalar>(
@@ -195,19 +195,19 @@ void scalarAddAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarAddAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarAddAsync(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     scalarAddAsync(input, value, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void scalarAdd(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarAdd(const DenseStorage<Scalar, Device::GPU>& input,
                Scalar value,
-               DenseMatrix<Scalar, Device::GPU>& output,
+               DenseStorage<Scalar, Device::GPU>& output,
                cudaStream_t stream)
 {
     scalarAddAsync(input, value, output, stream);
@@ -215,19 +215,19 @@ void scalarAdd(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarAdd(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarAdd(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     scalarAddAsync(input, value, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void scalarDivideAsync(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarDivideAsync(const DenseStorage<Scalar, Device::GPU>& input,
                        Scalar value,
-                       DenseMatrix<Scalar, Device::GPU>& output,
+                       DenseStorage<Scalar, Device::GPU>& output,
                        cudaStream_t stream)
 {
     validateScalarDivisor(value);
@@ -236,20 +236,20 @@ void scalarDivideAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarDivideAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarDivideAsync(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
     validateScalarDivisor(value);
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     scalarDivideAsync(input, value, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void scalarDivide(const DenseMatrix<Scalar, Device::GPU>& input,
+void scalarDivide(const DenseStorage<Scalar, Device::GPU>& input,
                   Scalar value,
-                  DenseMatrix<Scalar, Device::GPU>& output,
+                  DenseStorage<Scalar, Device::GPU>& output,
                   cudaStream_t stream)
 {
     scalarDivideAsync(input, value, output, stream);
@@ -257,20 +257,20 @@ void scalarDivide(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> scalarDivide(
-    const DenseMatrix<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> scalarDivide(
+    const DenseStorage<Scalar, Device::GPU>& input, Scalar value, cudaStream_t stream)
 {
     validateScalarDivisor(value);
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     scalarDivideAsync(input, value, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void hadamardMultiplyAsync(const DenseMatrix<Scalar, Device::GPU>& lhs,
-                           const DenseMatrix<Scalar, Device::GPU>& rhs,
-                           DenseMatrix<Scalar, Device::GPU>& output,
+void hadamardMultiplyAsync(const DenseStorage<Scalar, Device::GPU>& lhs,
+                           const DenseStorage<Scalar, Device::GPU>& rhs,
+                           DenseStorage<Scalar, Device::GPU>& output,
                            cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardMultiply", lhs, rhs);
@@ -279,22 +279,22 @@ void hadamardMultiplyAsync(const DenseMatrix<Scalar, Device::GPU>& lhs,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> hadamardMultiplyAsync(
-    const DenseMatrix<Scalar, Device::GPU>& lhs,
-    const DenseMatrix<Scalar, Device::GPU>& rhs,
+DenseStorage<Scalar, Device::GPU> hadamardMultiplyAsync(
+    const DenseStorage<Scalar, Device::GPU>& lhs,
+    const DenseStorage<Scalar, Device::GPU>& rhs,
     cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardMultiply", lhs, rhs);
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         lhs.rows(), lhs.cols(), stream);
     hadamardMultiplyAsync(lhs, rhs, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void hadamardMultiply(const DenseMatrix<Scalar, Device::GPU>& lhs,
-                      const DenseMatrix<Scalar, Device::GPU>& rhs,
-                      DenseMatrix<Scalar, Device::GPU>& output,
+void hadamardMultiply(const DenseStorage<Scalar, Device::GPU>& lhs,
+                      const DenseStorage<Scalar, Device::GPU>& rhs,
+                      DenseStorage<Scalar, Device::GPU>& output,
                       cudaStream_t stream)
 {
     hadamardMultiplyAsync(lhs, rhs, output, stream);
@@ -302,22 +302,22 @@ void hadamardMultiply(const DenseMatrix<Scalar, Device::GPU>& lhs,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> hadamardMultiply(
-    const DenseMatrix<Scalar, Device::GPU>& lhs,
-    const DenseMatrix<Scalar, Device::GPU>& rhs,
+DenseStorage<Scalar, Device::GPU> hadamardMultiply(
+    const DenseStorage<Scalar, Device::GPU>& lhs,
+    const DenseStorage<Scalar, Device::GPU>& rhs,
     cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardMultiply", lhs, rhs);
-    DenseMatrix<Scalar, Device::GPU> output(lhs.rows(), lhs.cols());
+    DenseStorage<Scalar, Device::GPU> output(lhs.rows(), lhs.cols());
     hadamardMultiplyAsync(lhs, rhs, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void hadamardDivideAsync(const DenseMatrix<Scalar, Device::GPU>& lhs,
-                         const DenseMatrix<Scalar, Device::GPU>& rhs,
-                         DenseMatrix<Scalar, Device::GPU>& output,
+void hadamardDivideAsync(const DenseStorage<Scalar, Device::GPU>& lhs,
+                         const DenseStorage<Scalar, Device::GPU>& rhs,
+                         DenseStorage<Scalar, Device::GPU>& output,
                          cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardDivide", lhs, rhs);
@@ -326,22 +326,22 @@ void hadamardDivideAsync(const DenseMatrix<Scalar, Device::GPU>& lhs,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> hadamardDivideAsync(
-    const DenseMatrix<Scalar, Device::GPU>& lhs,
-    const DenseMatrix<Scalar, Device::GPU>& rhs,
+DenseStorage<Scalar, Device::GPU> hadamardDivideAsync(
+    const DenseStorage<Scalar, Device::GPU>& lhs,
+    const DenseStorage<Scalar, Device::GPU>& rhs,
     cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardDivide", lhs, rhs);
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         lhs.rows(), lhs.cols(), stream);
     hadamardDivideAsync(lhs, rhs, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void hadamardDivide(const DenseMatrix<Scalar, Device::GPU>& lhs,
-                    const DenseMatrix<Scalar, Device::GPU>& rhs,
-                    DenseMatrix<Scalar, Device::GPU>& output,
+void hadamardDivide(const DenseStorage<Scalar, Device::GPU>& lhs,
+                    const DenseStorage<Scalar, Device::GPU>& rhs,
+                    DenseStorage<Scalar, Device::GPU>& output,
                     cudaStream_t stream)
 {
     hadamardDivideAsync(lhs, rhs, output, stream);
@@ -349,21 +349,21 @@ void hadamardDivide(const DenseMatrix<Scalar, Device::GPU>& lhs,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> hadamardDivide(
-    const DenseMatrix<Scalar, Device::GPU>& lhs,
-    const DenseMatrix<Scalar, Device::GPU>& rhs,
+DenseStorage<Scalar, Device::GPU> hadamardDivide(
+    const DenseStorage<Scalar, Device::GPU>& lhs,
+    const DenseStorage<Scalar, Device::GPU>& rhs,
     cudaStream_t stream)
 {
     detail::checkSameDimensions("hadamardDivide", lhs, rhs);
-    DenseMatrix<Scalar, Device::GPU> output(lhs.rows(), lhs.cols());
+    DenseStorage<Scalar, Device::GPU> output(lhs.rows(), lhs.cols());
     hadamardDivideAsync(lhs, rhs, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void absElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
-                      DenseMatrix<Scalar, Device::GPU>& output,
+void absElementsAsync(const DenseStorage<Scalar, Device::GPU>& input,
+                      DenseStorage<Scalar, Device::GPU>& output,
                       cudaStream_t stream)
 {
     launchElementwise<ElementwiseOperation::Abs, Scalar>(
@@ -371,18 +371,18 @@ void absElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> absElementsAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> absElementsAsync(
+    const DenseStorage<Scalar, Device::GPU>& input, cudaStream_t stream)
 {
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     absElementsAsync(input, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void absElements(const DenseMatrix<Scalar, Device::GPU>& input,
-                 DenseMatrix<Scalar, Device::GPU>& output,
+void absElements(const DenseStorage<Scalar, Device::GPU>& input,
+                 DenseStorage<Scalar, Device::GPU>& output,
                  cudaStream_t stream)
 {
     absElementsAsync(input, output, stream);
@@ -390,18 +390,18 @@ void absElements(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> absElements(
-    const DenseMatrix<Scalar, Device::GPU>& input, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> absElements(
+    const DenseStorage<Scalar, Device::GPU>& input, cudaStream_t stream)
 {
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     absElementsAsync(input, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void sqrtElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
-                       DenseMatrix<Scalar, Device::GPU>& output,
+void sqrtElementsAsync(const DenseStorage<Scalar, Device::GPU>& input,
+                       DenseStorage<Scalar, Device::GPU>& output,
                        cudaStream_t stream)
 {
     launchElementwise<ElementwiseOperation::Sqrt, Scalar>(
@@ -409,18 +409,18 @@ void sqrtElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> sqrtElementsAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> sqrtElementsAsync(
+    const DenseStorage<Scalar, Device::GPU>& input, cudaStream_t stream)
 {
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     sqrtElementsAsync(input, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void sqrtElements(const DenseMatrix<Scalar, Device::GPU>& input,
-                  DenseMatrix<Scalar, Device::GPU>& output,
+void sqrtElements(const DenseStorage<Scalar, Device::GPU>& input,
+                  DenseStorage<Scalar, Device::GPU>& output,
                   cudaStream_t stream)
 {
     sqrtElementsAsync(input, output, stream);
@@ -428,20 +428,20 @@ void sqrtElements(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> sqrtElements(
-    const DenseMatrix<Scalar, Device::GPU>& input, cudaStream_t stream)
+DenseStorage<Scalar, Device::GPU> sqrtElements(
+    const DenseStorage<Scalar, Device::GPU>& input, cudaStream_t stream)
 {
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     sqrtElementsAsync(input, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 template <typename Scalar>
-void clampElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
+void clampElementsAsync(const DenseStorage<Scalar, Device::GPU>& input,
                         Scalar min_value,
                         Scalar max_value,
-                        DenseMatrix<Scalar, Device::GPU>& output,
+                        DenseStorage<Scalar, Device::GPU>& output,
                         cudaStream_t stream)
 {
     validateClampBounds(min_value, max_value);
@@ -450,24 +450,24 @@ void clampElementsAsync(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> clampElementsAsync(
-    const DenseMatrix<Scalar, Device::GPU>& input,
+DenseStorage<Scalar, Device::GPU> clampElementsAsync(
+    const DenseStorage<Scalar, Device::GPU>& input,
     Scalar min_value,
     Scalar max_value,
     cudaStream_t stream)
 {
     validateClampBounds(min_value, max_value);
-    auto output = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(
+    auto output = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(
         input.rows(), input.cols(), stream);
     clampElementsAsync(input, min_value, max_value, output, stream);
     return output;
 }
 
 template <typename Scalar>
-void clampElements(const DenseMatrix<Scalar, Device::GPU>& input,
+void clampElements(const DenseStorage<Scalar, Device::GPU>& input,
                    Scalar min_value,
                    Scalar max_value,
-                   DenseMatrix<Scalar, Device::GPU>& output,
+                   DenseStorage<Scalar, Device::GPU>& output,
                    cudaStream_t stream)
 {
     clampElementsAsync(input, min_value, max_value, output, stream);
@@ -475,92 +475,92 @@ void clampElements(const DenseMatrix<Scalar, Device::GPU>& input,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> clampElements(
-    const DenseMatrix<Scalar, Device::GPU>& input,
+DenseStorage<Scalar, Device::GPU> clampElements(
+    const DenseStorage<Scalar, Device::GPU>& input,
     Scalar min_value,
     Scalar max_value,
     cudaStream_t stream)
 {
     validateClampBounds(min_value, max_value);
-    DenseMatrix<Scalar, Device::GPU> output(input.rows(), input.cols());
+    DenseStorage<Scalar, Device::GPU> output(input.rows(), input.cols());
     clampElementsAsync(input, min_value, max_value, output, stream);
     PLAMATRIX_CHECK_CUDA(cudaStreamSynchronize(stream));
     return output;
 }
 
 #define PLAMATRIX_INSTANTIATE_ELEMENTWISE(Scalar)                                                   \
-    template DenseMatrix<Scalar, Device::GPU> scalarMultiplyAsync(                                 \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarMultiplyAsync(const DenseMatrix<Scalar, Device::GPU>&, Scalar,              \
-                                      DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);              \
-    template DenseMatrix<Scalar, Device::GPU> scalarMultiply(                                      \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarMultiply(const DenseMatrix<Scalar, Device::GPU>&, Scalar,                   \
-                                 DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                   \
-    template DenseMatrix<Scalar, Device::GPU> scalarAddAsync(                                      \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarAddAsync(const DenseMatrix<Scalar, Device::GPU>&, Scalar,                   \
-                                 DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                   \
-    template DenseMatrix<Scalar, Device::GPU> scalarAdd(                                           \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarAdd(const DenseMatrix<Scalar, Device::GPU>&, Scalar,                        \
-                            DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                        \
-    template DenseMatrix<Scalar, Device::GPU> scalarDivideAsync(                                   \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarDivideAsync(const DenseMatrix<Scalar, Device::GPU>&, Scalar,                \
-                                    DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                \
-    template DenseMatrix<Scalar, Device::GPU> scalarDivide(                                        \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
-    template void scalarDivide(const DenseMatrix<Scalar, Device::GPU>&, Scalar,                     \
-                               DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                     \
-    template DenseMatrix<Scalar, Device::GPU> hadamardMultiplyAsync(                               \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
+    template DenseStorage<Scalar, Device::GPU> scalarMultiplyAsync(                                 \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarMultiplyAsync(const DenseStorage<Scalar, Device::GPU>&, Scalar,              \
+                                      DenseStorage<Scalar, Device::GPU>&, cudaStream_t);              \
+    template DenseStorage<Scalar, Device::GPU> scalarMultiply(                                      \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarMultiply(const DenseStorage<Scalar, Device::GPU>&, Scalar,                   \
+                                 DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                   \
+    template DenseStorage<Scalar, Device::GPU> scalarAddAsync(                                      \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarAddAsync(const DenseStorage<Scalar, Device::GPU>&, Scalar,                   \
+                                 DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                   \
+    template DenseStorage<Scalar, Device::GPU> scalarAdd(                                           \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarAdd(const DenseStorage<Scalar, Device::GPU>&, Scalar,                        \
+                            DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                        \
+    template DenseStorage<Scalar, Device::GPU> scalarDivideAsync(                                   \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarDivideAsync(const DenseStorage<Scalar, Device::GPU>&, Scalar,                \
+                                    DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                \
+    template DenseStorage<Scalar, Device::GPU> scalarDivide(                                        \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, cudaStream_t);                             \
+    template void scalarDivide(const DenseStorage<Scalar, Device::GPU>&, Scalar,                     \
+                               DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                     \
+    template DenseStorage<Scalar, Device::GPU> hadamardMultiplyAsync(                               \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
         cudaStream_t);                                                                              \
     template void hadamardMultiplyAsync(                                                            \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
-        DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                           \
-    template DenseMatrix<Scalar, Device::GPU> hadamardMultiply(                                    \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
+        DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                           \
+    template DenseStorage<Scalar, Device::GPU> hadamardMultiply(                                    \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
         cudaStream_t);                                                                              \
     template void hadamardMultiply(                                                                 \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
-        DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                           \
-    template DenseMatrix<Scalar, Device::GPU> hadamardDivideAsync(                                 \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
+        DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                           \
+    template DenseStorage<Scalar, Device::GPU> hadamardDivideAsync(                                 \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
         cudaStream_t);                                                                              \
     template void hadamardDivideAsync(                                                              \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
-        DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                           \
-    template DenseMatrix<Scalar, Device::GPU> hadamardDivide(                                      \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
+        DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                           \
+    template DenseStorage<Scalar, Device::GPU> hadamardDivide(                                      \
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
         cudaStream_t);                                                                              \
     template void hadamardDivide(                                                                   \
-        const DenseMatrix<Scalar, Device::GPU>&, const DenseMatrix<Scalar, Device::GPU>&,           \
-        DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                           \
-    template DenseMatrix<Scalar, Device::GPU> absElementsAsync(                                    \
-        const DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                    \
-    template void absElementsAsync(const DenseMatrix<Scalar, Device::GPU>&,                         \
-                                   DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                 \
-    template DenseMatrix<Scalar, Device::GPU> absElements(                                         \
-        const DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                    \
-    template void absElements(const DenseMatrix<Scalar, Device::GPU>&,                              \
-                              DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                      \
-    template DenseMatrix<Scalar, Device::GPU> sqrtElementsAsync(                                   \
-        const DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                    \
-    template void sqrtElementsAsync(const DenseMatrix<Scalar, Device::GPU>&,                        \
-                                    DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                \
-    template DenseMatrix<Scalar, Device::GPU> sqrtElements(                                        \
-        const DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                                    \
-    template void sqrtElements(const DenseMatrix<Scalar, Device::GPU>&,                             \
-                               DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);                     \
-    template DenseMatrix<Scalar, Device::GPU> clampElementsAsync(                                  \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, Scalar, cudaStream_t);                     \
-    template void clampElementsAsync(const DenseMatrix<Scalar, Device::GPU>&, Scalar, Scalar,       \
-                                     DenseMatrix<Scalar, Device::GPU>&, cudaStream_t);               \
-    template DenseMatrix<Scalar, Device::GPU> clampElements(                                       \
-        const DenseMatrix<Scalar, Device::GPU>&, Scalar, Scalar, cudaStream_t);                     \
-    template void clampElements(const DenseMatrix<Scalar, Device::GPU>&, Scalar, Scalar,            \
-                                DenseMatrix<Scalar, Device::GPU>&, cudaStream_t)
+        const DenseStorage<Scalar, Device::GPU>&, const DenseStorage<Scalar, Device::GPU>&,           \
+        DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                           \
+    template DenseStorage<Scalar, Device::GPU> absElementsAsync(                                    \
+        const DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                    \
+    template void absElementsAsync(const DenseStorage<Scalar, Device::GPU>&,                         \
+                                   DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                 \
+    template DenseStorage<Scalar, Device::GPU> absElements(                                         \
+        const DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                    \
+    template void absElements(const DenseStorage<Scalar, Device::GPU>&,                              \
+                              DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                      \
+    template DenseStorage<Scalar, Device::GPU> sqrtElementsAsync(                                   \
+        const DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                    \
+    template void sqrtElementsAsync(const DenseStorage<Scalar, Device::GPU>&,                        \
+                                    DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                \
+    template DenseStorage<Scalar, Device::GPU> sqrtElements(                                        \
+        const DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                                    \
+    template void sqrtElements(const DenseStorage<Scalar, Device::GPU>&,                             \
+                               DenseStorage<Scalar, Device::GPU>&, cudaStream_t);                     \
+    template DenseStorage<Scalar, Device::GPU> clampElementsAsync(                                  \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, Scalar, cudaStream_t);                     \
+    template void clampElementsAsync(const DenseStorage<Scalar, Device::GPU>&, Scalar, Scalar,       \
+                                     DenseStorage<Scalar, Device::GPU>&, cudaStream_t);               \
+    template DenseStorage<Scalar, Device::GPU> clampElements(                                       \
+        const DenseStorage<Scalar, Device::GPU>&, Scalar, Scalar, cudaStream_t);                     \
+    template void clampElements(const DenseStorage<Scalar, Device::GPU>&, Scalar, Scalar,            \
+                                DenseStorage<Scalar, Device::GPU>&, cudaStream_t)
 
 #ifdef PLAMATRIX_USE_FLOAT
 PLAMATRIX_INSTANTIATE_ELEMENTWISE(float);
@@ -572,4 +572,4 @@ PLAMATRIX_INSTANTIATE_ELEMENTWISE(double);
 
 #undef PLAMATRIX_INSTANTIATE_ELEMENTWISE
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

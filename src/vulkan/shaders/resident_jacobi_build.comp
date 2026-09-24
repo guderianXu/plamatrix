@@ -1,0 +1,18 @@
+#version 450
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer RowOffsets { uint row_offsets[]; };
+layout(std430, binding = 1) readonly buffer ColumnIndices { uint column_indices[]; };
+layout(std430, binding = 2) readonly buffer Values { float values[]; };
+layout(std430, binding = 3) buffer InverseDiagonal { float inverse_diagonal[]; };
+layout(push_constant) uniform Params { uint count; } params;
+void main()
+{
+    uint row = gl_GlobalInvocationID.x;
+    if (row >= params.count) return;
+    float diagonal = 0.0;
+    for (uint entry = row_offsets[row]; entry < row_offsets[row + 1]; ++entry)
+    {
+        if (column_indices[entry] == row) diagonal += values[entry];
+    }
+    inverse_diagonal[row] = diagonal > 0.0 ? 1.0 / diagonal : uintBitsToFloat(0x7fc00000u);
+}

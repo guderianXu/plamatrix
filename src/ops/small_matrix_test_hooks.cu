@@ -2,7 +2,7 @@
 
 #ifdef PLAMATRIX_SMALL_MATRIX_TEST_HOOKS
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -19,6 +19,6 @@ Index small_matrix_detail::forcedBasisFailureRow() noexcept
     return forced_basis_failure_row;
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal
 
 #endif

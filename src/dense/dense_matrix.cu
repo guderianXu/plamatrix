@@ -2,9 +2,9 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "plamatrix/dense/dense_matrix.h"
+#include "plamatrix/internal/dense/dense_storage.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 template <typename Scalar>
@@ -48,7 +48,7 @@ unsigned int checkedCudaGridExtent(Index extent, unsigned int block_extent, cons
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-void DenseMatrix<float, Device::GPU>::fillGpuKernel(float value)
+void DenseStorage<float, Device::GPU>::fillGpuKernel(float value)
 {
     Index count = this->size();
     if (count == 0)
@@ -56,7 +56,7 @@ void DenseMatrix<float, Device::GPU>::fillGpuKernel(float value)
         return;
     }
     constexpr int block_size = 256;
-    int grid_size = checkedCudaGrid1D(count, block_size, "DenseMatrix::fill");
+    int grid_size = checkedCudaGrid1D(count, block_size, "DenseStorage::fill");
     fillKernel<float><<<grid_size, block_size>>>(this->_data, count, value);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
@@ -64,7 +64,7 @@ void DenseMatrix<float, Device::GPU>::fillGpuKernel(float value)
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-void DenseMatrix<double, Device::GPU>::fillGpuKernel(double value)
+void DenseStorage<double, Device::GPU>::fillGpuKernel(double value)
 {
     Index count = this->size();
     if (count == 0)
@@ -72,14 +72,14 @@ void DenseMatrix<double, Device::GPU>::fillGpuKernel(double value)
         return;
     }
     constexpr int block_size = 256;
-    int grid_size = checkedCudaGrid1D(count, block_size, "DenseMatrix::fill");
+    int grid_size = checkedCudaGrid1D(count, block_size, "DenseStorage::fill");
     fillKernel<double><<<grid_size, block_size>>>(this->_data, count, value);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
 #endif
 
 template <>
-void DenseMatrix<int, Device::GPU>::fillGpuKernel(int value)
+void DenseStorage<int, Device::GPU>::fillGpuKernel(int value)
 {
     Index count = this->size();
     if (count == 0)
@@ -87,13 +87,13 @@ void DenseMatrix<int, Device::GPU>::fillGpuKernel(int value)
         return;
     }
     constexpr int block_size = 256;
-    int grid_size = checkedCudaGrid1D(count, block_size, "DenseMatrix::fill");
+    int grid_size = checkedCudaGrid1D(count, block_size, "DenseStorage::fill");
     fillKernel<int><<<grid_size, block_size>>>(this->_data, count, value);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
 
 template <>
-void DenseMatrix<std::uint8_t, Device::GPU>::fillGpuKernel(std::uint8_t value)
+void DenseStorage<std::uint8_t, Device::GPU>::fillGpuKernel(std::uint8_t value)
 {
     Index count = this->size();
     if (count == 0)
@@ -101,7 +101,7 @@ void DenseMatrix<std::uint8_t, Device::GPU>::fillGpuKernel(std::uint8_t value)
         return;
     }
     constexpr int block_size = 256;
-    int grid_size = checkedCudaGrid1D(count, block_size, "DenseMatrix::fill");
+    int grid_size = checkedCudaGrid1D(count, block_size, "DenseStorage::fill");
     fillKernel<std::uint8_t><<<grid_size, block_size>>>(this->_data, count, value);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
@@ -119,7 +119,7 @@ __global__ void transposeKernel(const Scalar* src, Scalar* dst, Index src_rows, 
 
 #ifdef PLAMATRIX_USE_FLOAT
 template <>
-void DenseMatrix<float, Device::GPU>::transposeGpuKernel(DenseMatrix<float, Device::GPU>& result) const
+void DenseStorage<float, Device::GPU>::transposeGpuKernel(DenseStorage<float, Device::GPU>& result) const
 {
     if (this->size() == 0)
     {
@@ -127,8 +127,8 @@ void DenseMatrix<float, Device::GPU>::transposeGpuKernel(DenseMatrix<float, Devi
     }
     dim3 block(16, 16);
     dim3 grid(
-        checkedCudaGridExtent(this->_rows, block.x, "DenseMatrix::transpose rows"),
-        checkedCudaGridExtent(this->_cols, block.y, "DenseMatrix::transpose cols"));
+        checkedCudaGridExtent(this->_rows, block.x, "DenseStorage::transpose rows"),
+        checkedCudaGridExtent(this->_cols, block.y, "DenseStorage::transpose cols"));
     transposeKernel<float><<<grid, block>>>(this->_data, result.data(), this->_rows, this->_cols);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
@@ -136,7 +136,7 @@ void DenseMatrix<float, Device::GPU>::transposeGpuKernel(DenseMatrix<float, Devi
 
 #ifdef PLAMATRIX_USE_DOUBLE
 template <>
-void DenseMatrix<double, Device::GPU>::transposeGpuKernel(DenseMatrix<double, Device::GPU>& result) const
+void DenseStorage<double, Device::GPU>::transposeGpuKernel(DenseStorage<double, Device::GPU>& result) const
 {
     if (this->size() == 0)
     {
@@ -144,11 +144,11 @@ void DenseMatrix<double, Device::GPU>::transposeGpuKernel(DenseMatrix<double, De
     }
     dim3 block(16, 16);
     dim3 grid(
-        checkedCudaGridExtent(this->_rows, block.x, "DenseMatrix::transpose rows"),
-        checkedCudaGridExtent(this->_cols, block.y, "DenseMatrix::transpose cols"));
+        checkedCudaGridExtent(this->_rows, block.x, "DenseStorage::transpose rows"),
+        checkedCudaGridExtent(this->_cols, block.y, "DenseStorage::transpose cols"));
     transposeKernel<double><<<grid, block>>>(this->_data, result.data(), this->_rows, this->_cols);
     PLAMATRIX_CHECK_CUDA(cudaGetLastError());
 }
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

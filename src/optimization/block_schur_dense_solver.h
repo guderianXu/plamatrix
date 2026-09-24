@@ -9,12 +9,12 @@
 
 #include <omp.h>
 
-#include "plamatrix/optimization/block_schur.h"
-#include "plamatrix/sparse/csr_matrix.h"
+#include "plamatrix/internal/optimization/block_schur.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
 #include "block_schur_linear_algebra.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
 inline Index chooseDenseCholeskyBlockSize(Index dimension)
@@ -236,7 +236,7 @@ void solvePositiveDefiniteFactoredNative(Index dimension,
 
 template <typename Scalar>
 SchurComplementSolverReport<Scalar> solveReducedSchurDense(
-    const CSRMatrix<Scalar, Device::CPU>& matrix,
+    const CsrStorage<Scalar, Device::CPU>& matrix,
     const std::vector<Scalar>& rhs,
     const SchurComplementSolverOptions<Scalar>& options,
     std::vector<Scalar>* solution)
@@ -398,4 +398,4 @@ SchurComplementSolverReport<Scalar> solveReducedSchurDenseLower(
     return report;
 }
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

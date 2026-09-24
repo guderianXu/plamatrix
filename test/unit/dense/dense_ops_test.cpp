@@ -2,16 +2,17 @@
 
 #include <omp.h>
 
-#include <plamatrix/dense/dense_ops.h>
+#include <plamatrix/internal/dense/dense_ops.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 TEST(DenseOps, add_CpuSerial_TwoByTwo)
 {
     omp_set_num_threads(1);
 
-    DenseMatrix<float, Device::CPU> A(2, 2);
-    DenseMatrix<float, Device::CPU> B(2, 2);
+    DenseStorage<float, Device::CPU> A(2, 2);
+    DenseStorage<float, Device::CPU> B(2, 2);
 
     // A = [1 3; 2 4] in column-major
     A.setValue(0, 0, 1.0f);
@@ -37,8 +38,8 @@ TEST(DenseOps, sub_CpuSerial)
 {
     omp_set_num_threads(1);
 
-    DenseMatrix<float, Device::CPU> A(2, 2);
-    DenseMatrix<float, Device::CPU> B(2, 2);
+    DenseStorage<float, Device::CPU> A(2, 2);
+    DenseStorage<float, Device::CPU> B(2, 2);
 
     // A = [10 30; 20 40] in column-major
     A.setValue(0, 0, 10.0f);
@@ -62,24 +63,24 @@ TEST(DenseOps, sub_CpuSerial)
 
 TEST(DenseOps, add_RejectsDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A(2, 3);
-    DenseMatrix<float, Device::CPU> B(3, 2);
+    DenseStorage<float, Device::CPU> A(2, 3);
+    DenseStorage<float, Device::CPU> B(3, 2);
 
     EXPECT_THROW(static_cast<void>(add(A, B)), std::runtime_error);
 }
 
 TEST(DenseOps, sub_RejectsDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A(2, 3);
-    DenseMatrix<float, Device::CPU> B(3, 2);
+    DenseStorage<float, Device::CPU> A(2, 3);
+    DenseStorage<float, Device::CPU> B(3, 2);
 
     EXPECT_THROW(static_cast<void>(sub(A, B)), std::runtime_error);
 }
 
 TEST(DenseOps, add_EmptyCpuMatrices)
 {
-    DenseMatrix<float, Device::CPU> A(0, 3);
-    DenseMatrix<float, Device::CPU> B(0, 3);
+    DenseStorage<float, Device::CPU> A(0, 3);
+    DenseStorage<float, Device::CPU> B(0, 3);
 
     auto C = add(A, B);
     EXPECT_EQ(C.rows(), 0);
@@ -90,8 +91,8 @@ TEST(DenseOps, add_EmptyCpuMatrices)
 
 TEST(DenseOps, sub_EmptyCpuMatrices)
 {
-    DenseMatrix<float, Device::CPU> A(0, 3);
-    DenseMatrix<float, Device::CPU> B(0, 3);
+    DenseStorage<float, Device::CPU> A(0, 3);
+    DenseStorage<float, Device::CPU> B(0, 3);
 
     auto C = sub(A, B);
     EXPECT_EQ(C.rows(), 0);
@@ -103,8 +104,8 @@ TEST(DenseOps, sub_EmptyCpuMatrices)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(DenseOps, add_Gpu)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
-    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 2);
+    DenseStorage<float, Device::CPU> B_cpu(2, 2);
 
     // A = [1 3; 2 4] in column-major
     A_cpu.setValue(0, 0, 1.0f);
@@ -131,8 +132,8 @@ TEST(DenseOps, add_Gpu)
 
 TEST(DenseOps, addSub_GpuTwoArgumentOverloads)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
-    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 2);
+    DenseStorage<float, Device::CPU> B_cpu(2, 2);
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
     A_cpu.setValue(0, 1, 3.0f);
@@ -159,8 +160,8 @@ TEST(DenseOps, addSub_GpuTwoArgumentOverloads)
 
 TEST(DenseOps, addSub_GpuOutputReuse)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
-    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 2);
+    DenseStorage<float, Device::CPU> B_cpu(2, 2);
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
     A_cpu.setValue(0, 1, 3.0f);
@@ -172,8 +173,8 @@ TEST(DenseOps, addSub_GpuOutputReuse)
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> sum_gpu(2, 2);
-    DenseMatrix<float, Device::GPU> diff_gpu(2, 2);
+    DenseStorage<float, Device::GPU> sum_gpu(2, 2);
+    DenseStorage<float, Device::GPU> diff_gpu(2, 2);
 
     add(A_gpu, B_gpu, sum_gpu);
     sub(A_gpu, B_gpu, diff_gpu);
@@ -192,8 +193,8 @@ TEST(DenseOps, addSub_GpuOutputReuse)
 
 TEST(DenseOps, addSubAsync_GpuDefaultStream)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
-    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 2);
+    DenseStorage<float, Device::CPU> B_cpu(2, 2);
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
     A_cpu.setValue(0, 1, 3.0f);
@@ -220,12 +221,12 @@ TEST(DenseOps, addSubAsync_GpuDefaultStream)
 
 TEST(DenseOps, add_GpuRejectsOutputDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 2);
-    DenseMatrix<float, Device::CPU> B_cpu(2, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 2);
+    DenseStorage<float, Device::CPU> B_cpu(2, 2);
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> C_gpu(2, 3);
+    DenseStorage<float, Device::GPU> C_gpu(2, 3);
 
     EXPECT_THROW(add(A_gpu, B_gpu, C_gpu), std::runtime_error);
     EXPECT_THROW(addAsync(A_gpu, B_gpu, C_gpu), std::runtime_error);
@@ -233,8 +234,8 @@ TEST(DenseOps, add_GpuRejectsOutputDimensionMismatch)
 
 TEST(DenseOps, add_RejectsGpuDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
@@ -244,8 +245,8 @@ TEST(DenseOps, add_RejectsGpuDimensionMismatch)
 
 TEST(DenseOps, sub_RejectsGpuDimensionMismatch)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(3, 2);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> B_cpu(3, 2);
 
     auto A_gpu = A_cpu.toGpu();
     auto B_gpu = B_cpu.toGpu();
@@ -255,8 +256,8 @@ TEST(DenseOps, sub_RejectsGpuDimensionMismatch)
 
 TEST(DenseOps, add_EmptyGpuMatrices)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(0, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(0, 3);
+    DenseStorage<float, Device::CPU> A_cpu(0, 3);
+    DenseStorage<float, Device::CPU> B_cpu(0, 3);
 
     auto C_gpu = add(A_cpu.toGpu(), B_cpu.toGpu());
     EXPECT_EQ(C_gpu.rows(), 0);
@@ -267,8 +268,8 @@ TEST(DenseOps, add_EmptyGpuMatrices)
 
 TEST(DenseOps, sub_EmptyGpuMatrices)
 {
-    DenseMatrix<float, Device::CPU> A_cpu(0, 3);
-    DenseMatrix<float, Device::CPU> B_cpu(0, 3);
+    DenseStorage<float, Device::CPU> A_cpu(0, 3);
+    DenseStorage<float, Device::CPU> B_cpu(0, 3);
 
     auto C_gpu = sub(A_cpu.toGpu(), B_cpu.toGpu());
     EXPECT_EQ(C_gpu.rows(), 0);
@@ -287,7 +288,7 @@ TEST(DenseOps, transpose_Cpu)
     // 2x3 matrix:
     // [1 3 5]
     // [2 4 6]
-    DenseMatrix<float, Device::CPU> A(2, 3);
+    DenseStorage<float, Device::CPU> A(2, 3);
     A.setValue(0, 0, 1.0f);
     A.setValue(1, 0, 2.0f);
     A.setValue(0, 1, 3.0f);
@@ -318,7 +319,7 @@ TEST(DenseOps, scalarMultiply_Cpu)
     // 2x2 matrix:
     // [1 3]
     // [2 4]
-    DenseMatrix<float, Device::CPU> A(2, 2);
+    DenseStorage<float, Device::CPU> A(2, 2);
     A.setValue(0, 0, 1.0f);
     A.setValue(1, 0, 2.0f);
     A.setValue(0, 1, 3.0f);
@@ -337,13 +338,13 @@ TEST(DenseOps, scalarMultiplyAdd_Cpu)
     omp_set_num_threads(1);
 
     // A = [1 3; 2 4], B = [0.5 0.5; 0.5 0.5]
-    DenseMatrix<float, Device::CPU> A(2, 2);
+    DenseStorage<float, Device::CPU> A(2, 2);
     A.setValue(0, 0, 1.0f);
     A.setValue(1, 0, 2.0f);
     A.setValue(0, 1, 3.0f);
     A.setValue(1, 1, 4.0f);
 
-    DenseMatrix<float, Device::CPU> B(2, 2);
+    DenseStorage<float, Device::CPU> B(2, 2);
     B.setValue(0, 0, 0.5f);
     B.setValue(1, 0, 0.5f);
     B.setValue(0, 1, 0.5f);
@@ -361,7 +362,7 @@ TEST(DenseOps, scalarMultiplyAdd_Cpu)
 TEST(DenseOps, transpose_Gpu)
 {
     // 2x3 matrix on CPU, move to GPU, transpose, bring back
-    DenseMatrix<float, Device::CPU> A_cpu(2, 3);
+    DenseStorage<float, Device::CPU> A_cpu(2, 3);
     A_cpu.setValue(0, 0, 1.0f);
     A_cpu.setValue(1, 0, 2.0f);
     A_cpu.setValue(0, 1, 3.0f);
@@ -384,3 +385,5 @@ TEST(DenseOps, transpose_Gpu)
     EXPECT_FLOAT_EQ(T_cpu(2, 1), 6.0f);
 }
 #endif
+
+} // namespace plamatrix::internal

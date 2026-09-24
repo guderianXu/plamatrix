@@ -24,11 +24,37 @@ else()
     target_compile_definitions(plamatrix_benchmark PRIVATE PLAMATRIX_NO_CUDA=1)
 endif()
 
+if(PLAMATRIX_WITH_EIGEN_REFERENCE AND PLAMATRIX_USE_DOUBLE)
+    add_executable(plamatrix_eigen_compare eigen_compare.cpp)
+    target_link_libraries(plamatrix_eigen_compare PRIVATE plamatrix Eigen3::Eigen)
+    if(PLAMATRIX_BUILD_TESTS)
+        add_test(
+            NAME plamatrix_eigen_compare_smoke
+            COMMAND plamatrix_eigen_compare --size 32 --warmup 0 --trials 1)
+        set_tests_properties(plamatrix_eigen_compare_smoke PROPERTIES
+            PASS_REGULAR_EXPRESSION "gemm,32,plamatrix")
+    endif()
+elseif(PLAMATRIX_WITH_EIGEN_REFERENCE)
+    message(STATUS "Eigen comparison benchmark disabled because PLAMATRIX_USE_DOUBLE=OFF")
+endif()
+
+add_executable(plamatrix_expression_benchmark matrix_expression_benchmark.cpp)
+target_link_libraries(plamatrix_expression_benchmark PRIVATE plamatrix)
+
+add_executable(plamatrix_dense_backend_benchmark dense_backend_benchmark.cpp)
+target_link_libraries(plamatrix_dense_backend_benchmark PRIVATE plamatrix)
+
 if(PLAMATRIX_WITH_VULKAN)
     add_executable(plamatrix_backend_compare backend_compare.cpp)
     target_sources(plamatrix_backend_compare PRIVATE backend_scenarios.cpp)
     target_link_libraries(plamatrix_backend_compare PRIVATE plamatrix)
     target_include_directories(plamatrix_backend_compare PRIVATE ${PROJECT_SOURCE_DIR})
+
+    add_executable(plamatrix_cooperative_matrix_benchmark cooperative_matrix_benchmark.cpp)
+    target_link_libraries(plamatrix_cooperative_matrix_benchmark PRIVATE plamatrix)
+
+    add_executable(plamatrix_schur_backend_benchmark schur_backend_benchmark.cpp)
+    target_link_libraries(plamatrix_schur_backend_benchmark PRIVATE plamatrix)
 endif()
 
 if(PLAMATRIX_BUILD_TESTS)

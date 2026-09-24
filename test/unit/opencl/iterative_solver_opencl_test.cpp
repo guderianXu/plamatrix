@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include <plamatrix/opencl/iterative_solver.h>
-#include <plamatrix/opencl/runtime.h>
-#include <plamatrix/sparse/sparse_ops.h>
+#include <plamatrix/internal/opencl/iterative_solver.h>
+#include <plamatrix/internal/opencl/runtime.h>
+#include <plamatrix/internal/sparse/sparse_ops.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,7 @@ namespace
 {
 
 template <typename Scalar>
-plamatrix::CSRMatrix<Scalar, plamatrix::Device::CPU> poisson1d(plamatrix::Index size)
+plamatrix::internal::CsrStorage<Scalar, plamatrix::internal::Device::CPU> poisson1d(plamatrix::Index size)
 {
     std::vector<plamatrix::Index> rows;
     std::vector<plamatrix::Index> columns;
@@ -36,13 +36,13 @@ plamatrix::CSRMatrix<Scalar, plamatrix::Device::CPU> poisson1d(plamatrix::Index 
             values.push_back(Scalar{-1});
         }
     }
-    return plamatrix::cooToCsr(size, size, rows, columns, values);
+    return plamatrix::internal::cooToCsr(size, size, rows, columns, values);
 }
 
 template <typename Scalar>
-plamatrix::CSRMatrix<Scalar, plamatrix::Device::CPU> coupledBlockDiagonalSystem()
+plamatrix::internal::CsrStorage<Scalar, plamatrix::internal::Device::CPU> coupledBlockDiagonalSystem()
 {
-    return plamatrix::cooToCsr(
+    return plamatrix::internal::cooToCsr(
         4,
         4,
         std::vector<plamatrix::Index>{0, 0, 1, 1, 2, 2, 3, 3},
@@ -53,9 +53,9 @@ plamatrix::CSRMatrix<Scalar, plamatrix::Device::CPU> coupledBlockDiagonalSystem(
 }
 
 template <typename Scalar>
-plamatrix::DenseMatrix<Scalar, plamatrix::Device::CPU> coupledBlockInverse()
+plamatrix::internal::DenseStorage<Scalar, plamatrix::internal::Device::CPU> coupledBlockInverse()
 {
-    plamatrix::DenseMatrix<Scalar, plamatrix::Device::CPU> inverse(8, 1);
+    plamatrix::internal::DenseStorage<Scalar, plamatrix::internal::Device::CPU> inverse(8, 1);
     const std::vector<Scalar> values{
         Scalar(3.0 / 11.0), Scalar(-1.0 / 11.0),
         Scalar(-1.0 / 11.0), Scalar(4.0 / 11.0),
@@ -87,11 +87,11 @@ TYPED_TEST_SUITE(OpenClPcgTest, OpenClScalars);
 
 TYPED_TEST(OpenClPcgTest, SolvesCpuOwnedPoissonSystemOnSelectedGpu)
 {
-    if (!plamatrix::opencl::hasUsableOpenClDevice())
+    if (!plamatrix::internal::opencl::hasUsableOpenClDevice())
     {
         GTEST_SKIP() << "No usable OpenCL GPU";
     }
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
     if constexpr (std::is_same_v<TypeParam, double>)
     {
         if (!runtime.supportsFp64())
@@ -101,18 +101,18 @@ TYPED_TEST(OpenClPcgTest, SolvesCpuOwnedPoissonSystemOnSelectedGpu)
     }
 
     const auto matrix = poisson1d<TypeParam>(64);
-    plamatrix::DenseMatrix<TypeParam, plamatrix::Device::CPU> expected(64, 1);
+    plamatrix::internal::DenseStorage<TypeParam, plamatrix::internal::Device::CPU> expected(64, 1);
     for (plamatrix::Index row = 0; row < expected.rows(); ++row)
     {
         expected(row, 0) = static_cast<TypeParam>(row + 1);
     }
-    const auto rhs = plamatrix::spmv(matrix, expected);
-    plamatrix::DenseMatrix<TypeParam, plamatrix::Device::CPU> solution(64, 1);
+    const auto rhs = plamatrix::internal::spmv(matrix, expected);
+    plamatrix::internal::DenseStorage<TypeParam, plamatrix::internal::Device::CPU> solution(64, 1);
     solution.fill(TypeParam{0});
-    plamatrix::IterativeSolverOptions options;
+    plamatrix::internal::IterativeSolverOptions options;
     options.relativeTolerance = std::is_same_v<TypeParam, float> ? 2.0e-5 : 1.0e-11;
 
-    const auto report = plamatrix::opencl::pcg(matrix, rhs, solution, options);
+    const auto report = plamatrix::internal::opencl::pcg(matrix, rhs, solution, options);
 
     EXPECT_TRUE(report.converged);
     EXPECT_GT(report.iterations, 0);
@@ -127,11 +127,11 @@ TYPED_TEST(OpenClPcgTest, SolvesCpuOwnedPoissonSystemOnSelectedGpu)
 
 TYPED_TEST(OpenClPcgTest, BlockPcgUsesCallerSuppliedInverseBlocks)
 {
-    if (!plamatrix::opencl::hasUsableOpenClDevice())
+    if (!plamatrix::internal::opencl::hasUsableOpenClDevice())
     {
         GTEST_SKIP() << "No usable OpenCL GPU";
     }
-    auto& runtime = plamatrix::opencl::OpenClRuntime::instance();
+    auto& runtime = plamatrix::internal::opencl::OpenClRuntime::instance();
     if constexpr (std::is_same_v<TypeParam, double>)
     {
         if (!runtime.supportsFp64())
@@ -141,19 +141,19 @@ TYPED_TEST(OpenClPcgTest, BlockPcgUsesCallerSuppliedInverseBlocks)
     }
 
     const auto matrix = coupledBlockDiagonalSystem<TypeParam>();
-    plamatrix::DenseMatrix<TypeParam, plamatrix::Device::CPU> expected(4, 1);
+    plamatrix::internal::DenseStorage<TypeParam, plamatrix::internal::Device::CPU> expected(4, 1);
     expected(0, 0) = TypeParam(1);
     expected(1, 0) = TypeParam(2);
     expected(2, 0) = TypeParam(-1);
     expected(3, 0) = TypeParam(3);
-    const auto rhs = plamatrix::spmv(matrix, expected);
+    const auto rhs = plamatrix::internal::spmv(matrix, expected);
     const auto inverse = coupledBlockInverse<TypeParam>();
-    plamatrix::DenseMatrix<TypeParam, plamatrix::Device::CPU> solution(4, 1);
+    plamatrix::internal::DenseStorage<TypeParam, plamatrix::internal::Device::CPU> solution(4, 1);
     solution.fill(TypeParam(0));
-    plamatrix::IterativeSolverOptions options;
+    plamatrix::internal::IterativeSolverOptions options;
     options.relativeTolerance = std::is_same_v<TypeParam, float> ? 1.0e-5 : 1.0e-12;
 
-    const auto report = plamatrix::opencl::blockPcg(
+    const auto report = plamatrix::internal::opencl::blockPcg(
         matrix, rhs, solution, inverse, 2, options);
 
     ASSERT_TRUE(report.converged);
@@ -167,30 +167,30 @@ TYPED_TEST(OpenClPcgTest, BlockPcgUsesCallerSuppliedInverseBlocks)
 
 TEST(OpenClPcgTest, ReportsNonConvergenceAndRejectsInvalidDiagonal)
 {
-    if (!plamatrix::opencl::hasUsableOpenClDevice())
+    if (!plamatrix::internal::opencl::hasUsableOpenClDevice())
     {
         GTEST_SKIP() << "No usable OpenCL GPU";
     }
     const auto matrix = poisson1d<float>(32);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> rhs(32, 1);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> solution(32, 1);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> rhs(32, 1);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> solution(32, 1);
     rhs.fill(1.0F);
     solution.fill(0.0F);
-    plamatrix::IterativeSolverOptions options;
+    plamatrix::internal::IterativeSolverOptions options;
     options.maxIterations = 1;
     options.relativeTolerance = 0.0;
-    const auto report = plamatrix::opencl::pcg(matrix, rhs, solution, options);
+    const auto report = plamatrix::internal::opencl::pcg(matrix, rhs, solution, options);
     EXPECT_FALSE(report.converged);
     EXPECT_EQ(report.iterations, 1);
 
-    const auto invalid = plamatrix::cooToCsr(
+    const auto invalid = plamatrix::internal::cooToCsr(
         2, 2, std::vector<plamatrix::Index>{0, 1},
         std::vector<plamatrix::Index>{0, 1}, std::vector<float>{1.0F, 0.0F});
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> small_rhs(2, 1);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> small_solution(2, 1);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> small_rhs(2, 1);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> small_solution(2, 1);
     small_rhs.fill(1.0F);
     small_solution.fill(0.0F);
-    EXPECT_THROW(plamatrix::opencl::pcg(invalid, small_rhs, small_solution),
+    EXPECT_THROW(plamatrix::internal::opencl::pcg(invalid, small_rhs, small_solution),
                  std::runtime_error);
 }
 
@@ -199,11 +199,11 @@ TEST(OpenClPcgTest, ReportsNonConvergenceAndRejectsInvalidDiagonal)
 TEST(OpenClPcgTest, DisabledBuildThrowsClearError)
 {
     const auto matrix = poisson1d<float>(2);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> rhs(2, 1);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> solution(2, 1);
-    EXPECT_THROW(plamatrix::opencl::pcg(matrix, rhs, solution), std::runtime_error);
-    plamatrix::DenseMatrix<float, plamatrix::Device::CPU> inverse(2, 1);
-    EXPECT_THROW(plamatrix::opencl::blockPcg(
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> rhs(2, 1);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> solution(2, 1);
+    EXPECT_THROW(plamatrix::internal::opencl::pcg(matrix, rhs, solution), std::runtime_error);
+    plamatrix::internal::DenseStorage<float, plamatrix::internal::Device::CPU> inverse(2, 1);
+    EXPECT_THROW(plamatrix::internal::opencl::blockPcg(
                      matrix, rhs, solution, inverse, 1),
                  std::runtime_error);
 }

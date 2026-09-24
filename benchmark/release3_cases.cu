@@ -10,12 +10,12 @@
 
 #include <cuda_runtime.h>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/sparse/iterative_solver.h"
-#include "plamatrix/sparse/sparse_ops.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
+#include "plamatrix/internal/sparse/sparse_ops.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace detail
 {
@@ -51,16 +51,16 @@ struct CpuSparseFixture
     std::vector<Index> rows;
     std::vector<Index> columns;
     std::vector<float> values;
-    CSRMatrix<float, Device::CPU> matrix;
-    DenseMatrix<float, Device::CPU> vector;
-    DenseMatrix<float, Device::CPU> block;
-    DenseMatrix<float, Device::CPU> rhs;
+    CsrStorage<float, Device::CPU> matrix;
+    DenseStorage<float, Device::CPU> vector;
+    DenseStorage<float, Device::CPU> block;
+    DenseStorage<float, Device::CPU> rhs;
 
     explicit CpuSparseFixture(Index size)
         : matrix(makeMatrix(size, rows, columns, values))
-        , vector(DenseMatrix<float, Device::CPU>::pinned(size, 1))
-        , block(DenseMatrix<float, Device::CPU>::pinned(size, 8))
-        , rhs(DenseMatrix<float, Device::CPU>::pinned(size, 1))
+        , vector(DenseStorage<float, Device::CPU>::pinned(size, 1))
+        , block(DenseStorage<float, Device::CPU>::pinned(size, 8))
+        , rhs(DenseStorage<float, Device::CPU>::pinned(size, 1))
     {
         for (Index row = 0; row < size; ++row)
         {
@@ -74,7 +74,7 @@ struct CpuSparseFixture
     }
 
 private:
-    static CSRMatrix<float, Device::CPU> makeMatrix(
+    static CsrStorage<float, Device::CPU> makeMatrix(
         Index size,
         std::vector<Index>& rows,
         std::vector<Index>& columns,
@@ -209,19 +209,19 @@ void measureSynchronousCase(CaseResult& result, Function&& function)
 void runCooToCsrCuda(CaseResult& result, Index size)
 {
     CpuSparseFixture fixture(size);
-    auto rows_cpu = DenseMatrix<Index, Device::CPU>::pinned(
+    auto rows_cpu = DenseStorage<Index, Device::CPU>::pinned(
         static_cast<Index>(fixture.rows.size()), 1);
-    auto columns_cpu = DenseMatrix<Index, Device::CPU>::pinned(rows_cpu.rows(), 1);
-    auto values_cpu = DenseMatrix<float, Device::CPU>::pinned(rows_cpu.rows(), 1);
+    auto columns_cpu = DenseStorage<Index, Device::CPU>::pinned(rows_cpu.rows(), 1);
+    auto values_cpu = DenseStorage<float, Device::CPU>::pinned(rows_cpu.rows(), 1);
     for (Index index = 0; index < rows_cpu.rows(); ++index)
     {
         rows_cpu(index, 0) = fixture.rows[static_cast<std::size_t>(index)];
         columns_cpu(index, 0) = fixture.columns[static_cast<std::size_t>(index)];
         values_cpu(index, 0) = fixture.values[static_cast<std::size_t>(index)];
     }
-    DenseMatrix<Index, Device::GPU> rows_gpu(rows_cpu.rows(), 1);
-    DenseMatrix<Index, Device::GPU> columns_gpu(rows_cpu.rows(), 1);
-    DenseMatrix<float, Device::GPU> values_gpu(rows_cpu.rows(), 1);
+    DenseStorage<Index, Device::GPU> rows_gpu(rows_cpu.rows(), 1);
+    DenseStorage<Index, Device::GPU> columns_gpu(rows_cpu.rows(), 1);
+    DenseStorage<float, Device::GPU> values_gpu(rows_cpu.rows(), 1);
     result.time_transfer_ms = measureTransfer([&]()
     {
         rows_cpu.copyToGpuAsync(rows_gpu);
@@ -237,7 +237,7 @@ void runCooToCsrCuda(CaseResult& result, Index size)
         static_cast<void>(sink);
     });
 
-    CSRMatrix<float, Device::GPU> output(size, size, rows_cpu.rows());
+    CsrStorage<float, Device::GPU> output(size, size, rows_cpu.rows());
     SparseOpsWorkspace workspace;
     cooToCsrAsync(size, size, rows_gpu, columns_gpu, values_gpu, output, workspace);
     PLAMATRIX_CHECK_CUDA(cudaDeviceSynchronize());
@@ -261,7 +261,7 @@ void runSparseProductCuda(CaseResult& result, Index size, bool matrix_product)
     CpuSparseFixture fixture(size);
     const auto matrix_gpu = fixture.matrix.toGpu();
     const auto input_gpu = matrix_product ? fixture.block.toGpu() : fixture.vector.toGpu();
-    DenseMatrix<float, Device::GPU> output(
+    DenseStorage<float, Device::GPU> output(
         size, matrix_product ? fixture.block.cols() : Index{1});
     result.time_transfer_ms = measureTransfer([&]()
     {
@@ -324,7 +324,7 @@ void runSolverCuda(CaseResult& result, Index size, bool preconditioned)
     CpuSparseFixture fixture(size);
     const auto matrix_gpu = fixture.matrix.toGpu();
     const auto rhs_gpu = fixture.rhs.toGpu();
-    DenseMatrix<float, Device::GPU> solution(size, 1);
+    DenseStorage<float, Device::GPU> solution(size, 1);
     IterativeSolverOptions options;
     options.maxIterations = std::max(8, static_cast<int>(size));
     options.relativeTolerance = 1.0e-5;
@@ -370,4 +370,4 @@ void runPcgCuda(CaseResult& result, Index size)
 }
 
 } // namespace detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

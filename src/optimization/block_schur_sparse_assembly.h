@@ -4,19 +4,20 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <omp.h>
 
-#include "plamatrix/optimization/block_schur.h"
-#include "plamatrix/sparse/csr_matrix.h"
+#include "plamatrix/internal/optimization/block_schur.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
 #include "block_schur_linear_algebra.h"
 #include "block_schur_device_assembly.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
     struct SchurComplementSolverWorkspaceAccess
@@ -447,6 +448,12 @@ namespace plamatrix::block_schur_detail
         }
 
         template <typename Scalar>
+        static std::shared_ptr<void>& vulkanAssemblyState(SchurComplementSolverWorkspace<Scalar>& workspace)
+        {
+            return workspace._vulkanAssemblyState;
+        }
+
+        template <typename Scalar>
         static std::shared_ptr<void>& sparseDirectState(SchurComplementSolverWorkspace<Scalar>& workspace)
         {
             return workspace._sparseDirectState;
@@ -637,21 +644,21 @@ namespace plamatrix::block_schur_detail
     }
 
     template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
-    CSRMatrix<Scalar, Device::CPU> assembleReducedSchurCsr(Index primary_count,
-                                                           Index eliminated_count,
-                                                           Index primary_size,
-                                                           Index eliminated_size,
-                                                           const std::vector<Scalar>& primary_diagonal,
-                                                           const std::vector<Scalar>& eliminated_inverse,
-                                                           const PrimaryCrossBlocks& primary_cross_blocks,
-                                                           const CrossBlocks& cross_blocks,
-                                                           const Adjacency& adjacency,
-                                                           SchurComplementSolverWorkspace<Scalar>& workspace,
-                                                           bool* pattern_reused,
-                                                           SchurComplementLinearBackend backend,
-                                                           bool* assembly_on_device,
-                                                           double* accumulation_seconds = nullptr,
-                                                           double* csr_conversion_seconds = nullptr)
+    CsrStorage<Scalar, Device::CPU> assembleReducedSchurCsr(Index primary_count,
+                                                            Index eliminated_count,
+                                                            Index primary_size,
+                                                            Index eliminated_size,
+                                                            const std::vector<Scalar>& primary_diagonal,
+                                                            const std::vector<Scalar>& eliminated_inverse,
+                                                            const PrimaryCrossBlocks& primary_cross_blocks,
+                                                            const CrossBlocks& cross_blocks,
+                                                            const Adjacency& adjacency,
+                                                            SchurComplementSolverWorkspace<Scalar>& workspace,
+                                                            bool* pattern_reused,
+                                                            SchurComplementLinearBackend backend,
+                                                            bool* assembly_on_device,
+                                                            double* accumulation_seconds = nullptr,
+                                                            double* csr_conversion_seconds = nullptr)
     {
         const auto conversion_start = std::chrono::steady_clock::now();
         const bool reused = prepareSchurTopology(primary_count,
@@ -674,7 +681,7 @@ namespace plamatrix::block_schur_detail
         {
             throw std::overflow_error("Schur CSR nonzero count exceeds Index range");
         }
-        CSRMatrix<Scalar, Device::CPU> matrix(dimension, dimension, static_cast<Index>(column_indices.size()));
+        CsrStorage<Scalar, Device::CPU> matrix(dimension, dimension, static_cast<Index>(column_indices.size()));
         Index* matrix_row_offsets = matrix.rowOffsets();
         Index* matrix_column_indices = matrix.colIndices();
         Scalar* matrix_values = matrix.values();
@@ -688,7 +695,10 @@ namespace plamatrix::block_schur_detail
         }
         const auto accumulation_start = std::chrono::steady_clock::now();
 
-        if (backend == SchurComplementLinearBackend::Cuda || backend == SchurComplementLinearBackend::OpenCl)
+        const bool device_assembly = backend == SchurComplementLinearBackend::Cuda ||
+                                     backend == SchurComplementLinearBackend::OpenCl ||
+                                     (backend == SchurComplementLinearBackend::Vulkan && std::is_same_v<Scalar, float>);
+        if (device_assembly)
         {
             std::vector<Scalar> flattened_primary_cross;
             flattened_primary_cross.reserve(primary_cross_blocks.size() *
@@ -737,7 +747,7 @@ namespace plamatrix::block_schur_detail
                                                    workspace,
                                                    !reused);
             }
-            else
+            else if (backend == SchurComplementLinearBackend::OpenCl)
             {
                 values = assembleSchurValuesOnOpenCl(primary_size,
                                                      eliminated_size,
@@ -757,7 +767,34 @@ namespace plamatrix::block_schur_detail
                                                      workspace,
                                                      !reused);
             }
-            if (backend == SchurComplementLinearBackend::OpenCl &&
+            else
+            {
+                if constexpr (std::is_same_v<Scalar, float>)
+                {
+                    values = assembleSchurValuesOnVulkan(primary_size,
+                                                         eliminated_size,
+                                                         primary_diagonal,
+                                                         eliminated_inverse,
+                                                         flattened_primary_cross,
+                                                         flattened_cross,
+                                                         cross_eliminated_blocks,
+                                                         base_kinds,
+                                                         base_indices,
+                                                         value_block_slots,
+                                                         local_rows,
+                                                         local_columns,
+                                                         term_offsets,
+                                                         term_left_cross,
+                                                         term_right_cross,
+                                                         workspace,
+                                                         !reused);
+                }
+                else
+                {
+                    throw std::invalid_argument("Vulkan Schur assembly currently requires float equations");
+                }
+            }
+            if ((backend == SchurComplementLinearBackend::OpenCl) &&
                 values.size() != static_cast<std::size_t>(matrix.nnz()))
             {
                 throw std::runtime_error("Device Schur assembly returned an invalid value count");
@@ -880,4 +917,4 @@ namespace plamatrix::block_schur_detail
         return matrix;
     }
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

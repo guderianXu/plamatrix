@@ -1,3 +1,4 @@
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <initializer_list>
@@ -9,11 +10,11 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/core/parallel.h"
-#include "plamatrix/ops/reduction.h"
+#include "plamatrix/internal/core/parallel.h"
+#include "plamatrix/internal/ops/reduction.h"
 #include "../../support/cuda_test_utils.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -22,12 +23,12 @@ template <typename Scalar>
 class ReductionTest : public ::testing::Test
 {
 protected:
-    static DenseMatrix<Scalar, Device::CPU> makeMatrix(
+    static DenseStorage<Scalar, Device::CPU> makeMatrix(
         Index rows,
         Index cols,
         std::initializer_list<Scalar> values)
     {
-        DenseMatrix<Scalar, Device::CPU> matrix(rows, cols);
+        DenseStorage<Scalar, Device::CPU> matrix(rows, cols);
         if (matrix.size() != static_cast<Index>(values.size()))
         {
             throw std::invalid_argument("makeMatrix: initializer length must match matrix size");
@@ -41,7 +42,7 @@ protected:
     }
 
     template <typename Value>
-    static void expectValues(const DenseMatrix<Value, Device::CPU>& matrix,
+    static void expectValues(const DenseStorage<Value, Device::CPU>& matrix,
                              std::initializer_list<Value> expected)
     {
         ASSERT_EQ(matrix.size(), static_cast<Index>(expected.size()));
@@ -53,7 +54,7 @@ protected:
     }
 
     template <typename Value>
-    static void expectShape(const DenseMatrix<Value, Device::CPU>& matrix,
+    static void expectShape(const DenseStorage<Value, Device::CPU>& matrix,
                             Index rows,
                             Index cols)
     {
@@ -82,8 +83,8 @@ static_assert(std::is_nothrow_destructible_v<ReductionWorkspace>);
 #ifdef PLAMATRIX_WITH_CUDA
 template <typename Scalar>
 void expectGpuReductionResult(
-    const DenseMatrix<Scalar, Device::GPU>& actual,
-    const DenseMatrix<Scalar, Device::CPU>& expected,
+    const DenseStorage<Scalar, Device::GPU>& actual,
+    const DenseStorage<Scalar, Device::CPU>& expected,
     Scalar tolerance = Scalar(0))
 {
     const auto actual_cpu = actual.toCpu();
@@ -112,8 +113,8 @@ void expectGpuReductionResult(
 }
 
 void expectGpuIndices(
-    const DenseMatrix<Index, Device::GPU>& actual,
-    const DenseMatrix<Index, Device::CPU>& expected)
+    const DenseStorage<Index, Device::GPU>& actual,
+    const DenseStorage<Index, Device::CPU>& expected)
 {
     const auto actual_cpu = actual.toCpu();
     ASSERT_EQ(actual_cpu.rows(), expected.rows());
@@ -192,6 +193,78 @@ TYPED_TEST(ReductionTest, AllAxisUsesColumnMajorLinearIndices)
     TestFixture::expectValues(max_indexed.indices, {Index(4)});
 }
 
+TYPED_TEST(ReductionTest, DotAndSquaredNormFuseCoefficientWiseReduction)
+{
+    using Scalar = TypeParam;
+    auto lhs = TestFixture::makeMatrix(2, 3, {
+        Scalar(1), Scalar(-2), Scalar(3), Scalar(-4), Scalar(5), Scalar(-6)
+    });
+    auto rhs = TestFixture::makeMatrix(2, 3, {
+        Scalar(2), Scalar(3), Scalar(-1), Scalar(4), Scalar(-2), Scalar(0.5)
+    });
+
+    EXPECT_EQ(dot(lhs, rhs), Scalar(-36));
+    EXPECT_EQ(squaredNorm(lhs), Scalar(91));
+}
+
+TYPED_TEST(ReductionTest, DotSupportsStridedViewsAndValidatesDimensions)
+{
+    using Scalar = TypeParam;
+    std::array<Scalar, 12> lhs_storage{};
+    std::array<Scalar, 12> rhs_storage{};
+    for (Index index = 0; index < 6; ++index)
+    {
+        lhs_storage[static_cast<std::size_t>(index * 2)] = Scalar(index + 1);
+        rhs_storage[static_cast<std::size_t>(index * 2)] = Scalar(index - 2);
+    }
+    const auto lhs = makeConstMatrixView<Scalar, Device::CPU>(lhs_storage.data(), 2, 3, 2, 4);
+    const auto rhs = makeConstMatrixView<Scalar, Device::CPU>(rhs_storage.data(), 2, 3, 2, 4);
+    const auto mismatch = makeConstMatrixView<Scalar, Device::CPU>(rhs_storage.data(), 3, 2, 2, 6);
+
+    EXPECT_EQ(dot(lhs, rhs), Scalar(28));
+    EXPECT_EQ(squaredNorm(lhs), Scalar(91));
+    EXPECT_THROW(static_cast<void>(dot(lhs, mismatch)), std::runtime_error);
+
+    DenseStorage<Scalar, Device::CPU> empty_lhs(0, 3);
+    DenseStorage<Scalar, Device::CPU> empty_rhs(0, 3);
+    EXPECT_EQ(dot(empty_lhs, empty_rhs), Scalar(0));
+    EXPECT_EQ(squaredNorm(empty_lhs), Scalar(0));
+}
+
+TYPED_TEST(ReductionTest, DotOpenMpBranchProcessesEveryCoefficient)
+{
+    using Scalar = TypeParam;
+    constexpr Index count = detail::kOpenMpWorkThreshold + 37;
+    DenseStorage<Scalar, Device::CPU> lhs(count, 1);
+    DenseStorage<Scalar, Device::CPU> rhs(count, 1);
+    Scalar expected_dot = Scalar(0);
+    Scalar expected_squared_norm = Scalar(0);
+    for (Index index = 0; index < count; ++index)
+    {
+        lhs.data()[index] = Scalar(index % 7 - 3);
+        rhs.data()[index] = Scalar(index % 5 - 2);
+        expected_dot += lhs.data()[index] * rhs.data()[index];
+        expected_squared_norm += lhs.data()[index] * lhs.data()[index];
+    }
+
+    EXPECT_EQ(dot(lhs, rhs), expected_dot);
+    EXPECT_EQ(squaredNorm(lhs), expected_squared_norm);
+}
+
+TEST(ReductionTest, FloatDotAccumulatesProductsInDouble)
+{
+    DenseStorage<float, Device::CPU> lhs(3, 1);
+    DenseStorage<float, Device::CPU> rhs(3, 1);
+    lhs.data()[0] = 16777216.0f;
+    lhs.data()[1] = 1.0f;
+    lhs.data()[2] = -16777216.0f;
+    rhs.data()[0] = 1.0f;
+    rhs.data()[1] = 1.0f;
+    rhs.data()[2] = 1.0f;
+
+    EXPECT_FLOAT_EQ(dot(lhs, rhs), 1.0f);
+}
+
 TYPED_TEST(ReductionTest, RowsAxisReducesColumns)
 {
     using Scalar = TypeParam;
@@ -247,8 +320,8 @@ TYPED_TEST(ReductionTest, ColumnsAxisReducesRows)
 TYPED_TEST(ReductionTest, EmptyReducedLanesFollowOperationRules)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> zero_by_three(0, 3);
-    DenseMatrix<Scalar, Device::CPU> three_by_zero(3, 0);
+    DenseStorage<Scalar, Device::CPU> zero_by_three(0, 3);
+    DenseStorage<Scalar, Device::CPU> three_by_zero(3, 0);
 
     auto all_sum = sum(zero_by_three, ReductionAxis::All);
     auto column_sums = sum(zero_by_three, ReductionAxis::Columns);
@@ -270,9 +343,9 @@ TYPED_TEST(ReductionTest, EmptyReducedLanesFollowOperationRules)
 TYPED_TEST(ReductionTest, ZeroOutputLanesReturnCorrectShapes)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> zero_by_three(0, 3);
-    DenseMatrix<Scalar, Device::CPU> three_by_zero(3, 0);
-    DenseMatrix<Scalar, Device::CPU> zero_by_zero(0, 0);
+    DenseStorage<Scalar, Device::CPU> zero_by_three(0, 3);
+    DenseStorage<Scalar, Device::CPU> three_by_zero(3, 0);
+    DenseStorage<Scalar, Device::CPU> zero_by_zero(0, 0);
 
     for (const auto* input : {&zero_by_three, &zero_by_zero})
     {
@@ -297,7 +370,7 @@ TYPED_TEST(ReductionTest, ZeroOutputLanesReturnCorrectShapes)
 TYPED_TEST(ReductionTest, ZeroByZeroAllRejectsNonSumReductions)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input(0, 0);
+    DenseStorage<Scalar, Device::CPU> input(0, 0);
 
     TestFixture::expectValues(sum(input, ReductionAxis::All), {Scalar(0)});
     EXPECT_THROW(static_cast<void>(mean(input, ReductionAxis::All)), std::invalid_argument);
@@ -382,7 +455,7 @@ TYPED_TEST(ReductionTest, InfinitiesAndNegativeValuesUseIeeeComparisons)
 TYPED_TEST(ReductionTest, InvalidAxisIsRejectedByEveryOperation)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input(0, 0);
+    DenseStorage<Scalar, Device::CPU> input(0, 0);
     const auto invalid = static_cast<ReductionAxis>(99);
 
     EXPECT_THROW(static_cast<void>(sum(input, invalid)), std::invalid_argument);
@@ -397,7 +470,7 @@ TYPED_TEST(ReductionTest, OpenMpSizedRowsKeepSerialLaneResults)
 {
     using Scalar = TypeParam;
     constexpr Index lane_count = detail::kOpenMpWorkThreshold;
-    DenseMatrix<Scalar, Device::CPU> input(lane_count, 3);
+    DenseStorage<Scalar, Device::CPU> input(lane_count, 3);
     for (Index row = 0; row < lane_count; ++row)
     {
         input(row, 0) = Scalar(row);
@@ -503,6 +576,87 @@ TYPED_TEST(ReductionTest, MeanRetainsRegularPrecisionAcrossAxes)
 }
 
 #ifdef PLAMATRIX_WITH_CUDA
+TYPED_TEST(ReductionTest, GpuViewValueReductionsUseCallerOwnedOutputOnNondefaultStream)
+{
+    using Scalar = TypeParam;
+    auto input_cpu =
+        TestFixture::makeMatrix(2, 3, {Scalar(3), Scalar(-2), Scalar(7), Scalar(4), Scalar(-1), Scalar(5)});
+    auto input = input_cpu.toGpu();
+    const auto input_view =
+        makeColumnMajorView<Scalar, Device::GPU>(static_cast<const Scalar*>(input.data()), input.rows(), input.cols());
+    test::CudaStreamGuard stream;
+    const Scalar tolerance = std::numeric_limits<Scalar>::epsilon() * Scalar(32);
+
+    for (ReductionAxis axis : {ReductionAxis::All, ReductionAxis::Rows, ReductionAxis::Columns})
+    {
+#define EXERCISE_VIEW_REDUCTION(OP, ASYNC_OP, TOLERANCE)                          \
+        {                                                                         \
+            const auto expected = OP(input_cpu, axis);                            \
+            DenseStorage<Scalar, Device::GPU> sync_output(                         \
+                expected.rows(), expected.cols());                                \
+            DenseStorage<Scalar, Device::GPU> async_output(                        \
+                expected.rows(), expected.cols());                                \
+            auto sync_view = makeColumnMajorView<Scalar, Device::GPU>(             \
+                sync_output.data(), sync_output.rows(), sync_output.cols());       \
+            auto async_view = makeColumnMajorView<Scalar, Device::GPU>(            \
+                async_output.data(), async_output.rows(), async_output.cols());    \
+            ReductionWorkspace sync_workspace;                                    \
+            ReductionWorkspace async_workspace;                                   \
+            OP(input_view, axis, sync_view, sync_workspace, stream.get());         \
+            ASYNC_OP(input_view, axis, async_view, async_workspace, stream.get()); \
+            stream.synchronize();                                                  \
+            expectGpuReductionResult(sync_output, expected, TOLERANCE);           \
+            expectGpuReductionResult(async_output, expected, TOLERANCE);          \
+        }
+
+        EXERCISE_VIEW_REDUCTION(sum, sumAsync, tolerance);
+        EXERCISE_VIEW_REDUCTION(min, minAsync, Scalar(0));
+        EXERCISE_VIEW_REDUCTION(max, maxAsync, Scalar(0));
+#undef EXERCISE_VIEW_REDUCTION
+    }
+}
+
+TYPED_TEST(ReductionTest, GpuViewValueReductionsValidateLayoutShapeOverlapAndEmptyLanes)
+{
+    using Scalar = TypeParam;
+    DenseStorage<Scalar, Device::GPU> storage(3, 3);
+    DenseStorage<Scalar, Device::GPU> result(3, 1);
+    const auto input = makeColumnMajorView<Scalar, Device::GPU>(static_cast<const Scalar*>(storage.data()), 3, 3);
+    const auto output = makeColumnMajorView<Scalar, Device::GPU>(result.data(), 3, 1);
+    const auto strided_input = makeConstMatrixView<Scalar, Device::GPU>(storage.data(), 3, 3, 1, 4);
+    const auto strided_output = makeMatrixView<Scalar, Device::GPU>(result.data(), 3, 1, 2, 3);
+    const auto wrong_shape = makeColumnMajorView<Scalar, Device::GPU>(result.data(), 1, 3);
+    const auto overlapping_output = makeColumnMajorView<Scalar, Device::GPU>(storage.data() + 1, 3, 1);
+    ReductionWorkspace workspace;
+
+    EXPECT_THROW(sum(strided_input, ReductionAxis::Rows, output, workspace), std::invalid_argument);
+    EXPECT_THROW(min(input, ReductionAxis::Rows, strided_output, workspace), std::invalid_argument);
+    EXPECT_THROW(max(input, ReductionAxis::Rows, wrong_shape, workspace), std::invalid_argument);
+    EXPECT_THROW(sum(input, ReductionAxis::Rows, overlapping_output, workspace), std::invalid_argument);
+    EXPECT_THROW(min(input, ReductionAxis::Rows, overlapping_output, workspace), std::invalid_argument);
+    EXPECT_THROW(max(input, ReductionAxis::Rows, overlapping_output, workspace), std::invalid_argument);
+
+    const auto empty_input = makeColumnMajorView<Scalar, Device::GPU>(static_cast<const Scalar*>(nullptr), 0, 3);
+    DenseStorage<Scalar, Device::GPU> empty_sum(1, 3);
+    auto empty_sum_view = makeColumnMajorView<Scalar, Device::GPU>(empty_sum.data(), 1, 3);
+    sum(empty_input, ReductionAxis::Columns, empty_sum_view, workspace);
+    TestFixture::expectValues(empty_sum.toCpu(), {Scalar(0), Scalar(0), Scalar(0)});
+    auto all_sum_view = makeColumnMajorView<Scalar, Device::GPU>(empty_sum.data(), 1, 1);
+    sum(empty_input, ReductionAxis::All, all_sum_view, workspace);
+    EXPECT_EQ(empty_sum.toCpu().data()[0], Scalar(0));
+    EXPECT_THROW(min(empty_input, ReductionAxis::Columns, empty_sum_view, workspace), std::invalid_argument);
+    EXPECT_THROW(max(empty_input,
+                     ReductionAxis::All,
+                     makeColumnMajorView<Scalar, Device::GPU>(empty_sum.data(), 1, 1),
+                     workspace),
+                 std::invalid_argument);
+    auto zero_lanes = makeColumnMajorView<Scalar, Device::GPU>(static_cast<Scalar*>(nullptr), 0, 1);
+    sum(empty_input, ReductionAxis::Rows, zero_lanes, workspace);
+    min(empty_input, ReductionAxis::Rows, zero_lanes, workspace);
+    max(empty_input, ReductionAxis::Rows, zero_lanes, workspace);
+    EXPECT_THROW(sum(input, static_cast<ReductionAxis>(99), output, workspace), std::invalid_argument);
+}
+
 TYPED_TEST(ReductionTest, GpuValueReductionFamiliesMatchCpuForEveryAxis)
 {
     using Scalar = TypeParam;
@@ -521,11 +675,11 @@ TYPED_TEST(ReductionTest, GpuValueReductionFamiliesMatchCpuForEveryAxis)
             ReductionWorkspace workspace;                                                \
             auto convenience = OP(input, axis);                                           \
             auto sync_allocated = OP(input, axis, workspace, stream.get());               \
-            DenseMatrix<Scalar, Device::GPU> sync_reused(                                 \
+            DenseStorage<Scalar, Device::GPU> sync_reused(                                 \
                 EXPECTED.rows(), EXPECTED.cols());                                        \
             OP(input, axis, sync_reused, workspace, stream.get());                        \
             auto async_allocated = ASYNC_OP(input, axis, workspace, stream.get());        \
-            DenseMatrix<Scalar, Device::GPU> async_reused(                                \
+            DenseStorage<Scalar, Device::GPU> async_reused(                                \
                 EXPECTED.rows(), EXPECTED.cols());                                        \
             ASYNC_OP(input, axis, async_reused, workspace, stream.get());                 \
             stream.synchronize();                                                         \
@@ -567,15 +721,15 @@ TYPED_TEST(ReductionTest, GpuIndexedReductionFamiliesMatchCpuForEveryAxis)
             ReductionWorkspace workspace;                                                \
             auto convenience = OP(input, axis);                                           \
             auto sync_allocated = OP(input, axis, workspace, stream.get());               \
-            DenseMatrix<Scalar, Device::GPU> sync_values(                                 \
+            DenseStorage<Scalar, Device::GPU> sync_values(                                 \
                 EXPECTED.values.rows(), EXPECTED.values.cols());                          \
-            DenseMatrix<Index, Device::GPU> sync_indices(                                 \
+            DenseStorage<Index, Device::GPU> sync_indices(                                 \
                 EXPECTED.indices.rows(), EXPECTED.indices.cols());                        \
             OP(input, axis, sync_values, sync_indices, workspace, stream.get());          \
             auto async_allocated = ASYNC_OP(input, axis, workspace, stream.get());        \
-            DenseMatrix<Scalar, Device::GPU> async_values(                                \
+            DenseStorage<Scalar, Device::GPU> async_values(                                \
                 EXPECTED.values.rows(), EXPECTED.values.cols());                          \
-            DenseMatrix<Index, Device::GPU> async_indices(                                \
+            DenseStorage<Index, Device::GPU> async_indices(                                \
                 EXPECTED.indices.rows(), EXPECTED.indices.cols());                        \
             ASYNC_OP(input, axis, async_values, async_indices, workspace, stream.get());  \
             stream.synchronize();                                                         \
@@ -727,7 +881,7 @@ TYPED_TEST(ReductionTest, GpuAsyncWorkspaceRejectsCrossStreamReuseUntilClosed)
     test::CudaStreamGuard first_stream;
     test::CudaStreamGuard second_stream;
     ReductionWorkspace workspace;
-    DenseMatrix<Scalar, Device::GPU> rejected_output(1, 1);
+    DenseStorage<Scalar, Device::GPU> rejected_output(1, 1);
 
     auto first = sumAsync(
         input, ReductionAxis::All, workspace, first_stream.get());
@@ -776,7 +930,7 @@ TYPED_TEST(ReductionTest, GpuNormalWorkspaceSupportsReuseButRejectsAsyncGrowth)
     undersized_workspace.reserveBytes(1);
     const std::size_t original_capacity = undersized_workspace.capacityBytes();
     void* const original_data = undersized_workspace.data();
-    DenseMatrix<Scalar, Device::GPU> rejected_output(1, 1);
+    DenseStorage<Scalar, Device::GPU> rejected_output(1, 1);
     expectLogicErrorContaining([&] {
         sumAsync(input, ReductionAxis::All, rejected_output,
                  undersized_workspace, stream.get());
@@ -846,9 +1000,9 @@ TEST(ReductionDoubleTest, GpuMeanKeepsMaxFiniteLanesFiniteAcrossAxes)
     const double largest = std::numeric_limits<double>::max();
     for (Index reduction_length : {Index(3), Index(257)})
     {
-        DenseMatrix<double, Device::CPU> all_input(1, reduction_length);
-        DenseMatrix<double, Device::CPU> rows_input(2, reduction_length);
-        DenseMatrix<double, Device::CPU> columns_input(reduction_length, 2);
+        DenseStorage<double, Device::CPU> all_input(1, reduction_length);
+        DenseStorage<double, Device::CPU> rows_input(2, reduction_length);
+        DenseStorage<double, Device::CPU> columns_input(reduction_length, 2);
         all_input.fill(largest);
         rows_input.fill(largest);
         columns_input.fill(largest);
@@ -875,7 +1029,7 @@ TYPED_TEST(ReductionTest, GpuScaledMeanMatchesCpuForSpecialValues)
     const Scalar tolerance = std::numeric_limits<Scalar>::epsilon() * Scalar(64);
     for (Index reduction_length : {Index(3), Index(257)})
     {
-        DenseMatrix<Scalar, Device::CPU> rows_input(5, reduction_length);
+        DenseStorage<Scalar, Device::CPU> rows_input(5, reduction_length);
         rows_input.fill(Scalar(0));
         for (Index col = 0; col < reduction_length; ++col)
         {
@@ -903,7 +1057,7 @@ TYPED_TEST(ReductionTest, GpuScaledMeanMatchesCpuForSpecialValues)
             columns_expected,
             tolerance);
 
-        DenseMatrix<Scalar, Device::CPU> all_input(1, reduction_length);
+        DenseStorage<Scalar, Device::CPU> all_input(1, reduction_length);
         const auto check_all = [&] {
             expectGpuReductionResult(
                 mean(all_input.toGpu(), ReductionAxis::All),
@@ -995,7 +1149,7 @@ TYPED_TEST(ReductionTest, GpuNormalWorkspaceResetAllowsCrossStreamReuse)
     first.closeAsyncAllocation();
     first_stream.synchronize();
 
-    DenseMatrix<Scalar, Device::GPU> rejected_output(1, 1);
+    DenseStorage<Scalar, Device::GPU> rejected_output(1, 1);
     expectLogicErrorContaining([&] {
         sumAsync(input, ReductionAxis::All, rejected_output, workspace, second_stream.get());
     }, {"different stream", "synchronize", "reset"});
@@ -1043,8 +1197,8 @@ TYPED_TEST(ReductionTest, GpuNaNsPropagateAndIndexedReductionsChooseLowestOffset
 TYPED_TEST(ReductionTest, GpuEmptyDimensionsAndErrorsMatchCpuContract)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> zero_by_three_cpu(0, 3);
-    DenseMatrix<Scalar, Device::CPU> three_by_zero_cpu(3, 0);
+    DenseStorage<Scalar, Device::CPU> zero_by_three_cpu(0, 3);
+    DenseStorage<Scalar, Device::CPU> three_by_zero_cpu(3, 0);
     auto zero_by_three = zero_by_three_cpu.toGpu();
     auto three_by_zero = three_by_zero_cpu.toGpu();
 
@@ -1075,7 +1229,7 @@ TYPED_TEST(ReductionTest, GpuEmptyDimensionsAndErrorsMatchCpuContract)
     EXPECT_THROW(static_cast<void>(argMax(zero_by_three, ReductionAxis::Columns)),
                  std::invalid_argument);
 
-    DenseMatrix<Scalar, Device::GPU> input(0, 0);
+    DenseStorage<Scalar, Device::GPU> input(0, 0);
     const auto invalid = static_cast<ReductionAxis>(99);
     EXPECT_THROW(static_cast<void>(sum(input, invalid)), std::invalid_argument);
     EXPECT_THROW(static_cast<void>(mean(input, invalid)), std::invalid_argument);
@@ -1127,11 +1281,26 @@ TYPED_TEST(ReductionTest, GpuAsyncReductionsUseIndependentWorkspacesAndStreams)
 TYPED_TEST(ReductionTest, NoCudaReductionOverloadFamiliesReportOperationAndBuildOption)
 {
     using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::GPU> input(2, 3);
-    DenseMatrix<Scalar, Device::GPU> values(2, 1);
-    DenseMatrix<Index, Device::GPU> indices(2, 1);
+    DenseStorage<Scalar, Device::GPU> input(2, 3);
+    DenseStorage<Scalar, Device::GPU> values(2, 1);
+    DenseStorage<Index, Device::GPU> indices(2, 1);
     ReductionWorkspace workspace;
     cudaStream_t stream = nullptr;
+    const auto input_view = makeColumnMajorView<Scalar, Device::GPU>(static_cast<const Scalar*>(nullptr), 0, 0);
+    const auto output_view = makeColumnMajorView<Scalar, Device::GPU>(values.data(), 2, 1);
+
+#define EXPECT_NO_CUDA_VIEW_REDUCTION(OP, ASYNC_OP)                              \
+    expectNoCudaReductionError(#OP, [&] {                                        \
+        OP(input_view, ReductionAxis::Rows, output_view, workspace, stream);      \
+    });                                                                           \
+    expectNoCudaReductionError(#ASYNC_OP, [&] {                                  \
+        ASYNC_OP(input_view, ReductionAxis::Rows, output_view, workspace, stream); \
+    })
+
+    EXPECT_NO_CUDA_VIEW_REDUCTION(sum, sumAsync);
+    EXPECT_NO_CUDA_VIEW_REDUCTION(min, minAsync);
+    EXPECT_NO_CUDA_VIEW_REDUCTION(max, maxAsync);
+#undef EXPECT_NO_CUDA_VIEW_REDUCTION
 
 #define EXPECT_NO_CUDA_VALUE_REDUCTION(OP, ASYNC_OP)                                    \
     expectNoCudaReductionError(#OP, [&] { static_cast<void>(OP(input, ReductionAxis::Rows)); }); \
@@ -1199,7 +1368,7 @@ TEST(ReductionNoCudaTest, WorkspaceOperationsHaveExplicitCpuOnlyBehavior)
 #ifdef PLAMATRIX_USE_FLOAT
 TEST(ReductionFloatTest, SumAndMeanAccumulateInDouble)
 {
-    DenseMatrix<float, Device::CPU> input(1, 3);
+    DenseStorage<float, Device::CPU> input(1, 3);
     input(0, 0) = 100000000.0f;
     input(0, 1) = 1.0f;
     input(0, 2) = -100000000.0f;
@@ -1219,7 +1388,7 @@ TEST(ReductionFloatTest, SumAndMeanAccumulateInDouble)
 TEST(ReductionFloatTest, MeanCastsOnlyAfterDivision)
 {
     const float largest = std::numeric_limits<float>::max();
-    DenseMatrix<float, Device::CPU> input(1, 2);
+    DenseStorage<float, Device::CPU> input(1, 2);
     input(0, 0) = largest;
     input(0, 1) = largest;
 
@@ -1229,4 +1398,4 @@ TEST(ReductionFloatTest, MeanCastsOnlyAfterDivision)
 #endif
 
 } // anonymous namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

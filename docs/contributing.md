@@ -32,7 +32,7 @@ ctest --test-dir build/cpu --output-on-failure
 
 - 使用 C++17、4 空格缩进和 Allman 花括号风格，行宽尽量不超过 120 字符。
 - 类和结构体使用 PascalCase，函数使用 camelCase，局部变量使用 snake_case，私有成员使用 `_` 前缀。
-- `DenseMatrix` 使用列优先布局；不要在局部优化中改变公开存储语义。
+- 公开 `Matrix` 默认列优先并支持 Eigen 风格 `RowMajor`；后端 `internal::DenseStorage` 和 GPU 密集核仍使用列优先布局。新增自动后端路径必须显式处理公开存储顺序，不能把 RowMajor 数据直接交给列优先数值核。不要恢复旧公开类型或增加兼容层。
 - `Device` 是编译期模板参数。昂贵的设备传输必须通过 `toCpu()` / `toGpu()` 等接口显式表达。
 - CPU 参数和数值错误抛出明确异常；CUDA 调用使用项目现有的错误检查宏。
 - 新增 CUDA API 时保持 `PLAMATRIX_WITH_CUDA=OFF` 可编译，并提供明确的 stub 行为。

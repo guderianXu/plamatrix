@@ -2,9 +2,9 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "plamatrix/dense/dense_ops.h"
+#include "plamatrix/internal/dense/dense_ops.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 template <typename Scalar>
@@ -45,9 +45,9 @@ int checkedCudaGrid1D(Index item_count, int block_size, const char* op)
 } // anonymous namespace
 
 template <typename Scalar>
-void addAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-              const DenseMatrix<Scalar, Device::GPU>& B,
-              DenseMatrix<Scalar, Device::GPU>& C,
+void addAsync(const DenseStorage<Scalar, Device::GPU>& A,
+              const DenseStorage<Scalar, Device::GPU>& B,
+              DenseStorage<Scalar, Device::GPU>& C,
               cudaStream_t stream)
 {
     detail::checkSameDimensions("add", A, B);
@@ -64,20 +64,20 @@ void addAsync(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> addAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-                                          const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> addAsync(const DenseStorage<Scalar, Device::GPU>& A,
+                                          const DenseStorage<Scalar, Device::GPU>& B,
                                           cudaStream_t stream)
 {
     detail::checkSameDimensions("add", A, B);
-    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
+    auto C = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
     addAsync(A, B, C, stream);
     return C;
 }
 
 template <typename Scalar>
-void subAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-              const DenseMatrix<Scalar, Device::GPU>& B,
-              DenseMatrix<Scalar, Device::GPU>& C,
+void subAsync(const DenseStorage<Scalar, Device::GPU>& A,
+              const DenseStorage<Scalar, Device::GPU>& B,
+              DenseStorage<Scalar, Device::GPU>& C,
               cudaStream_t stream)
 {
     detail::checkSameDimensions("sub", A, B);
@@ -94,19 +94,19 @@ void subAsync(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> subAsync(const DenseMatrix<Scalar, Device::GPU>& A,
-                                          const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> subAsync(const DenseStorage<Scalar, Device::GPU>& A,
+                                          const DenseStorage<Scalar, Device::GPU>& B,
                                           cudaStream_t stream)
 {
     detail::checkSameDimensions("sub", A, B);
-    auto C = DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
+    auto C = DenseStorage<Scalar, Device::GPU>::uninitializedAsync(A.rows(), A.cols(), stream);
     subAsync(A, B, C, stream);
     return C;
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
-                                     const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> add(const DenseStorage<Scalar, Device::GPU>& A,
+                                     const DenseStorage<Scalar, Device::GPU>& B,
                                      cudaStream_t stream)
 {
     auto C = addAsync(A, B, stream);
@@ -115,9 +115,9 @@ DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-void add(const DenseMatrix<Scalar, Device::GPU>& A,
-         const DenseMatrix<Scalar, Device::GPU>& B,
-         DenseMatrix<Scalar, Device::GPU>& C,
+void add(const DenseStorage<Scalar, Device::GPU>& A,
+         const DenseStorage<Scalar, Device::GPU>& B,
+         DenseStorage<Scalar, Device::GPU>& C,
          cudaStream_t stream)
 {
     addAsync(A, B, C, stream);
@@ -125,8 +125,8 @@ void add(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
-                                     const DenseMatrix<Scalar, Device::GPU>& B,
+DenseStorage<Scalar, Device::GPU> sub(const DenseStorage<Scalar, Device::GPU>& A,
+                                     const DenseStorage<Scalar, Device::GPU>& B,
                                      cudaStream_t stream)
 {
     auto C = subAsync(A, B, stream);
@@ -135,9 +135,9 @@ DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-void sub(const DenseMatrix<Scalar, Device::GPU>& A,
-         const DenseMatrix<Scalar, Device::GPU>& B,
-         DenseMatrix<Scalar, Device::GPU>& C,
+void sub(const DenseStorage<Scalar, Device::GPU>& A,
+         const DenseStorage<Scalar, Device::GPU>& B,
+         DenseStorage<Scalar, Device::GPU>& C,
          cudaStream_t stream)
 {
     subAsync(A, B, C, stream);
@@ -145,118 +145,118 @@ void sub(const DenseMatrix<Scalar, Device::GPU>& A,
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> add(const DenseMatrix<Scalar, Device::GPU>& A,
-                                     const DenseMatrix<Scalar, Device::GPU>& B)
+DenseStorage<Scalar, Device::GPU> add(const DenseStorage<Scalar, Device::GPU>& A,
+                                     const DenseStorage<Scalar, Device::GPU>& B)
 {
     return add(A, B, nullptr);
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> sub(const DenseMatrix<Scalar, Device::GPU>& A,
-                                     const DenseMatrix<Scalar, Device::GPU>& B)
+DenseStorage<Scalar, Device::GPU> sub(const DenseStorage<Scalar, Device::GPU>& A,
+                                     const DenseStorage<Scalar, Device::GPU>& B)
 {
     return sub(A, B, nullptr);
 }
 
 // Explicit template instantiations
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> addAsync(const DenseMatrix<float, Device::GPU>&,
-                                                  const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> addAsync(const DenseStorage<float, Device::GPU>&,
+                                                  const DenseStorage<float, Device::GPU>&,
                                                   cudaStream_t);
 
-template void addAsync(const DenseMatrix<float, Device::GPU>&,
-                       const DenseMatrix<float, Device::GPU>&,
-                       DenseMatrix<float, Device::GPU>&,
+template void addAsync(const DenseStorage<float, Device::GPU>&,
+                       const DenseStorage<float, Device::GPU>&,
+                       DenseStorage<float, Device::GPU>&,
                        cudaStream_t);
 
-template DenseMatrix<float, Device::GPU> add(const DenseMatrix<float, Device::GPU>&,
-                                             const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> add(const DenseStorage<float, Device::GPU>&,
+                                             const DenseStorage<float, Device::GPU>&,
                                              cudaStream_t);
 
-template void add(const DenseMatrix<float, Device::GPU>&,
-                  const DenseMatrix<float, Device::GPU>&,
-                  DenseMatrix<float, Device::GPU>&,
+template void add(const DenseStorage<float, Device::GPU>&,
+                  const DenseStorage<float, Device::GPU>&,
+                  DenseStorage<float, Device::GPU>&,
                   cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> addAsync(const DenseMatrix<double, Device::GPU>&,
-                                                   const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> addAsync(const DenseStorage<double, Device::GPU>&,
+                                                   const DenseStorage<double, Device::GPU>&,
                                                    cudaStream_t);
 
-template void addAsync(const DenseMatrix<double, Device::GPU>&,
-                       const DenseMatrix<double, Device::GPU>&,
-                       DenseMatrix<double, Device::GPU>&,
+template void addAsync(const DenseStorage<double, Device::GPU>&,
+                       const DenseStorage<double, Device::GPU>&,
+                       DenseStorage<double, Device::GPU>&,
                        cudaStream_t);
 
-template DenseMatrix<double, Device::GPU> add(const DenseMatrix<double, Device::GPU>&,
-                                              const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> add(const DenseStorage<double, Device::GPU>&,
+                                              const DenseStorage<double, Device::GPU>&,
                                               cudaStream_t);
 
-template void add(const DenseMatrix<double, Device::GPU>&,
-                  const DenseMatrix<double, Device::GPU>&,
-                  DenseMatrix<double, Device::GPU>&,
+template void add(const DenseStorage<double, Device::GPU>&,
+                  const DenseStorage<double, Device::GPU>&,
+                  DenseStorage<double, Device::GPU>&,
                   cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> add(const DenseMatrix<float, Device::GPU>&,
-                                             const DenseMatrix<float, Device::GPU>&);
+template DenseStorage<float, Device::GPU> add(const DenseStorage<float, Device::GPU>&,
+                                             const DenseStorage<float, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> add(const DenseMatrix<double, Device::GPU>&,
-                                              const DenseMatrix<double, Device::GPU>&);
+template DenseStorage<double, Device::GPU> add(const DenseStorage<double, Device::GPU>&,
+                                              const DenseStorage<double, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> subAsync(const DenseMatrix<float, Device::GPU>&,
-                                                  const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> subAsync(const DenseStorage<float, Device::GPU>&,
+                                                  const DenseStorage<float, Device::GPU>&,
                                                   cudaStream_t);
 
-template void subAsync(const DenseMatrix<float, Device::GPU>&,
-                       const DenseMatrix<float, Device::GPU>&,
-                       DenseMatrix<float, Device::GPU>&,
+template void subAsync(const DenseStorage<float, Device::GPU>&,
+                       const DenseStorage<float, Device::GPU>&,
+                       DenseStorage<float, Device::GPU>&,
                        cudaStream_t);
 
-template DenseMatrix<float, Device::GPU> sub(const DenseMatrix<float, Device::GPU>&,
-                                             const DenseMatrix<float, Device::GPU>&,
+template DenseStorage<float, Device::GPU> sub(const DenseStorage<float, Device::GPU>&,
+                                             const DenseStorage<float, Device::GPU>&,
                                              cudaStream_t);
 
-template void sub(const DenseMatrix<float, Device::GPU>&,
-                  const DenseMatrix<float, Device::GPU>&,
-                  DenseMatrix<float, Device::GPU>&,
+template void sub(const DenseStorage<float, Device::GPU>&,
+                  const DenseStorage<float, Device::GPU>&,
+                  DenseStorage<float, Device::GPU>&,
                   cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> subAsync(const DenseMatrix<double, Device::GPU>&,
-                                                   const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> subAsync(const DenseStorage<double, Device::GPU>&,
+                                                   const DenseStorage<double, Device::GPU>&,
                                                    cudaStream_t);
 
-template void subAsync(const DenseMatrix<double, Device::GPU>&,
-                       const DenseMatrix<double, Device::GPU>&,
-                       DenseMatrix<double, Device::GPU>&,
+template void subAsync(const DenseStorage<double, Device::GPU>&,
+                       const DenseStorage<double, Device::GPU>&,
+                       DenseStorage<double, Device::GPU>&,
                        cudaStream_t);
 
-template DenseMatrix<double, Device::GPU> sub(const DenseMatrix<double, Device::GPU>&,
-                                              const DenseMatrix<double, Device::GPU>&,
+template DenseStorage<double, Device::GPU> sub(const DenseStorage<double, Device::GPU>&,
+                                              const DenseStorage<double, Device::GPU>&,
                                               cudaStream_t);
 
-template void sub(const DenseMatrix<double, Device::GPU>&,
-                  const DenseMatrix<double, Device::GPU>&,
-                  DenseMatrix<double, Device::GPU>&,
+template void sub(const DenseStorage<double, Device::GPU>&,
+                  const DenseStorage<double, Device::GPU>&,
+                  DenseStorage<double, Device::GPU>&,
                   cudaStream_t);
 #endif
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::GPU> sub(const DenseMatrix<float, Device::GPU>&,
-                                             const DenseMatrix<float, Device::GPU>&);
+template DenseStorage<float, Device::GPU> sub(const DenseStorage<float, Device::GPU>&,
+                                             const DenseStorage<float, Device::GPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::GPU> sub(const DenseMatrix<double, Device::GPU>&,
-                                              const DenseMatrix<double, Device::GPU>&);
+template DenseStorage<double, Device::GPU> sub(const DenseStorage<double, Device::GPU>&,
+                                              const DenseStorage<double, Device::GPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

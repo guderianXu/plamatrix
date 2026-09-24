@@ -1,12 +1,12 @@
 # PlaMatrix 代码架构文档
 
-本文档面向希望深入理解库内部实现的开发者，按模块逐一说明算法选择、数据流、内存管理和关键设计决策。
+本文档描述内部实现；除公开 Matrix/Map/Ref/Block/Transpose/表达式、Geometry 类型和求解器外，下文设备、存储与原语均位于 `plamatrix::internal`。内部头文件随安装提供是模板实现与模块后端集成所需，不构成公开兼容性承诺。旧类型名与旧路径不保留转发层。
 
 ---
 
 ## 运行时资源与工作区约束
 
-GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 GPU 到 CPU 的 DenseMatrix 传输
+GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 GPU 到 CPU 的 DenseStorage 传输
 使用 pinned host storage；CUDA 求解器临时缓冲区采用 RAII，异常路径也会释放资源。cuBLAS
 和 cuSOLVER handle 按线程及当前 CUDA device 管理，Schur CUDA 执行结束后恢复调用者的设备。
 
@@ -14,9 +14,24 @@ GPU 内存池按设备序号分桶，并支持显式缓存字节上限。异步 
 溢出检查。OpenCL PCG 支持通过 `convergenceCheckInterval` 降低残差回读频率，编译程序缓存
 有固定容量上限，避免长期运行时无界增长。Vulkan Compute 后端沿用 CPU-owned CSR PCG 接口，
 以 GLSL/SPIR-V 实现 SpMV、Jacobi、向量更新和点积归约，并通过同一基准程序与 OpenCL 对比。
+新的 OpenCL/Vulkan `ExecutionContext` 按显式 `DeviceId` 创建独立设备状态；`Resident*` 对象
+提供显式上传/下载。OpenCL float32/float64 与 Vulkan float32 resident CSR 已接入新 PCG 入口；Vulkan 在初次上传时
+另外生成受检的 uint32 设备拓扑，以符合现有 shader 的索引格式。
+`ExecutionContext::createShared()` 支持业务对象共享上下文所有权；`ResidentMatrix` 接收
+shared_ptr 时保留所有权，接收上下文引用时借用。返回独立设备结果时使用拥有型构造，避免生产者
+销毁后结果失效；移动赋值先释放旧设备缓冲区，再释放旧上下文。
+`ResidentMatrix::clone()` 和 `copyFromResident()` 在同一上下文内使用原生设备拷贝，
+`view<Device>()` 为 CPU/CUDA kernel 提供受后端检查的非拥有视图。有限值统计、排序、游程编码和
+索引扫描可接收调用方拥有的 GPU 视图，点云模块不必再用 `DenseStorage` 管理其缓冲区。
 Vulkan 求解器为每种矩阵规模复用 device-local CSR/向量工作区，使用 host-visible staging buffer
 完成输入上传和结果下载；命令上下文同时复用 descriptor pool、command buffer 和 fence。
 相同 pipeline 与 buffer 绑定组合的 descriptor set 也会跨 solve 缓存，热路径不再重复分配和更新 descriptor。
+设备常驻的 9×9 BA Schur CSR 会在首次拓扑上传时验证完整稠密块布局，并压缩出 block row offsets 与
+block columns。`spmv_block` 以一个 invocation 计算一个标量行，按 9×9 块复用列索引并直接读取原 CSR
+values，因此不需要每轮执行 CSR→BSR 数值重排；不满足块布局时继续使用 scalar/subgroup CSR 内核。
+`build_block_jacobi` 在 Schur 装配后从同一 values buffer 定位 9×9 对角块，以 Cholesky 分解生成逆块；
+该路径跳过主机 primary 逆块计算，并与装配、PCG 初始化和首批迭代录入同一 command buffer，不增加
+queue submission。
 初始化阶段把残差、Jacobi 变换和方向向量合并为一个 dispatch，点积归约每个 invocation 处理两个
 元素；PCG 的 rho/alpha/beta、初始和当前残差范数、容差及收敛标志保存在 device-local 状态缓冲区，按
 `convergenceCheckInterval` 批量提交并只在批次边界读取状态。上传、状态初始化与首批迭代共享一个
@@ -25,6 +40,21 @@ command buffer。后续完整迭代批次使用不带 `ONE_TIME_SUBMIT` 标志�
 多级点积只使用 `dot_reduce` 处理前置层级，最终不超过 256 个值的一级归约与
 `rho/alpha/beta/convergence` 状态更新由 `pcg_dot_state` 在同一 dispatch 中完成。命令上下文同时记录
 Vulkan timestamp 和每个 buffer 的读写状态，GPU 时间与端到端时间分开统计，并将屏障限制在实际存在写后读/写依赖的 storage buffer 上。
+Vulkan runtime 还会枚举 KHR cooperative-matrix 规格。当前专用批量小矩阵路径要求 subgroup 32、
+16×16×16 FP16 输入和 FP32 累加；两路 FP32 输入合并上传后由 GPU 转换为 FP16，再执行
+`OpCooperativeMatrixMulAddKHR`。同尺寸热调用复用 pipeline、device-local buffer、descriptor set 和
+已录制 command buffer；回读 staging 优先选择 host-cached coherent memory。CPU FP32 保持默认语义，
+mixed precision 必须由调用方显式开启。
+Vulkan Schur 后端在主机只生成紧凑的 primary/cross/inverse 数值。`pack_schur_fp16` 在 GPU 上将
+9×3、3×3 等块补零、转置并写入 FP16 tile；两个 cooperative-matrix shader 依次计算
+`cross * inverse` 和 `transformed_cross * cross^T`，最后按 CSR block slot 归约为 FP32 values。
+同一 slot 的全部消元项直接累加在 cooperative-matrix FP32 accumulator 中，中间存储按 slot 数量增长，
+不会为每个 term 保留一份 16×16 tile。
+values 不回读主机，也不复制到另一份设备 buffer；block-Jacobi PCG 直接绑定装配输出。拓扑/数值上传、
+cooperative-matrix 装配、PCG 初始化和首批 8 次迭代录入同一 command buffer；相同邻接的 LM 热轮次跳过
+Schur 与 PCG 的拓扑验证、索引转换和上传，并直接重新提交 numerical-only 首批录制。后续完整迭代批次也
+复用录制。Vulkan block-PCG 的逆对角块可直接在 GPU 从 Schur values 生成；残差初始化与块逆对角乘法
+是独立 dispatch，以保证全局内存依赖后再进入已有设备端标量递推。
 CSR SpMV 同时提供 scalar-per-row 和 subgroup-per-row 内核；运行时根据 subgroup arithmetic 能力和平均行长
 选择实现，避免短行稀疏矩阵浪费 subgroup lane。输入上传、初始残差与容差初始化和首批迭代在同一个
 command buffer 中完成，通过 transfer-to-compute buffer barrier 保持依赖。小于或等于 64 KiB 的解向量在
@@ -34,49 +64,33 @@ BA Schur 相机块图和 MVS visibility 图，并可通过 MatrixMarket 载入�
 
 ## 1. 整体架构
 
-```
-include/plamatrix/plamatrix.h          # 总入口
-├── core/         基础类型 + 内存管理
-│   ├── types.h          Device 枚举, Index 类型
-│   ├── error_check.h    CUDA/cuBLAS/cuSOLVER 错误宏
-│   ├── no_cuda_stubs.h  无 CUDA 时的桩实现
-│   ├── allocator.h      CpuAllocator / GpuAllocator
-│   └── device_matrix.h  RAII 矩阵基类
-├── dense/        密集矩阵
-│   ├── dense_matrix.h   DenseMatrix (列优先, move-only)
-│   ├── dense_ops.h      基础逐元素加减
-│   └── elementwise.h    标量/逐元素乘除、abs/sqrt/clamp
-├── sparse/       稀疏矩阵
-│   ├── coo_matrix.h     COO 格式 + toCsr()
-│   └── csr_matrix.h     CSR 格式 (三数组)
-├── ops/          运算层
-    ├── gemm.h            矩阵乘法 (原生 CPU/cuBLAS)
-    ├── decomposition.h   SVD / QR / Eigh
-    ├── reduction.h       按轴 value/indexed reduction + workspace
-    ├── indexing.h        scan、gather/scatter、stable compact + workspace
-    ├── small_matrix.h    固定阶小系统求解、批量对称 3x3 特征分解 + workspace
-    ├── statistics.h      忽略非有限样本的稳健中位数
-    ├── solver.h          线性求解
-    ├── vector.h          Vec3 小向量表示与算术
-    └── point_cloud.h     旋转矩阵, 刚体变换, 协方差
-└── optimization/ 非线性最小二乘基础设施
-    ├── robust_loss.h          Huber 块损失与 IRLS 权重
-    ├── block_schur.h          二分块法方程与 Schur-PCG
-    └── levenberg_marquardt.h  LM 阻尼状态策略
-
-src/                            实现文件
-├── dense/*.cu + *_cpu.cpp      密集矩阵 CPU/CUDA 运算
-├── ops/*_dispatch.cu           reduction/indexing/small-matrix GPU 调度
-├── ops/*_workspace.cu          grow-only workspace 与 stream/status 生命周期
-├── ops/*.cu + *_cpu.cpp        其他 GPU + CPU 运算实现
-├── sparse/csr_matrix.cpp       稀疏矩阵模板实例化
-└── optimization/*              多 primary 块累计、CPU 矩阵自由/原生稀疏直接解、可复用 CSR/符号拓扑、设备数值装配及块 Jacobi Schur-PCG
+```text
+include/plamatrix/
+├── plamatrix.h                 公开数值入口
+├── core/types.h                Index
+├── dense/                      Matrix、Map、表达式、分解
+├── geometry/                   Quaternion、AngleAxis、Transform、欧拉角、Umeyama
+├── sparse/                     SparseMatrix、Triplet、ConjugateGradient
+└── internal/                   不承诺兼容性的实现契约
+    ├── core/                   Device、执行上下文、分配器、错误、策略
+    ├── dense/                  DenseStorage、底层视图、自动后端
+    ├── sparse/                 CsrStorage、CooStorage、PCG 数值核
+    ├── device/                 ResidentMatrix/Vector/CsrMatrix
+    ├── ops/                    数值核、归约、索引、分组
+    ├── optimization/           通用块 Schur、鲁棒损失和 LM 数值实现
+    └── cuda/ opencl/ vulkan/   原生后端
+src/                            CPU/CUDA/OpenCL/Vulkan 实现
 ```
 
 **核心设计原则**：
-- `DeviceMatrix<Scalar, Device>` 作为 RAII 基类，编译期 `if constexpr` 分发 CPU/GPU 代码
-- 列优先 (column-major) 存储，兼容 cuBLAS Fortran 序
-- 显式设备管理：`toCpu()` / `toGpu()` 触发 `cudaMemcpy`
+- 默认 `Matrix` API 自动选择 CPU/CUDA/Vulkan/OpenCL，保留设备输入并在主机访问时延迟下载；
+  `ExecutionInfo` 报告实际后端及传输。`DenseStorage` 是显式设备控制的底层 API。
+- 原生 CUDA 内核可使用 `ResidentMatrix` 的设备指针及 `cuda::NativeAccess::stream(context)`；
+  OpenCL/Vulkan 仍通过各自 `NativeAccess` 取得原生句柄。
+- `DeviceStorage<Scalar, Device>` 作为 RAII 基类，编译期 `if constexpr` 分发 CPU/GPU 代码
+- 公开 `Matrix` 默认列优先并支持 Eigen 风格 RowMajor；内部 `DenseStorage` 与 CUDA 密集核保持
+  列优先以兼容 cuBLAS Fortran 序，自动调度在该边界做显式限制
+- 底层显式设备管理：`DenseStorage::toCpu()` / `toGpu()` 触发 `cudaMemcpy`
 - GPU 加速通过 cuBLAS / cuSOLVER 库 + 少量自定义 kernel
 - CPU 后端只使用自包含原生算法；GEMM 使用 B-panel packing、寄存器微内核、AVX2/FMA 运行时分派和 OpenMP
 
@@ -93,7 +107,7 @@ using Index = std::int64_t;
 
 `Device` 作为模板参数实现编译期设备分发。选择 `int` 作为底层类型以便在 `enum class` 上用 `if constexpr`。`Index` 使用 64 位有符号整数，支持千万级点云的索引。
 
-### 2.2 错误处理 (`core/error_check.h`)
+### 2.2 错误处理 (`internal/core/error_check.h`)
 
 三个检查宏，每个捕获 `__FILE__`、`__LINE__` 和字符串化的表达式：
 
@@ -105,7 +119,7 @@ using Index = std::int64_t;
 
 `cublasStatusString()` / `cusolverStatusString()` 对全部状态码做 exhaustive switch，输出如 `CUBLAS_STATUS_EXECUTION_FAILED (13)`。
 
-### 2.3 无 CUDA 时的桩实现 (`core/no_cuda_stubs.h`)
+### 2.3 无 CUDA 时的桩实现 (`internal/core/no_cuda_stubs.h`)
 
 当 `-DPLAMATRIX_WITH_CUDA=OFF`，`PLAMATRIX_NO_CUDA=1` 被定义，此文件在 `error_check.h` 中替换 `<cuda_runtime.h>` 等头文件：
 
@@ -120,7 +134,7 @@ using Index = std::int64_t;
 
 无 CUDA 构建下，`Device::GPU` 矩阵的存储和传输桩使用 CPU 内存，以便公共头文件和 CPU-only 测试可编译。`.cu` 中的 GPU 算法不会构建；真实业务路径应使用 `Device::CPU`，需要 GPU 加速时重新启用 CUDA 构建。
 
-### 2.4 内存分配器 (`core/allocator.h`)
+### 2.4 内存分配器 (`internal/core/allocator.h`)
 
 ```cpp
 template <typename Scalar>
@@ -149,11 +163,11 @@ CPU 分配器使用 32 字节对齐（`posix_memalign`），适配 AVX-256 向�
 - `allocateAsync/deallocateAsync` 直接使用 `cudaMallocAsync/cudaFreeAsync`，由 owner 保留创建
   stream provenance，不进入普通 memory pool；CPU-only 构建明确拒绝该入口
 
-### 2.5 矩阵基类 (`core/device_matrix.h`)
+### 2.5 矩阵基类 (`internal/core/device_storage.h`)
 
 ```cpp
 template <typename Scalar, Device Dev>
-class DeviceMatrix {
+class DeviceStorage {
 protected:
     Index _rows, _cols;
     Scalar* _data;
@@ -173,7 +187,7 @@ protected:
 ```
 
 **关键设计决策**：
-- **空对象有效**：`DenseMatrix()` 为 `0 x 0`，零元素矩阵不分配存储
+- **空对象有效**：`DenseStorage()` 为 `0 x 0`，零元素矩阵不分配存储
 - **禁止拷贝**：大矩阵拷贝昂贵且隐式，强制用户显式操作
 - **支持移动**：move 构造/赋值转移指针、host/GPU allocation kind 和 async stream
   provenance；源矩阵置为 `0 x 0`
@@ -189,9 +203,9 @@ stream 上入队释放。`closeAsyncAllocation()` 是可报告错误的显式路
 
 ## 3. 密集矩阵模块
 
-### 3.1 DenseMatrix (`dense/dense_matrix.h`)
+### 3.1 DenseStorage (`internal/dense/dense_storage.h`)
 
-继承 `DeviceMatrix`，增加：
+继承 `DeviceStorage`，增加：
 
 **构造和初始化**：
 - 参数化构造后立即零初始化：CPU 用 `memset`，GPU 用 `cudaMemset`
@@ -223,7 +237,7 @@ stream 上入队释放。`closeAsyncAllocation()` 是可报告错误的显式路
 
 统一的 256 线程/block 保持 CUDA occupancy 最优化。transpose 使用 2D block 处理行/列索引映射。
 
-### 3.3 逐元素运算 (`dense/dense_ops.h`、`dense/elementwise.h`)
+### 3.3 逐元素运算 (`internal/dense/dense_ops.h`、`internal/dense/elementwise.h`)
 
 CPU 路径对小矩阵使用串行循环，超过内部阈值后用 `#pragma omp parallel for` 对平坦数组做循环并行化：
 ```cpp
@@ -264,7 +278,7 @@ CUDA `All` 使用 CUB reduction 加自定义 summary/store kernel，Rows/Columns
 allocation。归约没有设备业务 status，因此没有 `checkStatus()`；同步包装器只需同步 stream，
 异步调用方负责输出和 workspace 生命周期。
 
-allocating `*Async` reduction 输出使用 `DenseMatrix::uninitializedAsync`。value reduction 为一个
+allocating `*Async` reduction 输出使用 `DenseStorage::uninitializedAsync`。value reduction 为一个
 stream-ordered owner，arg reduction 为 values/indices 两个 owner；它们必须在所属 stream
 销毁前分别关闭。workspace move assignment 为 `noexcept`，会释放目标 storage 并转移源的
 storage 和 stream provenance。
@@ -313,7 +327,7 @@ nonfinite 优先；同步包装器等待并检查，异步包装器要求调用�
 再执行部分主元高斯消元，适合 BA 等频繁求解且旋转/平移量纲差异明显的
 3x3/6x6 法方程；奇异、非有限输入或非有限解返回 `false`。
 
-### 3.7 稳健统计 (`ops/statistics.h`)
+### 3.7 稳健统计 (`internal/ops/statistics.h`)
 
 `finiteMedian` 忽略 NaN 和正负无穷，使用 `nth_element` 原地选择中位数。
 偶数样本采用防溢出的均值计算；没有有限样本时返回 `std::nullopt`。
@@ -479,9 +493,9 @@ cusolverDnSgetrs(handle, CUBLAS_OP_N, n, nrhs, A_work, lda, d_pivot, B_work, ldb
 
 ### 7.0 小向量数学 (`vector.h`)
 
-`Vec3<Scalar>` 是与 CPU/GPU 后端无关的 header-only 三维向量类型，负责单个坐标、方向和法线的轻量运算。
+`PackedVector3<Scalar>` 是与 CPU/GPU 后端无关的 header-only 三维向量类型，负责单个坐标、方向和法线的轻量运算。
 它支持与 `std::array<Scalar, 3>` 显式转换、分量算术、点积、叉积、平方范数、范数、带阈值归一化和有限性检查。
-批量点云仍使用列优先 `DenseMatrix<Scalar, Device>`；`Vec3` 不承担动态存储或设备内存管理。
+批量点云仍使用列优先 `DenseStorage<Scalar, Device>`；`PackedVector3` 不承担动态存储或设备内存管理。
 
 ### 7.1 Rodrigues 旋转矩阵 (`point_cloud_cpu.cpp`)
 
@@ -522,7 +536,7 @@ CPU 重载接受 `std::vector`，CUDA 同步重载接受 device 列向量。完�
 
 ### 8.2 CSR 存储与传输
 
-`CSRMatrix` 独立拥有 values、column indices 和 row offsets。同步 `toCpu()/toGpu()`
+`CsrStorage` 独立拥有 values、column indices 和 row offsets。同步 `toCpu()/toGpu()`
 完成后可立即使用；异步 copy 记录 producer stream，未同步时禁止跨 stream 消费或
 覆盖。可变数组指针一旦逸出，固定迭代异步求解所需的结构可信标记会失效，自适应
 CG/PCG 会重新验证结构。
@@ -543,12 +557,18 @@ Jacobi-PCG 会拒绝缺失、非正或过小的对角元。CUDA 自适应接口�
 `cgFixedIterationsAsync()/pcgFixedIterationsAsync()` 则提交固定轮数并通过显式 finalize
 读取报告。
 
-CUDA/OpenCL `blockPcg()` 使用调用方提供的 row-major 逆对角块，适合块法方程和 Schur
+CUDA/OpenCL/Vulkan `blockPcg()` 使用调用方提供的 row-major 逆对角块，适合块法方程和 Schur
 约化系统；普通 `pcg()` 的标量 Jacobi 行为保持不变。
 
 CUDA Schur 数值装配对常见 3 维 eliminated block 先执行一次 `inverse * cross_row` 预变换，
 每个 CSR 标量 term 随后只需 3 项点积；其它 eliminated 尺寸保留通用双循环 kernel。设备缓冲和拓扑索引
 随 `SchurComplementSolverWorkspace` 复用。
+
+Vulkan Schur 数值装配只启用于显式 float 混合精度。紧凑 cross/inverse 块在 GPU 上转为 FP16 tile，
+cooperative matrix 使用 FP32 accumulator；装配输出保持 device-local 并直接进入 Vulkan block-PCG。
+workspace 复用拓扑 buffer、数值 buffer 和 pipeline，拓扑未变化时不会重复上传 CSR slot 与 term 索引；
+数值上传、cooperative-matrix 装配和 PCG 首批迭代在同一提交中执行。PCG 的 row offsets 与 column
+indices 使用拓扑 generation 缓存；热调用既不扫描/转换 CSR 索引，也不重新录制 numerical-only 命令。
 
 `DenseCpu` Schur 后端直接装配 row-major 下三角，不创建 CSR 或完整对称副本。每个 block slot
 由唯一线程按固定 term 顺序累计，常见 3×3 eliminated / 9×3 cross 使用固定尺寸内核和 workspace
@@ -601,7 +621,7 @@ cublasHandle_t getCublasHandle() {
 | `small_matrix_cpu.cpp/.cu` | 显式实例化 | batched symmetric 3x3 × `{float,double}` |
 | `solver_cpu.cpp` | 显式实例化 | `solve<float/double, CPU>` |
 | `solver.cu` | 显式特化 | `solve<float/double, GPU>` |
-| `csr_matrix.cpp` | 显式实例化 | `CSRMatrix/COOMatrix` × `{float,double}` × `{CPU,GPU}` |
+| `csr_matrix.cpp` | 显式实例化 | `CsrStorage/CooStorage` × `{float,double}` × `{CPU,GPU}` |
 
 GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要覆盖泛型模板中的 `if constexpr (Dev == GPU)` 分支。
 
@@ -615,7 +635,7 @@ GPU 版本使用**显式特化**（`template<>`）而非实例化，因为需要
 - `no_cuda_stubs.h` 提供 CUDA 类型和存储/传输 API 的桩定义
 - `Device::GPU` 矩阵存储可编译，但 `.cu` 中的 GPU 算法不参与编译
 - 普通 GPU allocation/transfer 桩仍用于公共类型测试；stream-ordered
-  `DenseMatrix::uninitializedAsync` 和 allocator async API 明确抛出不可用错误
+  `DenseStorage::uninitializedAsync` 和 allocator async API 明确抛出不可用错误
 - cuBLAS/cuSOLVER 调用不参与编译（`.cu` 文件不编译）
 - elementwise、reduction、indexing 和 batched 3x3 的 GPU 重载保留 inline runtime stubs，
   错误会标明操作名和 `PLAMATRIX_WITH_CUDA=ON`

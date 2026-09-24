@@ -6,12 +6,12 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 #include "../../support/cuda_test_utils.h"
 
 #ifdef PLAMATRIX_WITH_CUDA
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -30,9 +30,9 @@ void expectLogicErrorContaining(Callable&& callable, const char* expected)
     }
 }
 
-DenseMatrix<float, Device::GPU> finiteInput()
+DenseStorage<float, Device::GPU> finiteInput()
 {
-    DenseMatrix<float, Device::CPU> input(4, 6);
+    DenseStorage<float, Device::CPU> input(4, 6);
     for (Index row = 0; row < input.rows(); ++row)
     {
         input(row, 0) = 1.0F + static_cast<float>(row);
@@ -48,8 +48,8 @@ DenseMatrix<float, Device::GPU> finiteInput()
 TEST(SmallMatrixWorkspaceCudaTest, StatusBlocksResetAndExplicitResetAllowsCrossStreamReuse)
 {
     auto input = finiteInput();
-    DenseMatrix<float, Device::GPU> values(4, 3);
-    DenseMatrix<float, Device::GPU> vectors(4, 9);
+    DenseStorage<float, Device::GPU> values(4, 3);
+    DenseStorage<float, Device::GPU> vectors(4, 9);
     test::CudaStreamGuard first_stream;
     test::CudaStreamGuard second_stream;
     SymmetricEigh3x3Workspace workspace;
@@ -78,12 +78,12 @@ TEST(SmallMatrixWorkspaceCudaTest, StatusBlocksResetAndExplicitResetAllowsCrossS
 
 TEST(SmallMatrixWorkspaceCudaTest, AsyncStatusMustBeConsumedBeforeClose)
 {
-    DenseMatrix<float, Device::CPU> input_cpu(2, 6);
+    DenseStorage<float, Device::CPU> input_cpu(2, 6);
     input_cpu.fill(0.0F);
     input_cpu(1, 2) = std::numeric_limits<float>::quiet_NaN();
     auto input = input_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> values(2, 3);
-    DenseMatrix<float, Device::GPU> vectors(2, 9);
+    DenseStorage<float, Device::GPU> values(2, 3);
+    DenseStorage<float, Device::GPU> vectors(2, 9);
     test::CudaStreamGuard stream;
     SymmetricEigh3x3Workspace workspace;
 
@@ -100,8 +100,8 @@ TEST(SmallMatrixWorkspaceCudaTest, AsyncStatusMustBeConsumedBeforeClose)
 TEST(SmallMatrixWorkspaceCudaTest, MoveTransfersAllocationStatusAndStreamOwnership)
 {
     auto input = finiteInput();
-    DenseMatrix<float, Device::GPU> values(4, 3);
-    DenseMatrix<float, Device::GPU> vectors(4, 9);
+    DenseStorage<float, Device::GPU> values(4, 3);
+    DenseStorage<float, Device::GPU> vectors(4, 9);
     test::CudaStreamGuard stream;
     test::CudaStreamGuard other_stream;
     SymmetricEigh3x3Workspace source;
@@ -152,12 +152,12 @@ TEST(SmallMatrixWorkspaceCudaTest, MoveAssignmentReleasesDestinationAndPreserves
 
 TEST(SmallMatrixWorkspaceCudaTest, MoveAssignmentRejectsUnconsumedDestinationStatus)
 {
-    DenseMatrix<float, Device::CPU> invalid_cpu(4, 6);
+    DenseStorage<float, Device::CPU> invalid_cpu(4, 6);
     invalid_cpu.fill(0.0F);
     invalid_cpu(2, 1) = std::numeric_limits<float>::quiet_NaN();
     auto invalid = invalid_cpu.toGpu();
-    DenseMatrix<float, Device::GPU> values(4, 3);
-    DenseMatrix<float, Device::GPU> vectors(4, 9);
+    DenseStorage<float, Device::GPU> values(4, 3);
+    DenseStorage<float, Device::GPU> vectors(4, 9);
     test::CudaStreamGuard destination_stream;
     test::CudaStreamGuard source_stream;
     SymmetricEigh3x3Workspace destination;
@@ -208,6 +208,6 @@ static_assert(std::is_nothrow_move_constructible_v<SymmetricEigh3x3Workspace>);
 static_assert(!std::is_nothrow_move_assignable_v<SymmetricEigh3x3Workspace>);
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal
 
 #endif

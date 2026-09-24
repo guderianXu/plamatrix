@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace opencl
 {
@@ -191,4 +191,4 @@ std::vector<DeviceCandidate> enumerateDeviceCandidates(
 
 } // namespace detail
 } // namespace opencl
-} // namespace plamatrix
+} // namespace plamatrix::internal

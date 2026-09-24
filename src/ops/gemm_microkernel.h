@@ -1,8 +1,8 @@
 #pragma once
 
-#include "plamatrix/core/types.h"
+#include "plamatrix/internal/core/device.h"
 
-namespace plamatrix::detail
+namespace plamatrix::internal::detail
 {
 
 bool cpuSupportsAvx2Fma() noexcept;
@@ -31,4 +31,4 @@ void packedGemmMicrokernelAvx2(const double* left,
                                Index column_end);
 #endif
 
-} // namespace plamatrix::detail
+} // namespace plamatrix::internal::detail

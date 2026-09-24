@@ -11,7 +11,7 @@
 #include "block_schur_linear_algebra.h"
 #include "block_sparse_cholesky.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
     bool hasSparseDirectSchurSolver() noexcept
@@ -24,7 +24,7 @@ namespace plamatrix
 
         template <typename Scalar>
         SchurComplementSolverReport<Scalar>
-        solveReducedSchurSparseDirect(const CSRMatrix<Scalar, Device::CPU>& matrix,
+        solveReducedSchurSparseDirect(const CsrStorage<Scalar, Device::CPU>& matrix,
                                       const std::vector<Scalar>& rhs,
                                       const SchurComplementSolverOptions<Scalar>& options,
                                       Index block_size,
@@ -148,7 +148,7 @@ namespace plamatrix
         }
 
         template SchurComplementSolverReport<float>
-        solveReducedSchurSparseDirect(const CSRMatrix<float, Device::CPU>&,
+        solveReducedSchurSparseDirect(const CsrStorage<float, Device::CPU>&,
                                       const std::vector<float>&,
                                       const SchurComplementSolverOptions<float>&,
                                       Index,
@@ -156,7 +156,7 @@ namespace plamatrix
                                       std::vector<float>*);
 
         template SchurComplementSolverReport<double>
-        solveReducedSchurSparseDirect(const CSRMatrix<double, Device::CPU>&,
+        solveReducedSchurSparseDirect(const CsrStorage<double, Device::CPU>&,
                                       const std::vector<double>&,
                                       const SchurComplementSolverOptions<double>&,
                                       Index,
@@ -164,4 +164,4 @@ namespace plamatrix
                                       std::vector<double>*);
 
     } // namespace block_schur_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

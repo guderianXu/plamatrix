@@ -12,14 +12,14 @@
 
 #include <cuda_runtime.h>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/dense/elementwise.h"
-#include "plamatrix/ops/indexing.h"
-#include "plamatrix/ops/reduction.h"
-#include "plamatrix/ops/small_matrix.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/dense/elementwise.h"
+#include "plamatrix/internal/ops/indexing.h"
+#include "plamatrix/internal/ops/reduction.h"
+#include "plamatrix/internal/ops/small_matrix.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace detail
 {
@@ -27,11 +27,11 @@ namespace
 {
 
 using Clock = std::chrono::high_resolution_clock;
-using CpuFloatMatrix = DenseMatrix<float, Device::CPU>;
-using CpuMaskMatrix = DenseMatrix<std::uint8_t, Device::CPU>;
-using GpuFloatMatrix = DenseMatrix<float, Device::GPU>;
-using GpuMaskMatrix = DenseMatrix<std::uint8_t, Device::GPU>;
-using GpuIndexMatrix = DenseMatrix<Index, Device::GPU>;
+using CpuFloatMatrix = DenseStorage<float, Device::CPU>;
+using CpuMaskMatrix = DenseStorage<std::uint8_t, Device::CPU>;
+using GpuFloatMatrix = DenseStorage<float, Device::GPU>;
+using GpuMaskMatrix = DenseStorage<std::uint8_t, Device::GPU>;
+using GpuIndexMatrix = DenseStorage<Index, Device::GPU>;
 
 class CudaStream
 {
@@ -364,4 +364,4 @@ void runEigh3x3BatchCuda(CaseResult& result, Index size)
 }
 
 } // namespace detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

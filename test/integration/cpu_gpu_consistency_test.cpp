@@ -5,8 +5,10 @@
 #include <omp.h>
 
 #include <plamatrix/plamatrix.h>
+#include <plamatrix/internal/backend.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 // ============================================================================
 // Typed test fixture for CPU vs GPU consistency tests.
@@ -26,9 +28,9 @@ protected:
     }
 
     /// Create an m x n matrix filled with pseudo-random values in [0, 1).
-    DenseMatrix<Scalar, Device::CPU> randomMatrix(Index m, Index n)
+    DenseStorage<Scalar, Device::CPU> randomMatrix(Index m, Index n)
     {
-        DenseMatrix<Scalar, Device::CPU> mat(m, n);
+        DenseStorage<Scalar, Device::CPU> mat(m, n);
         for (Index j = 0; j < n; ++j)
         {
             for (Index i = 0; i < m; ++i)
@@ -40,7 +42,7 @@ protected:
     }
 
     /// Create a well-conditioned square matrix via diagonal dominance: M = random + n * I.
-    DenseMatrix<Scalar, Device::CPU> wellConditionedMatrix(Index n)
+    DenseStorage<Scalar, Device::CPU> wellConditionedMatrix(Index n)
     {
         auto M = randomMatrix(n, n);
         for (Index i = 0; i < n; ++i)
@@ -64,13 +66,13 @@ protected:
     }
 
     /// Reconstruct a matrix from its SVD: result = U * diag(S) * Vt.
-    DenseMatrix<Scalar, Device::CPU> reconstructFromSvd(const DenseMatrix<Scalar, Device::CPU>& U,
-                                                        const DenseMatrix<Scalar, Device::CPU>& S,
-                                                        const DenseMatrix<Scalar, Device::CPU>& Vt,
+    DenseStorage<Scalar, Device::CPU> reconstructFromSvd(const DenseStorage<Scalar, Device::CPU>& U,
+                                                        const DenseStorage<Scalar, Device::CPU>& S,
+                                                        const DenseStorage<Scalar, Device::CPU>& Vt,
                                                         Index m,
                                                         Index n)
     {
-        DenseMatrix<Scalar, Device::CPU> result(m, n);
+        DenseStorage<Scalar, Device::CPU> result(m, n);
         Index k = std::min(m, n);
         for (Index i = 0; i < m; ++i)
         {
@@ -302,11 +304,11 @@ TYPED_TEST(CpuGpuConsistencyTest, pointTransform)
     constexpr Index NUM_POINTS = 32;
 
     // Build a rigid transform: rotation around arbitrary axis + translation
-    Vec3<Scalar> axis = {static_cast<Scalar>(0.3), static_cast<Scalar>(0.6), static_cast<Scalar>(0.8)};
+    PackedVector3<Scalar> axis = {static_cast<Scalar>(0.3), static_cast<Scalar>(0.6), static_cast<Scalar>(0.8)};
     Scalar angle = static_cast<Scalar>(1.2); // ~69 degrees
 
     auto R_cpu = rotationMatrix<Scalar, Device::CPU>(axis, angle);
-    Vec3<Scalar> t = {static_cast<Scalar>(5.0), static_cast<Scalar>(-3.0), static_cast<Scalar>(7.0)};
+    PackedVector3<Scalar> t = {static_cast<Scalar>(5.0), static_cast<Scalar>(-3.0), static_cast<Scalar>(7.0)};
     auto T_cpu = rigidTransform<Scalar, Device::CPU>(R_cpu, t);
 
     // Verify T dimensions
@@ -339,3 +341,5 @@ TYPED_TEST(CpuGpuConsistencyTest, pointTransform)
     }
 }
 #endif
+
+} // namespace plamatrix::internal

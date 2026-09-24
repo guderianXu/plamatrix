@@ -7,13 +7,14 @@
 
 #include <gtest/gtest.h>
 
-#include <plamatrix/sparse/csr_matrix.h>
+#include <plamatrix/internal/sparse/csr_storage.h>
 
-using namespace plamatrix;
-
-TEST(CSRMatrix, constructionAndAccess)
+namespace plamatrix::internal
 {
-    CSRMatrix<float, Device::CPU> mat(4, 4, 5);
+
+TEST(CsrStorage, constructionAndAccess)
+{
+    CsrStorage<float, Device::CPU> mat(4, 4, 5);
     EXPECT_EQ(mat.rows(), 4);
     EXPECT_EQ(mat.cols(), 4);
     EXPECT_EQ(mat.nnz(), 5);
@@ -28,25 +29,25 @@ TEST(CSRMatrix, constructionAndAccess)
     }
 }
 
-TEST(CSRMatrix, construction_RejectsNegativeDimensionsAndNnz)
+TEST(CsrStorage, construction_RejectsNegativeDimensionsAndNnz)
 {
-    EXPECT_THROW((CSRMatrix<float, Device::CPU>(-1, 4, 0)), std::invalid_argument);
-    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, -1, 0)), std::invalid_argument);
-    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, 4, -1)), std::invalid_argument);
+    EXPECT_THROW((CsrStorage<float, Device::CPU>(-1, 4, 0)), std::invalid_argument);
+    EXPECT_THROW((CsrStorage<float, Device::CPU>(4, -1, 0)), std::invalid_argument);
+    EXPECT_THROW((CsrStorage<float, Device::CPU>(4, 4, -1)), std::invalid_argument);
 }
 
-TEST(CSRMatrix, construction_RejectsNonZerosWithZeroDimensions)
+TEST(CsrStorage, construction_RejectsNonZerosWithZeroDimensions)
 {
-    EXPECT_THROW((CSRMatrix<float, Device::CPU>(0, 4, 1)), std::invalid_argument);
-    EXPECT_THROW((CSRMatrix<float, Device::CPU>(4, 0, 1)), std::invalid_argument);
+    EXPECT_THROW((CsrStorage<float, Device::CPU>(0, 4, 1)), std::invalid_argument);
+    EXPECT_THROW((CsrStorage<float, Device::CPU>(4, 0, 1)), std::invalid_argument);
 }
 
 namespace
 {
 template <typename Scalar>
-CSRMatrix<Scalar, Device::CPU> makeTransferInput()
+CsrStorage<Scalar, Device::CPU> makeTransferInput()
 {
-    CSRMatrix<Scalar, Device::CPU> cpu(3, 4, 4);
+    CsrStorage<Scalar, Device::CPU> cpu(3, 4, 4);
     const std::array<Scalar, 4> values = {
         Scalar(1.25), Scalar(-2.5), Scalar(3.75), Scalar(4.5)};
     const std::array<Index, 4> columns = {0, 2, 1, 3};
@@ -65,10 +66,10 @@ CSRMatrix<Scalar, Device::CPU> makeTransferInput()
 }
 
 template <typename Scalar>
-CSRMatrix<Scalar, Device::CPU> makePinnedTransferInput()
+CsrStorage<Scalar, Device::CPU> makePinnedTransferInput()
 {
     const auto input = makeTransferInput<Scalar>();
-    auto pinned = CSRMatrix<Scalar, Device::CPU>::pinned(
+    auto pinned = CsrStorage<Scalar, Device::CPU>::pinned(
         input.rows(), input.cols(), input.nnz());
     std::copy_n(input.values(), static_cast<std::size_t>(input.nnz()), pinned.values());
     std::copy_n(
@@ -79,7 +80,7 @@ CSRMatrix<Scalar, Device::CPU> makePinnedTransferInput()
 }
 
 template <typename Scalar>
-void expectTransferInput(const CSRMatrix<Scalar, Device::CPU>& actual)
+void expectTransferInput(const CsrStorage<Scalar, Device::CPU>& actual)
 {
     const std::array<Scalar, 4> values = {
         Scalar(1.25), Scalar(-2.5), Scalar(3.75), Scalar(4.5)};
@@ -158,9 +159,9 @@ struct CanSpoofAsyncClose<
 {
 };
 
-static_assert(!CanSpoofPinned<CSRMatrix<float, Device::GPU>>::value);
-static_assert(!CanSpoofAsyncAllocation<CSRMatrix<float, Device::CPU>>::value);
-static_assert(!CanSpoofAsyncClose<CSRMatrix<float, Device::CPU>>::value);
+static_assert(!CanSpoofPinned<CsrStorage<float, Device::GPU>>::value);
+static_assert(!CanSpoofAsyncAllocation<CsrStorage<float, Device::CPU>>::value);
+static_assert(!CanSpoofAsyncClose<CsrStorage<float, Device::CPU>>::value);
 } // namespace
 
 #ifdef PLAMATRIX_WITH_CUDA
@@ -210,8 +211,8 @@ TYPED_TEST(CSRMatrixTransferTest, asynchronousRoundTripUsesNonDefaultStream)
 TYPED_TEST(CSRMatrixTransferTest, asynchronousCopiesPreserveExistingOutputPointers)
 {
     const auto cpu = makePinnedTransferInput<TypeParam>();
-    CSRMatrix<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
-    auto back = CSRMatrix<TypeParam, Device::CPU>::pinned(
+    CsrStorage<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
+    auto back = CsrStorage<TypeParam, Device::CPU>::pinned(
         cpu.rows(), cpu.cols(), cpu.nnz());
     TypeParam* gpu_values = gpu.values();
     Index* gpu_columns = gpu.colIndices();
@@ -262,7 +263,7 @@ TYPED_TEST(CSRMatrixTransferTest, reusedPinnedDownloadIsRevalidatedAfterAsyncOve
 TYPED_TEST(CSRMatrixTransferTest, asynchronousHostToDeviceCopyRejectsPageableInput)
 {
     const auto pageable = makeTransferInput<TypeParam>();
-    CSRMatrix<TypeParam, Device::GPU> gpu(
+    CsrStorage<TypeParam, Device::GPU> gpu(
         pageable.rows(), pageable.cols(), pageable.nnz());
 
     EXPECT_THROW(pageable.copyToGpuAsync(gpu), std::invalid_argument);
@@ -273,14 +274,14 @@ TYPED_TEST(CSRMatrixTransferTest, asynchronousDeviceToHostCopyRejectsPageableOut
 {
     const auto cpu = makeTransferInput<TypeParam>();
     const auto gpu = cpu.toGpu();
-    CSRMatrix<TypeParam, Device::CPU> pageable(cpu.rows(), cpu.cols(), cpu.nnz());
+    CsrStorage<TypeParam, Device::CPU> pageable(cpu.rows(), cpu.cols(), cpu.nnz());
 
     EXPECT_THROW(gpu.copyToCpuAsync(pageable), std::invalid_argument);
 }
 
 TYPED_TEST(CSRMatrixTransferTest, closeAsyncAllocationRejectsOrdinaryGpuStorage)
 {
-    CSRMatrix<TypeParam, Device::GPU> ordinary(2, 2, 1);
+    CsrStorage<TypeParam, Device::GPU> ordinary(2, 2, 1);
 
     EXPECT_FALSE(ordinary.isAsyncAllocation());
     EXPECT_THROW(ordinary.closeAsyncAllocation(), std::logic_error);
@@ -308,7 +309,7 @@ TYPED_TEST(CSRMatrixTransferTest, streamOrderedStorageRejectsCrossStreamCopies)
 TYPED_TEST(CSRMatrixTransferTest, ordinaryGpuStorageRejectsOverlappingCrossStreamWrites)
 {
     const auto cpu = makePinnedTransferInput<TypeParam>();
-    CSRMatrix<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
+    CsrStorage<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
     cudaStream_t first_stream = nullptr;
     cudaStream_t second_stream = nullptr;
     ASSERT_EQ(cudaStreamCreateWithFlags(&first_stream, cudaStreamNonBlocking), cudaSuccess);
@@ -328,8 +329,8 @@ TYPED_TEST(CSRMatrixTransferTest, ordinaryGpuStorageRejectsOverlappingCrossStrea
 TYPED_TEST(CSRMatrixTransferTest, deviceDownloadRejectsPendingSourceFromAnotherStream)
 {
     const auto cpu = makePinnedTransferInput<TypeParam>();
-    CSRMatrix<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
-    auto output = CSRMatrix<TypeParam, Device::CPU>::pinned(
+    CsrStorage<TypeParam, Device::GPU> gpu(cpu.rows(), cpu.cols(), cpu.nnz());
+    auto output = CsrStorage<TypeParam, Device::CPU>::pinned(
         cpu.rows(), cpu.cols(), cpu.nnz());
     cudaStream_t first_stream = nullptr;
     cudaStream_t second_stream = nullptr;
@@ -352,7 +353,7 @@ TYPED_TEST(CSRMatrixTransferTest, pinnedDownloadRejectsOverlappingCrossStreamWri
 {
     const auto cpu = makeTransferInput<TypeParam>();
     const auto gpu = cpu.toGpu();
-    auto output = CSRMatrix<TypeParam, Device::CPU>::pinned(
+    auto output = CsrStorage<TypeParam, Device::CPU>::pinned(
         cpu.rows(), cpu.cols(), cpu.nnz());
     cudaStream_t first_stream = nullptr;
     cudaStream_t second_stream = nullptr;
@@ -461,12 +462,12 @@ TYPED_TEST(CSRMatrixTransferTest, asynchronousCopiesRejectDimensionAndNnzMismatc
 {
     const auto cpu = makeTransferInput<TypeParam>();
     const auto gpu = cpu.toGpu();
-    CSRMatrix<TypeParam, Device::GPU> wrong_gpu_rows(2, 4, 4);
-    CSRMatrix<TypeParam, Device::GPU> wrong_gpu_cols(3, 5, 4);
-    CSRMatrix<TypeParam, Device::GPU> wrong_gpu_nnz(3, 4, 3);
-    CSRMatrix<TypeParam, Device::CPU> wrong_cpu_rows(2, 4, 4);
-    CSRMatrix<TypeParam, Device::CPU> wrong_cpu_cols(3, 5, 4);
-    CSRMatrix<TypeParam, Device::CPU> wrong_cpu_nnz(3, 4, 3);
+    CsrStorage<TypeParam, Device::GPU> wrong_gpu_rows(2, 4, 4);
+    CsrStorage<TypeParam, Device::GPU> wrong_gpu_cols(3, 5, 4);
+    CsrStorage<TypeParam, Device::GPU> wrong_gpu_nnz(3, 4, 3);
+    CsrStorage<TypeParam, Device::CPU> wrong_cpu_rows(2, 4, 4);
+    CsrStorage<TypeParam, Device::CPU> wrong_cpu_cols(3, 5, 4);
+    CsrStorage<TypeParam, Device::CPU> wrong_cpu_nnz(3, 4, 3);
 
     EXPECT_THROW(cpu.copyToGpuAsync(wrong_gpu_rows), std::runtime_error);
     EXPECT_THROW(cpu.copyToGpuAsync(wrong_gpu_cols), std::runtime_error);
@@ -478,7 +479,7 @@ TYPED_TEST(CSRMatrixTransferTest, asynchronousCopiesRejectDimensionAndNnzMismatc
 
 TYPED_TEST(CSRMatrixTransferTest, zeroRowMatrixRoundTrips)
 {
-    CSRMatrix<TypeParam, Device::CPU> cpu(0, 5, 0);
+    CsrStorage<TypeParam, Device::CPU> cpu(0, 5, 0);
     cpu.rowOffsets()[0] = 0;
 
     const auto gpu = cpu.toGpu();
@@ -495,10 +496,10 @@ TYPED_TEST(CSRMatrixTransferTest, zeroRowMatrixRoundTrips)
 #else
 TEST(CSRMatrixNoCuda, transferSurfaceCompilesAndThrowsClearErrors)
 {
-    CSRMatrix<float, Device::CPU> cpu(2, 2, 1);
-    CSRMatrix<float, Device::GPU> gpu(2, 2, 1);
-    CSRMatrix<float, Device::CPU> cpu_output(2, 2, 1);
-    CSRMatrix<float, Device::GPU> gpu_output(2, 2, 1);
+    CsrStorage<float, Device::CPU> cpu(2, 2, 1);
+    CsrStorage<float, Device::GPU> gpu(2, 2, 1);
+    CsrStorage<float, Device::CPU> cpu_output(2, 2, 1);
+    CsrStorage<float, Device::GPU> gpu_output(2, 2, 1);
 
     expectRequiresCuda("toGpu", [&]() { static_cast<void>(cpu.toGpu()); });
     expectRequiresCuda("toCpu", [&]() { static_cast<void>(gpu.toCpu()); });
@@ -507,11 +508,13 @@ TEST(CSRMatrixNoCuda, transferSurfaceCompilesAndThrowsClearErrors)
     expectRequiresCuda("copyToGpuAsync", [&]() { cpu.copyToGpuAsync(gpu_output, nullptr); });
     expectRequiresCuda("copyToCpuAsync", [&]() { gpu.copyToCpuAsync(cpu_output, nullptr); });
     expectRequiresCuda("pinned", [&]() {
-        static_cast<void>(CSRMatrix<float, Device::CPU>::pinned(1, 1, 0));
+        static_cast<void>(CsrStorage<float, Device::CPU>::pinned(1, 1, 0));
     });
     expectRequiresCuda("uninitializedAsync", [&]() {
         static_cast<void>(
-            CSRMatrix<float, Device::GPU>::uninitializedAsync(1, 1, 0, nullptr));
+            CsrStorage<float, Device::GPU>::uninitializedAsync(1, 1, 0, nullptr));
     });
 }
 #endif
+
+} // namespace plamatrix::internal

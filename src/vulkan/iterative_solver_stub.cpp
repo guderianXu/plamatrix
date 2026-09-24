@@ -1,20 +1,30 @@
-#include "plamatrix/vulkan/iterative_solver.h"
+#include "plamatrix/internal/vulkan/iterative_solver.h"
 
 #ifndef PLAMATRIX_WITH_VULKAN
 
 #include <stdexcept>
 
-namespace plamatrix::vulkan
+namespace plamatrix::internal::vulkan
 {
 
-    IterativeSolverReport pcg(const CSRMatrix<float, Device::CPU>&,
-                              const DenseMatrix<float, Device::CPU>&,
-                              DenseMatrix<float, Device::CPU>&,
+    IterativeSolverReport pcg(const CsrStorage<float, Device::CPU>&,
+                              const DenseStorage<float, Device::CPU>&,
+                              DenseStorage<float, Device::CPU>&,
                               const IterativeSolverOptions&)
     {
         throw std::runtime_error("Vulkan PCG requires PLAMATRIX_WITH_VULKAN=ON");
     }
 
-} // namespace plamatrix::vulkan
+    IterativeSolverReport blockPcg(const CsrStorage<float, Device::CPU>&,
+                                   const DenseStorage<float, Device::CPU>&,
+                                   DenseStorage<float, Device::CPU>&,
+                                   const DenseStorage<float, Device::CPU>&,
+                                   Index,
+                                   const IterativeSolverOptions&)
+    {
+        throw std::runtime_error("Vulkan block PCG requires PLAMATRIX_WITH_VULKAN=ON");
+    }
+
+} // namespace plamatrix::internal::vulkan
 
 #endif

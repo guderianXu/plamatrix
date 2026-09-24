@@ -1,0 +1,93 @@
+#version 450
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0, std430) buffer WorkBuffer { float work_values[]; };
+layout(set = 0, binding = 1, std430) buffer VBuffer { float v_values[]; };
+layout(set = 0, binding = 2, std430) readonly buffer PairBuffer { float pair_values[]; };
+layout(push_constant) uniform Parameters
+{
+    uint rows;
+    uint columns;
+    uint pair_offset;
+    uint pair_count;
+    float tolerance;
+} parameters;
+
+shared float first_sum[128];
+shared float second_sum[128];
+shared float cross_sum[128];
+shared float shared_cosine;
+shared float shared_sine;
+
+void main()
+{
+    uint pair_index = parameters.pair_offset + gl_WorkGroupID.x;
+    if (gl_WorkGroupID.x >= parameters.pair_count)
+        return;
+    uint p = uint(pair_values[2 * pair_index]);
+    uint q = uint(pair_values[2 * pair_index + 1]);
+    uint lane = gl_LocalInvocationID.x;
+    float app = 0.0;
+    float aqq = 0.0;
+    float apq = 0.0;
+    for (uint row = lane; row < parameters.rows; row += 128)
+    {
+        float first = work_values[row + p * parameters.rows];
+        float second = work_values[row + q * parameters.rows];
+        app += first * first;
+        aqq += second * second;
+        apq += first * second;
+    }
+    first_sum[lane] = app;
+    second_sum[lane] = aqq;
+    cross_sum[lane] = apq;
+    barrier();
+    for (uint stride = 64; stride > 0; stride >>= 1)
+    {
+        if (lane < stride)
+        {
+            first_sum[lane] += first_sum[lane + stride];
+            second_sum[lane] += second_sum[lane + stride];
+            cross_sum[lane] += cross_sum[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0)
+    {
+        app = first_sum[0];
+        aqq = second_sum[0];
+        apq = cross_sum[0];
+        float scale = sqrt(max(app * aqq, 0.0));
+        if (scale <= 0.0 || abs(apq) <= parameters.tolerance * scale)
+        {
+            shared_cosine = 1.0;
+            shared_sine = 0.0;
+        }
+        else
+        {
+            float zeta = (aqq - app) / (2.0 * apq);
+            float tangent = (zeta >= 0.0 ? 1.0 : -1.0) / (abs(zeta) + sqrt(1.0 + zeta * zeta));
+            shared_cosine = inversesqrt(1.0 + tangent * tangent);
+            shared_sine = shared_cosine * tangent;
+        }
+    }
+    barrier();
+    float cosine = shared_cosine;
+    float sine = shared_sine;
+    if (sine == 0.0)
+        return;
+    for (uint row = lane; row < parameters.rows; row += 128)
+    {
+        float first = work_values[row + p * parameters.rows];
+        float second = work_values[row + q * parameters.rows];
+        work_values[row + p * parameters.rows] = cosine * first - sine * second;
+        work_values[row + q * parameters.rows] = sine * first + cosine * second;
+    }
+    for (uint row = lane; row < parameters.columns; row += 128)
+    {
+        float first = v_values[row + p * parameters.columns];
+        float second = v_values[row + q * parameters.columns];
+        v_values[row + p * parameters.columns] = cosine * first - sine * second;
+        v_values[row + q * parameters.columns] = sine * first + cosine * second;
+    }
+}

@@ -13,6 +13,11 @@
 | OpenMP | 4.5+ | CPU 多线程（随 GCC 安装，无需额外操作） |
 | Google Test | 1.11+ | 单元测试（仅 `-DPLAMATRIX_BUILD_TESTS=ON` 时需要） |
 
+CUDA 构建应让 `CMAKE_CXX_COMPILER` 与 `CMAKE_CUDA_HOST_COMPILER` 使用一致的工具链和系统库；
+不要混用 Conda 的旧 sysroot 与系统 GCC 的 CUDA host 编译结果。驻留矩阵视图与克隆测试包含在
+`plamatrix_tests`，有限值统计视图测试包含在 `plamatrix_statistics_tests`；CPU-only 构建覆盖
+不可用后端的明确报错行为。
+
 ---
 
 ## 2. 从零搭建 (Ubuntu 24.04)
@@ -204,8 +209,27 @@ buffer 的读写方向记录依赖，只在存在写后读/写冲突时插入屏
 subgroup-per-row SpMV；短行 CSR 使用 scalar-per-row 内核。上传、初始残差与容差初始化和首批 PCG
 迭代共享一次提交。解向量不超过 64 KiB 时，最终解回读也合并进批次提交；更大向量继续单独下载，
 避免在多个收敛批次中重复回读完整结果。
-`PLAMATRIX_VULKAN_SPMV=auto|scalar|subgroup` 可覆盖自动选择，
+`PLAMATRIX_VULKAN_SPMV=auto|scalar|subgroup|block` 可覆盖自动选择，
 其中强制 `subgroup` 在设备不支持时会返回明确错误。
+设备常驻的完整 9×9 block CSR 默认用 GPU 构造 block-Jacobi 逆块；
+`PLAMATRIX_VULKAN_BLOCK_JACOBI=auto|cpu|gpu` 可覆盖该选择，其中 `gpu` 在条件不满足时返回明确错误。
+
+配置阶段还会试编译 KHR cooperative-matrix shader。试编译成功不代表所选 GPU 一定支持该路径；
+运行时还会核对 `VK_KHR_cooperative_matrix`、`VK_KHR_shader_float16_int8`、
+`VK_KHR_vulkan_memory_model`、16 位 storage buffer、compute stage、subgroup 大小以及
+16×16×16 FP16 输入/FP32 累加规格。可通过
+`selectedVulkanCooperativeMatrixCapabilities()` 区分硬件支持和当前构建实际启用状态。
+
+完整的 BA Schur 对比使用 9 维相机块和 3 维点块；下面的命令生成 512 个相机、8192 个点、每点 4 次
+观测的确定性法方程，并报告总时间、Schur 装配、线性求解、Vulkan GPU timestamp、命令提交/录制次数
+及相对 CPU 解的最大绝对误差：
+
+```bash
+./benchmark/plamatrix_schur_backend_benchmark 512 8192 4 7
+```
+
+Vulkan Schur 要求所选设备满足上述 cooperative-matrix 能力，且当前只支持显式 opt-in 的 float
+混合精度；普通 CSR-PCG 对比仍可在没有 cooperative matrix 的 Vulkan 设备上运行。
 
 除了默认三对角系统，还可以运行更接近 PlaScan 数据形态的场景：
 
@@ -282,6 +306,32 @@ cd build
 ./benchmark/plamatrix_benchmark --mode all --size small --output report.md
 ```
 
+### Eigen 5 对照验证
+
+安装 Eigen 5.0 或更新版本后，可打开仅供测试和 benchmark 使用的对照依赖：
+
+```bash
+cmake -S . -B build/eigen-reference \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPLAMATRIX_WITH_CUDA=OFF \
+  -DPLAMATRIX_WITH_OPENCL=OFF \
+  -DPLAMATRIX_WITH_VULKAN=OFF \
+  -DPLAMATRIX_BUILD_TESTS=ON \
+  -DPLAMATRIX_BUILD_BENCHMARKS=ON \
+  -DPLAMATRIX_WITH_EIGEN_REFERENCE=ON
+cmake --build build/eigen-reference --parallel
+ctest --test-dir build/eigen-reference --output-on-failure -R EigenReference
+./build/eigen-reference/benchmark/plamatrix_eigen_compare --size 256 --trials 11
+```
+
+若 Eigen 没有安装 CMake package，可额外传入
+`-DPLAMATRIX_EIGEN3_INCLUDE_DIR=/path/to/eigen`。CI 或干净环境也可以传入
+`-DPLAMATRIX_FETCH_EIGEN_REFERENCE=ON`，由 CMake 下载经过 SHA-256 校验的 Eigen 5.0.1 源码；
+该选项会自动启用 `PLAMATRIX_WITH_EIGEN_REFERENCE`，且只用于测试和 benchmark。
+配置阶段会检查 Eigen 的语义化主版本以及
+`reshaped()`、`canonicalEulerAngles()`；较旧头文件会直接给出错误。该选项不会改变 PlaMatrix 的
+公开链接接口或安装包依赖。
+
 ### 安装到系统
 
 ```bash
@@ -297,8 +347,7 @@ sudo cmake --install build --prefix /usr/local
 └── lib/cmake/plamatrix/ # CMake 包配置
 ```
 
-`include/plamatrix/ops/vector.h` 随安装一同导出。`Vec3` 及其算术是 header-only API，CPU-only 和 CUDA
-构建使用同一份接口，不需要额外链接设备运行库。
+公开入口为 `<plamatrix/plamatrix.h>`。`include/plamatrix/internal/` 也随模板实现安装，但不是公开兼容性契约。三维向量使用 `Vector3f`/`Vector3d`，旧 `Vec3` 类型和旧头文件路径已删除。启用的 CUDA、OpenCL、Vulkan 链接依赖由包配置自动查找。
 
 其他项目通过 `find_package(plamatrix)` 即可引用。
 

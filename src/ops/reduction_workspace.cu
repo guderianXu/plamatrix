@@ -1,9 +1,9 @@
 #include <stdexcept>
 #include <utility>
 
-#include "plamatrix/ops/reduction.h"
+#include "plamatrix/internal/ops/reduction.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -212,4 +212,4 @@ void ReductionWorkspace::release() noexcept
     _hasReuseStream = false;
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

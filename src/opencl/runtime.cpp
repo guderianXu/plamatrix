@@ -1,4 +1,4 @@
-#include "plamatrix/opencl/runtime.h"
+#include "plamatrix/internal/opencl/runtime.h"
 
 #include "device_enumeration.h"
 
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace opencl
 {
@@ -392,4 +392,4 @@ int selectedOpenClDeviceIndex() noexcept
 }
 
 } // namespace opencl
-} // namespace plamatrix
+} // namespace plamatrix::internal

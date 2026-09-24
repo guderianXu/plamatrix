@@ -4,25 +4,26 @@
 #include <string>
 #include <utility>
 
-#include <plamatrix/core/device_matrix.h>
+#include <plamatrix/internal/core/device_storage.h>
 
 #include "support/cuda_test_utils.h"
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 namespace
 {
 
-class AsyncGpuDeviceMatrix : public DeviceMatrix<float, Device::GPU>
+class AsyncGpuDeviceMatrix : public DeviceStorage<float, Device::GPU>
 {
 public:
     AsyncGpuDeviceMatrix()
-        : DeviceMatrix(0, 0)
+        : DeviceStorage(0, 0)
     {
     }
 
     AsyncGpuDeviceMatrix(Index rows, Index cols, cudaStream_t stream)
-        : DeviceMatrix(rows, cols, detail::AsyncGpuAllocationTag{}, stream)
+        : DeviceStorage(rows, cols, detail::AsyncGpuAllocationTag{}, stream)
     {
     }
 
@@ -32,7 +33,7 @@ public:
 
 } // anonymous namespace
 
-TEST(DeviceMatrix, cusparseErrorCheckReportsBackendExpressionAndSource)
+TEST(DeviceStorage, cusparseErrorCheckReportsBackendExpressionAndSource)
 {
     try
     {
@@ -48,9 +49,9 @@ TEST(DeviceMatrix, cusparseErrorCheckReportsBackendExpressionAndSource)
     }
 }
 
-TEST(DeviceMatrix, construction_DefaultDimensions)
+TEST(DeviceStorage, construction_DefaultDimensions)
 {
-    DeviceMatrix<float, Device::CPU> mat(3, 4);
+    DeviceStorage<float, Device::CPU> mat(3, 4);
     EXPECT_EQ(mat.rows(), 3);
     EXPECT_EQ(mat.cols(), 4);
     EXPECT_EQ(mat.size(), 12);
@@ -58,9 +59,9 @@ TEST(DeviceMatrix, construction_DefaultDimensions)
     EXPECT_NE(mat.data(), nullptr);
 }
 
-TEST(DeviceMatrix, construction_Gpu)
+TEST(DeviceStorage, construction_Gpu)
 {
-    DeviceMatrix<float, Device::GPU> mat(5, 6);
+    DeviceStorage<float, Device::GPU> mat(5, 6);
     EXPECT_EQ(mat.rows(), 5);
     EXPECT_EQ(mat.cols(), 6);
     EXPECT_EQ(mat.size(), 30);
@@ -68,13 +69,13 @@ TEST(DeviceMatrix, construction_Gpu)
     EXPECT_NE(mat.data(), nullptr);
 }
 
-TEST(DeviceMatrix, construction_RejectsNegativeDimensions)
+TEST(DeviceStorage, construction_RejectsNegativeDimensions)
 {
-    EXPECT_THROW((DeviceMatrix<float, Device::CPU>(-1, 3)), std::invalid_argument);
-    EXPECT_THROW((DeviceMatrix<float, Device::GPU>(3, -1)), std::invalid_argument);
+    EXPECT_THROW((DeviceStorage<float, Device::CPU>(-1, 3)), std::invalid_argument);
+    EXPECT_THROW((DeviceStorage<float, Device::GPU>(3, -1)), std::invalid_argument);
 }
 
-TEST(DeviceMatrix, asyncGpuConstruction_RejectsInvalidDimensionsBeforeAllocation)
+TEST(DeviceStorage, asyncGpuConstruction_RejectsInvalidDimensionsBeforeAllocation)
 {
     EXPECT_THROW(AsyncGpuDeviceMatrix(-1, 3, nullptr), std::invalid_argument);
     EXPECT_THROW(
@@ -83,7 +84,7 @@ TEST(DeviceMatrix, asyncGpuConstruction_RejectsInvalidDimensionsBeforeAllocation
 }
 
 #ifdef PLAMATRIX_WITH_CUDA
-TEST(DeviceMatrix, asyncGpuConstruction_PreservesDimensionsOnExplicitStream)
+TEST(DeviceStorage, asyncGpuConstruction_PreservesDimensionsOnExplicitStream)
 {
     test::CudaStreamGuard stream;
 
@@ -103,7 +104,7 @@ TEST(DeviceMatrix, asyncGpuConstruction_PreservesDimensionsOnExplicitStream)
     stream.synchronize();
 }
 
-TEST(DeviceMatrix, asyncGpuMoveConstructor_PreservesStreamOrderedProvenance)
+TEST(DeviceStorage, asyncGpuMoveConstructor_PreservesStreamOrderedProvenance)
 {
     test::GpuMemoryPoolGuard<float> memory_pool(true);
     test::CudaStreamGuard stream;
@@ -122,7 +123,7 @@ TEST(DeviceMatrix, asyncGpuMoveConstructor_PreservesStreamOrderedProvenance)
     stream.synchronize();
 }
 
-TEST(DeviceMatrix, asyncGpuMoveAssignment_PreservesStreamOrderedProvenance)
+TEST(DeviceStorage, asyncGpuMoveAssignment_PreservesStreamOrderedProvenance)
 {
     test::GpuMemoryPoolGuard<float> memory_pool(true);
     test::CudaStreamGuard stream;
@@ -142,9 +143,9 @@ TEST(DeviceMatrix, asyncGpuMoveAssignment_PreservesStreamOrderedProvenance)
     stream.synchronize();
 }
 
-TEST(DeviceMatrix, normalGpuAllocation_CloseAsyncAllocationThrowsClearLogicError)
+TEST(DeviceStorage, normalGpuAllocation_CloseAsyncAllocationThrowsClearLogicError)
 {
-    DeviceMatrix<float, Device::GPU> matrix(2, 3);
+    DeviceStorage<float, Device::GPU> matrix(2, 3);
 
     try
     {
@@ -162,12 +163,12 @@ TEST(DeviceMatrix, normalGpuAllocation_CloseAsyncAllocationThrowsClearLogicError
     EXPECT_EQ(matrix.cols(), 3);
 }
 
-TEST(DeviceMatrix, normalGpuAllocation_StillUsesMemoryPool)
+TEST(DeviceStorage, normalGpuAllocation_StillUsesMemoryPool)
 {
     test::GpuMemoryPoolGuard<float> memory_pool(true);
 
     {
-        DeviceMatrix<float, Device::GPU> matrix(2, 3);
+        DeviceStorage<float, Device::GPU> matrix(2, 3);
         EXPECT_NE(matrix.data(), nullptr);
     }
 
@@ -192,7 +193,7 @@ TEST(DeviceMatrixNoCuda, asyncConstruction_ThrowsClearErrorWithoutCuda)
 
 TEST(DeviceMatrixNoCuda, closeAsyncAllocationRejectsOrdinaryNonEmptyGpuMatrix)
 {
-    DeviceMatrix<float, Device::GPU> matrix(2, 3);
+    DeviceStorage<float, Device::GPU> matrix(2, 3);
 
     EXPECT_THROW(matrix.closeAsyncAllocation(), std::logic_error);
     EXPECT_NE(matrix.data(), nullptr);
@@ -200,7 +201,7 @@ TEST(DeviceMatrixNoCuda, closeAsyncAllocationRejectsOrdinaryNonEmptyGpuMatrix)
 
 TEST(DeviceMatrixNoCuda, closeAsyncAllocationAcceptsEmptyGpuMatrix)
 {
-    DeviceMatrix<float, Device::GPU> matrix(0, 3);
+    DeviceStorage<float, Device::GPU> matrix(0, 3);
 
     EXPECT_NO_THROW(matrix.closeAsyncAllocation());
     EXPECT_EQ(matrix.rows(), 0);
@@ -209,12 +210,12 @@ TEST(DeviceMatrixNoCuda, closeAsyncAllocationAcceptsEmptyGpuMatrix)
 }
 #endif
 
-TEST(DeviceMatrix, moveConstructor_TransfersOwnership)
+TEST(DeviceStorage, moveConstructor_TransfersOwnership)
 {
-    DeviceMatrix<float, Device::CPU> mat(2, 3);
+    DeviceStorage<float, Device::CPU> mat(2, 3);
     float* original_ptr = mat.data();
 
-    DeviceMatrix<float, Device::CPU> moved(std::move(mat));
+    DeviceStorage<float, Device::CPU> moved(std::move(mat));
 
     EXPECT_EQ(moved.rows(), 2);
     EXPECT_EQ(moved.cols(), 3);
@@ -226,12 +227,12 @@ TEST(DeviceMatrix, moveConstructor_TransfersOwnership)
     EXPECT_EQ(mat.cols(), 0);
 }
 
-TEST(DeviceMatrix, moveAssignment_TransfersOwnership)
+TEST(DeviceStorage, moveAssignment_TransfersOwnership)
 {
-    DeviceMatrix<float, Device::CPU> mat1(2, 3);
+    DeviceStorage<float, Device::CPU> mat1(2, 3);
     float* ptr1 = mat1.data();
 
-    DeviceMatrix<float, Device::CPU> mat2(4, 5);
+    DeviceStorage<float, Device::CPU> mat2(4, 5);
 
     mat2 = std::move(mat1);
 
@@ -243,3 +244,5 @@ TEST(DeviceMatrix, moveAssignment_TransfersOwnership)
     EXPECT_EQ(mat1.rows(), 0);
     EXPECT_EQ(mat1.cols(), 0);
 }
+
+} // namespace plamatrix::internal

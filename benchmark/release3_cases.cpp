@@ -9,11 +9,11 @@
 #include <utility>
 #include <vector>
 
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/sparse/iterative_solver.h"
-#include "plamatrix/sparse/sparse_ops.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
+#include "plamatrix/internal/sparse/sparse_ops.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace detail
 {
@@ -25,10 +25,10 @@ struct SparseFixture
     std::vector<Index> rows;
     std::vector<Index> columns;
     std::vector<float> values;
-    CSRMatrix<float, Device::CPU> matrix;
-    DenseMatrix<float, Device::CPU> vector;
-    DenseMatrix<float, Device::CPU> block;
-    DenseMatrix<float, Device::CPU> rhs;
+    CsrStorage<float, Device::CPU> matrix;
+    DenseStorage<float, Device::CPU> vector;
+    DenseStorage<float, Device::CPU> block;
+    DenseStorage<float, Device::CPU> rhs;
 
     explicit SparseFixture(Index size)
         : matrix(makeMatrix(size, rows, columns, values))
@@ -48,7 +48,7 @@ struct SparseFixture
     }
 
 private:
-    static CSRMatrix<float, Device::CPU> makeMatrix(
+    static CsrStorage<float, Device::CPU> makeMatrix(
         Index size,
         std::vector<Index>& rows,
         std::vector<Index>& columns,
@@ -150,18 +150,18 @@ void runCpuCase(CaseResult& result, Index size, bool serial, bool omp)
 
     if (result.name == "spmv")
     {
-        DenseMatrix<float, Device::CPU> output(size, 1);
+        DenseStorage<float, Device::CPU> output(size, 1);
         runCpuModes(result, serial, omp, [&]() { spmv(fixture.matrix, fixture.vector, output); });
         return;
     }
     if (result.name == "spmm")
     {
-        DenseMatrix<float, Device::CPU> output(size, fixture.block.cols());
+        DenseStorage<float, Device::CPU> output(size, fixture.block.cols());
         runCpuModes(result, serial, omp, [&]() { spmm(fixture.matrix, fixture.block, output); });
         return;
     }
 
-    DenseMatrix<float, Device::CPU> solution(size, 1);
+    DenseStorage<float, Device::CPU> solution(size, 1);
     IterativeSolverOptions options;
     options.maxIterations = std::max(8, static_cast<int>(size));
     options.relativeTolerance = 1.0e-5;
@@ -246,4 +246,4 @@ void runRelease3Cases(Index size,
 }
 
 } // namespace detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

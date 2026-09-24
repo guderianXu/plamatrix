@@ -3,19 +3,19 @@
 #include <memory>
 #include <vector>
 
-#include "plamatrix/optimization/block_schur.h"
-#include "plamatrix/sparse/csr_matrix.h"
+#include "plamatrix/internal/optimization/block_schur.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
     template <typename Scalar>
     SchurComplementSolverReport<Scalar>
-    solveReducedSchurSparseDirect(const CSRMatrix<Scalar, Device::CPU>& matrix,
+    solveReducedSchurSparseDirect(const CsrStorage<Scalar, Device::CPU>& matrix,
                                   const std::vector<Scalar>& rhs,
                                   const SchurComplementSolverOptions<Scalar>& options,
                                   Index block_size,
                                   std::shared_ptr<void>& opaque_state,
                                   std::vector<Scalar>* solution);
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

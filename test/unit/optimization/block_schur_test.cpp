@@ -7,16 +7,16 @@
 
 #include <omp.h>
 
-#include "plamatrix/optimization/block_schur.h"
-#include "plamatrix/optimization/levenberg_marquardt.h"
-#include "plamatrix/optimization/robust_loss.h"
-#include "plamatrix/opencl/runtime.h"
+#include "plamatrix/internal/optimization/block_schur.h"
+#include "plamatrix/internal/optimization/levenberg_marquardt.h"
+#include "plamatrix/internal/optimization/robust_loss.h"
+#include "plamatrix/internal/opencl/runtime.h"
 
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime_api.h>
 #endif
 
-namespace plamatrix
+namespace plamatrix::internal
 {
     namespace
     {
@@ -865,4 +865,4 @@ namespace plamatrix
         }
 
     } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

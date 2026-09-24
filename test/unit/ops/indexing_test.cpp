@@ -4,7 +4,7 @@
 
 #include "indexing_test_utils.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -35,7 +35,7 @@ TEST(IndexingScanTest, UsesExclusiveColumnMajorLinearOrderAndAllowsNegativeCount
 
 TEST(IndexingScanTest, PreservesEmptyShape)
 {
-    const DenseMatrix<Index, Device::CPU> counts(0, 3);
+    const DenseStorage<Index, Device::CPU> counts(0, 3);
 
     const auto offsets = exclusiveScan(counts);
 
@@ -102,8 +102,8 @@ TYPED_TEST(IndexingTest, GatherRowsPreservesOrderDuplicatesAndAllColumns)
 TYPED_TEST(IndexingTest, GatherRowsSupportsEmptySelection)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(4, 2);
-    const DenseMatrix<Index, Device::CPU> indices(0, 1);
+    const DenseStorage<Scalar, Device::CPU> input(4, 2);
+    const DenseStorage<Index, Device::CPU> indices(0, 1);
 
     const auto gathered = gatherRows(input, indices);
 
@@ -114,7 +114,7 @@ TYPED_TEST(IndexingTest, GatherRowsSupportsMaximumRowsWithZeroColumns)
 {
     using Scalar = TypeParam;
     const Index maximum = std::numeric_limits<Index>::max();
-    const DenseMatrix<Scalar, Device::CPU> input(maximum, 0);
+    const DenseStorage<Scalar, Device::CPU> input(maximum, 0);
     const auto indices = makeMatrix<Index>(2, 1, {maximum - 1, Index(0)});
 
     const auto gathered = gatherRows(input, indices);
@@ -125,7 +125,7 @@ TYPED_TEST(IndexingTest, GatherRowsSupportsMaximumRowsWithZeroColumns)
 TYPED_TEST(IndexingTest, GatherRowsRejectsOutOfRangeIndices)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(3, 1);
+    const DenseStorage<Scalar, Device::CPU> input(3, 1);
     const auto negative = makeMatrix<Index>(1, 1, {-1});
     const auto too_large = makeMatrix<Index>(1, 1, {3});
 
@@ -136,8 +136,8 @@ TYPED_TEST(IndexingTest, GatherRowsRejectsOutOfRangeIndices)
 TYPED_TEST(IndexingTest, GatherRowsRequiresColumnVectorIndices)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(3, 1);
-    const DenseMatrix<Index, Device::CPU> indices(1, 2);
+    const DenseStorage<Scalar, Device::CPU> input(3, 1);
+    const DenseStorage<Index, Device::CPU> indices(1, 2);
 
     EXPECT_THROW(static_cast<void>(gatherRows(input, indices)), std::invalid_argument);
 }
@@ -166,8 +166,8 @@ TYPED_TEST(IndexingTest, ScatterRowsUsesLowestSourceAndPreservesUntouchedRows)
 TYPED_TEST(IndexingTest, ScatterRowsSupportsEmptySelection)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> values(0, 2);
-    const DenseMatrix<Index, Device::CPU> indices(0, 1);
+    const DenseStorage<Scalar, Device::CPU> values(0, 2);
+    const DenseStorage<Index, Device::CPU> indices(0, 1);
     auto output = makeMatrix<Scalar>(2, 2, {
         Scalar(1), Scalar(2), Scalar(3), Scalar(4)
     });
@@ -182,9 +182,9 @@ TYPED_TEST(IndexingTest, ScatterRowsDoesNotAllocateByOutputRowsForZeroColumns)
 {
     using Scalar = TypeParam;
     const Index maximum = std::numeric_limits<Index>::max();
-    const DenseMatrix<Scalar, Device::CPU> values(2, 0);
+    const DenseStorage<Scalar, Device::CPU> values(2, 0);
     const auto indices = makeMatrix<Index>(2, 1, {maximum - 1, Index(0)});
-    DenseMatrix<Scalar, Device::CPU> output(maximum, 0);
+    DenseStorage<Scalar, Device::CPU> output(maximum, 0);
 
     EXPECT_NO_THROW(scatterRows(values, indices, output));
     expectMatrix(output, maximum, 0, {});
@@ -193,11 +193,11 @@ TYPED_TEST(IndexingTest, ScatterRowsDoesNotAllocateByOutputRowsForZeroColumns)
 TYPED_TEST(IndexingTest, ScatterRowsRejectsShapeMismatches)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> wrong_rows(2, 2);
-    const DenseMatrix<Scalar, Device::CPU> wrong_cols(3, 1);
-    const DenseMatrix<Index, Device::CPU> indices(3, 1);
-    const DenseMatrix<Index, Device::CPU> wrong_indices(1, 3);
-    DenseMatrix<Scalar, Device::CPU> output(4, 2);
+    const DenseStorage<Scalar, Device::CPU> wrong_rows(2, 2);
+    const DenseStorage<Scalar, Device::CPU> wrong_cols(3, 1);
+    const DenseStorage<Index, Device::CPU> indices(3, 1);
+    const DenseStorage<Index, Device::CPU> wrong_indices(1, 3);
+    DenseStorage<Scalar, Device::CPU> output(4, 2);
 
     EXPECT_THROW(scatterRows(wrong_rows, indices, output), std::invalid_argument);
     EXPECT_THROW(scatterRows(wrong_cols, indices, output), std::invalid_argument);
@@ -262,8 +262,8 @@ TYPED_TEST(IndexingTest, CompactRowsSupportsNoneAndAllMasks)
 TYPED_TEST(IndexingTest, CompactRowsSupportsEmptyInput)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(0, 3);
-    const DenseMatrix<std::uint8_t, Device::CPU> mask(0, 1);
+    const DenseStorage<Scalar, Device::CPU> input(0, 3);
+    const DenseStorage<std::uint8_t, Device::CPU> mask(0, 1);
 
     const auto compacted = compactRows(input, mask);
 
@@ -274,7 +274,7 @@ TYPED_TEST(IndexingTest, CompactRowsSupportsEmptyInput)
 TYPED_TEST(IndexingTest, CompactRowsPreservesSelectedIndicesWithZeroColumns)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(4, 0);
+    const DenseStorage<Scalar, Device::CPU> input(4, 0);
     const auto mask = makeMatrix<std::uint8_t>(4, 1, {0, 1, 0, 2});
 
     const auto compacted = compactRows(input, mask);
@@ -286,13 +286,13 @@ TYPED_TEST(IndexingTest, CompactRowsPreservesSelectedIndicesWithZeroColumns)
 TYPED_TEST(IndexingTest, CompactRowsRejectsMaskShapeMismatch)
 {
     using Scalar = TypeParam;
-    const DenseMatrix<Scalar, Device::CPU> input(3, 2);
-    const DenseMatrix<std::uint8_t, Device::CPU> wrong_rows(2, 1);
-    const DenseMatrix<std::uint8_t, Device::CPU> wrong_cols(3, 2);
+    const DenseStorage<Scalar, Device::CPU> input(3, 2);
+    const DenseStorage<std::uint8_t, Device::CPU> wrong_rows(2, 1);
+    const DenseStorage<std::uint8_t, Device::CPU> wrong_cols(3, 2);
 
     EXPECT_THROW(static_cast<void>(compactRows(input, wrong_rows)), std::invalid_argument);
     EXPECT_THROW(static_cast<void>(compactRows(input, wrong_cols)), std::invalid_argument);
 }
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

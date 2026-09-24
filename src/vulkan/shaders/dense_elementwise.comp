@@ -1,0 +1,20 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer Left { float left_values[]; };
+layout(std430, binding = 1) readonly buffer Right { float right_values[]; };
+layout(std430, binding = 2) writeonly buffer Output { float output_values[]; };
+layout(push_constant) uniform Parameters
+{
+    uint count;
+    uint operation;
+    float factor;
+} parameters;
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= parameters.count) return;
+    if (parameters.operation == 0u) output_values[index] = left_values[index] + right_values[index];
+    else if (parameters.operation == 1u) output_values[index] = left_values[index] - right_values[index];
+    else if (parameters.operation == 2u) output_values[index] = left_values[index] * right_values[index];
+    else output_values[index] = left_values[index] * parameters.factor;
+}

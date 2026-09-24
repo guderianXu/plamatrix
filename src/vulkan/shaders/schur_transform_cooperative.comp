@@ -1,0 +1,52 @@
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PackedInput
+{
+    float16_t values[];
+}
+input_data;
+layout(set = 0, binding = 1, std430) readonly buffer CrossEliminated
+{
+    uint values[];
+}
+cross_eliminated;
+layout(set = 0, binding = 2, std430) writeonly buffer Transformed
+{
+    float values[];
+}
+transformed;
+
+layout(push_constant) uniform Parameters
+{
+    uint cross_count;
+    uint inverse_offset;
+}
+parameters;
+
+void main()
+{
+    const uint cross = gl_WorkGroupID.x;
+    if (cross >= parameters.cross_count)
+    {
+        return;
+    }
+    const uint offset = cross * 256u;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> matrix_cross;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> matrix_inverse;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> accumulator =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopMatLoad(matrix_cross, input_data.values, offset, 16u, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(matrix_inverse,
+                input_data.values,
+                parameters.inverse_offset + cross_eliminated.values[cross] * 256u,
+                16u,
+                gl_CooperativeMatrixLayoutRowMajor);
+    accumulator = coopMatMulAdd(matrix_cross, matrix_inverse, accumulator);
+    coopMatStore(accumulator, transformed.values, offset, 16u, gl_CooperativeMatrixLayoutRowMajor);
+}

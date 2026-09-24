@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -9,20 +10,21 @@
 #include <gtest/gtest.h>
 
 #include "plamatrix/plamatrix.h"
+#include "plamatrix/internal/backend.h"
 #include "../../support/cuda_test_utils.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace indexing_test_detail
 {
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> makeMatrix(
+DenseStorage<Scalar, Device::CPU> makeMatrix(
     Index rows,
     Index cols,
     std::initializer_list<Scalar> values)
 {
-    DenseMatrix<Scalar, Device::CPU> matrix(rows, cols);
+    DenseStorage<Scalar, Device::CPU> matrix(rows, cols);
     if (matrix.size() != static_cast<Index>(values.size()))
     {
         throw std::invalid_argument("makeMatrix: initializer length must match matrix size");
@@ -38,7 +40,7 @@ DenseMatrix<Scalar, Device::CPU> makeMatrix(
 
 template <typename Scalar>
 void expectMatrix(
-    const DenseMatrix<Scalar, Device::CPU>& actual,
+    const DenseStorage<Scalar, Device::CPU>& actual,
     Index rows,
     Index cols,
     std::initializer_list<Scalar> expected)
@@ -55,11 +57,11 @@ void expectMatrix(
 }
 
 #if defined(PLAMATRIX_USE_FLOAT) && defined(PLAMATRIX_USE_DOUBLE)
-using ScalarTypes = ::testing::Types<float, double>;
+using ScalarTypes = ::testing::Types<float, double, std::uint8_t, std::uint16_t, Index>;
 #elif defined(PLAMATRIX_USE_FLOAT)
-using ScalarTypes = ::testing::Types<float>;
+using ScalarTypes = ::testing::Types<float, std::uint8_t, std::uint16_t, Index>;
 #elif defined(PLAMATRIX_USE_DOUBLE)
-using ScalarTypes = ::testing::Types<double>;
+using ScalarTypes = ::testing::Types<double, std::uint8_t, std::uint16_t, Index>;
 #else
 #error "Indexing tests require PLAMATRIX_USE_FLOAT or PLAMATRIX_USE_DOUBLE"
 #endif
@@ -73,7 +75,7 @@ class IndexingTest : public ::testing::Test
 
 template <typename Scalar>
 void expectGpuMatrix(
-    const DenseMatrix<Scalar, Device::GPU>& actual,
+    const DenseStorage<Scalar, Device::GPU>& actual,
     Index rows,
     Index cols,
     std::initializer_list<Scalar> expected)
@@ -104,4 +106,4 @@ void expectLogicErrorContaining(
 #endif
 
 } // namespace indexing_test_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

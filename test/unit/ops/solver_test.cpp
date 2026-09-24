@@ -2,9 +2,10 @@
 
 #include <gtest/gtest.h>
 
-#include <plamatrix/ops/solver.h>
+#include <plamatrix/internal/ops/solver.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 // Solver: solve_2x2_Cpu — solve a simple 2x2 linear system on CPU
 TEST(Solver, solve_2x2_Cpu)
@@ -13,13 +14,13 @@ TEST(Solver, solve_2x2_Cpu)
     //   [ 4  1 ] [ x0 ]   [ 5 ]
     //   [ 2  3 ] [ x1 ] = [ 7 ]
     // Expected solution: x0 = 0.8, x1 = 1.8
-    DenseMatrix<double, Device::CPU> A(2, 2);
+    DenseStorage<double, Device::CPU> A(2, 2);
     A.setValue(0, 0, 4.0);
     A.setValue(1, 0, 2.0);
     A.setValue(0, 1, 1.0);
     A.setValue(1, 1, 3.0);
 
-    DenseMatrix<double, Device::CPU> B(2, 1);
+    DenseStorage<double, Device::CPU> B(2, 1);
     B.setValue(0, 0, 5.0);
     B.setValue(1, 0, 7.0);
 
@@ -44,13 +45,13 @@ TEST(Solver, solve_2x2_Cpu)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(Solver, solve_2x2_Gpu)
 {
-    DenseMatrix<double, Device::CPU> A_cpu(2, 2);
+    DenseStorage<double, Device::CPU> A_cpu(2, 2);
     A_cpu.setValue(0, 0, 4.0);
     A_cpu.setValue(1, 0, 2.0);
     A_cpu.setValue(0, 1, 1.0);
     A_cpu.setValue(1, 1, 3.0);
 
-    DenseMatrix<double, Device::CPU> B_cpu(2, 1);
+    DenseStorage<double, Device::CPU> B_cpu(2, 1);
     B_cpu.setValue(0, 0, 5.0);
     B_cpu.setValue(1, 0, 7.0);
 
@@ -82,13 +83,13 @@ TEST(Solver, solve_RhsMatrix_Cpu)
     Index n = 3;
     Index nrhs = 2;
 
-    DenseMatrix<double, Device::CPU> A(n, n);
+    DenseStorage<double, Device::CPU> A(n, n);
     for (Index i = 0; i < n; ++i)
     {
         A.setValue(i, i, 1.0);
     }
 
-    DenseMatrix<double, Device::CPU> B(n, nrhs);
+    DenseStorage<double, Device::CPU> B(n, nrhs);
     B.setValue(0, 0, 1.0);
     B.setValue(1, 0, 2.0);
     B.setValue(2, 0, 3.0);
@@ -111,3 +112,5 @@ TEST(Solver, solve_RhsMatrix_Cpu)
         }
     }
 }
+
+} // namespace plamatrix::internal

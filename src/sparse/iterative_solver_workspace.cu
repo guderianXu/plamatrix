@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -14,7 +14,7 @@ namespace
 std::atomic<int> forced_allocation_failure_after{-1};
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::GPU> allocateWorkspaceMatrixForTest(
+DenseStorage<Scalar, Device::GPU> allocateWorkspaceMatrixForTest(
     Index rows, cudaStream_t stream)
 {
     int remaining = forced_allocation_failure_after.load(std::memory_order_relaxed);
@@ -30,12 +30,12 @@ DenseMatrix<Scalar, Device::GPU> allocateWorkspaceMatrixForTest(
             break;
         }
     }
-    return DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(rows, 1, stream);
+    return DenseStorage<Scalar, Device::GPU>::uninitializedAsync(rows, 1, stream);
 }
 #endif
 
 template <typename Scalar>
-void closeMatrix(DenseMatrix<Scalar, Device::GPU>& matrix)
+void closeMatrix(DenseStorage<Scalar, Device::GPU>& matrix)
 {
     matrix.closeAsyncAllocation();
 }
@@ -49,13 +49,13 @@ void iterative_solver_detail::setForcedWorkspaceAllocationFailureAfter(
     forced_allocation_failure_after.store(successful_allocations, std::memory_order_relaxed);
 }
 
-DenseMatrix<float, Device::GPU> IterativeSolverWorkspaceAccess::allocateFloatForTest(
+DenseStorage<float, Device::GPU> IterativeSolverWorkspaceAccess::allocateFloatForTest(
     Index rows, cudaStream_t stream)
 {
     return allocateWorkspaceMatrixForTest<float>(rows, stream);
 }
 
-DenseMatrix<double, Device::GPU> IterativeSolverWorkspaceAccess::allocateDoubleForTest(
+DenseStorage<double, Device::GPU> IterativeSolverWorkspaceAccess::allocateDoubleForTest(
     Index rows, cudaStream_t stream)
 {
     return allocateWorkspaceMatrixForTest<double>(rows, stream);
@@ -226,4 +226,4 @@ template class IterativeSolverWorkspace<float>;
 template class IterativeSolverWorkspace<double>;
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

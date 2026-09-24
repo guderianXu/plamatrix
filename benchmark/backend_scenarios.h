@@ -5,23 +5,23 @@
 #include <utility>
 #include <vector>
 
-#include "plamatrix/dense/dense_matrix.h"
-#include "plamatrix/sparse/csr_matrix.h"
+#include "plamatrix/internal/dense/dense_storage.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
-namespace plamatrix::benchmark
+namespace plamatrix::internal::benchmark
 {
 
     struct BackendFixture
     {
         std::string scenario;
         Index parameter = 0;
-        CSRMatrix<float, Device::CPU> matrix;
-        DenseMatrix<float, Device::CPU> rhs;
+        CsrStorage<float, Device::CPU> matrix;
+        DenseStorage<float, Device::CPU> rhs;
 
         BackendFixture(std::string scenarioName,
                        Index scenarioParameter,
-                       CSRMatrix<float, Device::CPU>&& matrixValue,
-                       DenseMatrix<float, Device::CPU>&& rhsValue);
+                       CsrStorage<float, Device::CPU>&& matrixValue,
+                       DenseStorage<float, Device::CPU>&& rhsValue);
     };
 
     BackendFixture makeBackendFixture(const std::string& scenario, Index parameter);
@@ -30,4 +30,4 @@ namespace plamatrix::benchmark
 
     std::vector<std::pair<std::string, Index>> backendSuite();
 
-} // namespace plamatrix::benchmark
+} // namespace plamatrix::internal::benchmark

@@ -16,14 +16,16 @@
 #include <gtest/gtest.h>
 
 #include <plamatrix/plamatrix.h>
+#include <plamatrix/internal/backend.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 // ============================================================================
 // 二进制文件 I/O (与 generate_reference.py 格式一致)
 // ============================================================================
 
-DenseMatrix<double, Device::CPU> loadMatrix(const std::string& path)
+DenseStorage<double, Device::CPU> loadMatrix(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("Cannot open: " + path);
@@ -32,7 +34,7 @@ DenseMatrix<double, Device::CPU> loadMatrix(const std::string& path)
     f.read(reinterpret_cast<char*>(&rows), 8);
     f.read(reinterpret_cast<char*>(&cols), 8);
 
-    DenseMatrix<double, Device::CPU> mat(rows, cols);
+    DenseStorage<double, Device::CPU> mat(rows, cols);
     f.read(reinterpret_cast<char*>(mat.data()),
            static_cast<std::size_t>(rows * cols) * sizeof(double));
     return mat;
@@ -108,7 +110,7 @@ TEST(NumPyReference, svd_CompareWithScipy)
         EXPECT_NEAR(S(i,0), S_vec[static_cast<std::size_t>(i)], 1e-8);
 
     // 重构: A ≈ U * diag(S) * Vt
-    auto D_Vt = DenseMatrix<double, Device::CPU>(3, 3);
+    auto D_Vt = DenseStorage<double, Device::CPU>(3, 3);
     for (Index j = 0; j < 3; ++j)
         for (Index i = 0; i < 3; ++i)
             D_Vt(i,j) = S(i,0) * Vt(i,j);
@@ -205,7 +207,7 @@ TEST(NumPyReference, rotation_CompareWithNumPy)
 {
     auto R_ref = loadMatrix(REF + "rotation_R_ref.bin");
 
-    Vec3<double> axis{0.0, 0.0, 1.0};
+    PackedVector3<double> axis{0.0, 0.0, 1.0};
     double angle = 0.7853981633974483;  // 45 degrees
     auto R = rotationMatrix<double, Device::CPU>(axis, angle);
 
@@ -223,10 +225,10 @@ TEST(NumPyReference, transformPoints_CompareWithNumPy)
     auto pts = loadMatrix(REF + "transform_points_in.bin");
     auto pts_ref = loadMatrix(REF + "transform_points_ref.bin");
 
-    Vec3<double> axis{0.0, 0.0, 1.0};
+    PackedVector3<double> axis{0.0, 0.0, 1.0};
     double angle = 0.7853981633974483;
     auto R = rotationMatrix<double, Device::CPU>(axis, angle);
-    Vec3<double> t{10.0, 5.0, 3.0};
+    PackedVector3<double> t{10.0, 5.0, 3.0};
     auto T = rigidTransform<double, Device::CPU>(R, t);
 
     auto result = transformPoints<double, Device::CPU>(T, pts);
@@ -274,3 +276,5 @@ TEST(NumPyReference, gemm_CpuVsGpu)
                 << "CPU/GPU GEMM mismatch at (" << i << "," << j << ")";
 }
 #endif
+
+} // namespace plamatrix::internal

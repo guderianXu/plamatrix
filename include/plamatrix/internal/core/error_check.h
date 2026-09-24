@@ -1,0 +1,204 @@
+#pragma once
+
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
+#ifdef PLAMATRIX_NO_CUDA
+#include "plamatrix/internal/core/no_cuda_stubs.h"
+#else
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <cusolverDn.h>
+#include <cusparse.h>
+#endif
+
+namespace plamatrix::internal
+{
+
+#ifdef PLAMATRIX_WITH_CUDA
+
+/// Check CUDA runtime API error. Throws std::runtime_error with file/line/expression details on failure.
+inline void cudaCheck(cudaError_t err, const char* file, int line, const char* expr)
+{
+    if (err != cudaSuccess)
+    {
+        const char* const error_string = cudaGetErrorString(err);
+        static_cast<void>(cudaGetLastError());
+        std::ostringstream oss;
+        oss << "CUDA error at " << file << ":" << line
+            << " (" << expr << "): " << error_string;
+        throw std::runtime_error(oss.str());
+    }
+}
+
+namespace detail
+{
+
+inline const char* cublasStatusString(cublasStatus_t stat)
+{
+    switch (stat)
+    {
+    case CUBLAS_STATUS_SUCCESS:          return "CUBLAS_STATUS_SUCCESS";
+    case CUBLAS_STATUS_NOT_INITIALIZED:  return "CUBLAS_STATUS_NOT_INITIALIZED";
+    case CUBLAS_STATUS_ALLOC_FAILED:     return "CUBLAS_STATUS_ALLOC_FAILED";
+    case CUBLAS_STATUS_INVALID_VALUE:    return "CUBLAS_STATUS_INVALID_VALUE";
+    case CUBLAS_STATUS_ARCH_MISMATCH:    return "CUBLAS_STATUS_ARCH_MISMATCH";
+    case CUBLAS_STATUS_MAPPING_ERROR:    return "CUBLAS_STATUS_MAPPING_ERROR";
+    case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+    case CUBLAS_STATUS_INTERNAL_ERROR:   return "CUBLAS_STATUS_INTERNAL_ERROR";
+    case CUBLAS_STATUS_NOT_SUPPORTED:    return "CUBLAS_STATUS_NOT_SUPPORTED";
+    case CUBLAS_STATUS_LICENSE_ERROR:    return "CUBLAS_STATUS_LICENSE_ERROR";
+    default:                             return "UNKNOWN_CUBLAS_STATUS";
+    }
+}
+
+inline const char* cusolverStatusString(cusolverStatus_t stat)
+{
+    switch (stat)
+    {
+    case CUSOLVER_STATUS_SUCCESS:                return "CUSOLVER_STATUS_SUCCESS";
+    case CUSOLVER_STATUS_NOT_INITIALIZED:        return "CUSOLVER_STATUS_NOT_INITIALIZED";
+    case CUSOLVER_STATUS_ALLOC_FAILED:           return "CUSOLVER_STATUS_ALLOC_FAILED";
+    case CUSOLVER_STATUS_INVALID_VALUE:          return "CUSOLVER_STATUS_INVALID_VALUE";
+    case CUSOLVER_STATUS_ARCH_MISMATCH:          return "CUSOLVER_STATUS_ARCH_MISMATCH";
+    case CUSOLVER_STATUS_MAPPING_ERROR:          return "CUSOLVER_STATUS_MAPPING_ERROR";
+    case CUSOLVER_STATUS_EXECUTION_FAILED:       return "CUSOLVER_STATUS_EXECUTION_FAILED";
+    case CUSOLVER_STATUS_INTERNAL_ERROR:         return "CUSOLVER_STATUS_INTERNAL_ERROR";
+    case CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED: return "CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+    case CUSOLVER_STATUS_NOT_SUPPORTED:          return "CUSOLVER_STATUS_NOT_SUPPORTED";
+    case CUSOLVER_STATUS_ZERO_PIVOT:             return "CUSOLVER_STATUS_ZERO_PIVOT";
+    case CUSOLVER_STATUS_INVALID_LICENSE:        return "CUSOLVER_STATUS_INVALID_LICENSE";
+    default:                                     return "UNKNOWN_CUSOLVER_STATUS";
+    }
+}
+
+inline const char* cusparseStatusString(cusparseStatus_t stat)
+{
+#if defined(CUSPARSE_VERSION) && CUSPARSE_VERSION >= 10300
+    if (const char* const message = cusparseGetErrorString(stat))
+    {
+        return message;
+    }
+#endif
+    switch (stat)
+    {
+    case CUSPARSE_STATUS_SUCCESS:                   return "CUSPARSE_STATUS_SUCCESS";
+    case CUSPARSE_STATUS_NOT_INITIALIZED:           return "CUSPARSE_STATUS_NOT_INITIALIZED";
+    case CUSPARSE_STATUS_ALLOC_FAILED:              return "CUSPARSE_STATUS_ALLOC_FAILED";
+    case CUSPARSE_STATUS_INVALID_VALUE:             return "CUSPARSE_STATUS_INVALID_VALUE";
+    case CUSPARSE_STATUS_ARCH_MISMATCH:             return "CUSPARSE_STATUS_ARCH_MISMATCH";
+    case CUSPARSE_STATUS_MAPPING_ERROR:             return "CUSPARSE_STATUS_MAPPING_ERROR";
+    case CUSPARSE_STATUS_EXECUTION_FAILED:          return "CUSPARSE_STATUS_EXECUTION_FAILED";
+    case CUSPARSE_STATUS_INTERNAL_ERROR:            return "CUSPARSE_STATUS_INTERNAL_ERROR";
+    case CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED: return "CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+    case CUSPARSE_STATUS_ZERO_PIVOT:                return "CUSPARSE_STATUS_ZERO_PIVOT";
+    default:                                        return "UNKNOWN_CUSPARSE_STATUS";
+    }
+}
+
+} // namespace detail
+
+/// Check cuBLAS API error. Throws std::runtime_error with file/line/expression details on failure.
+inline void cublasCheck(cublasStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUBLAS_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuBLAS error at " << file << ":" << line
+            << " (" << expr << "): " << detail::cublasStatusString(stat)
+            << " (" << static_cast<int>(stat) << ")";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuSOLVER API error. Throws std::runtime_error with file/line/expression details on failure.
+inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSOLVER_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSOLVER error at " << file << ":" << line
+            << " (" << expr << "): " << detail::cusolverStatusString(stat)
+            << " (" << static_cast<int>(stat) << ")";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuSPARSE API error. Throws std::runtime_error with file/line/expression details on failure.
+inline void cusparseCheck(cusparseStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSPARSE_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSPARSE error at " << file << ":" << line
+            << " (" << expr << "): " << detail::cusparseStatusString(stat)
+            << " (" << static_cast<int>(stat) << ")";
+        throw std::runtime_error(oss.str());
+    }
+}
+
+#define PLAMATRIX_CHECK_CUDA(call)    plamatrix::internal::cudaCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::internal::cublasCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::internal::cusolverCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSPARSE(call) plamatrix::internal::cusparseCheck((call), __FILE__, __LINE__, #call)
+
+#else  // !PLAMATRIX_WITH_CUDA — checked stub fallbacks
+
+/// Check CUDA stub API errors in CPU-only builds.
+inline void cudaCheck(cudaError_t err, const char* file, int line, const char* expr)
+{
+    if (err != cudaSuccess)
+    {
+        std::ostringstream oss;
+        oss << "CUDA stub error at " << file << ":" << line
+            << " (" << expr << "): " << cudaGetErrorString(err);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuBLAS stub API errors in CPU-only builds.
+inline void cublasCheck(cublasStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUBLAS_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuBLAS stub error at " << file << ":" << line
+            << " (" << expr << "): status " << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Check cuSOLVER stub API errors in CPU-only builds.
+inline void cusolverCheck(cusolverStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSOLVER_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSOLVER stub error at " << file << ":" << line
+            << " (" << expr << "): status " << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+/// Report unavailable cuSPARSE backend errors in CPU-only builds.
+inline void cusparseCheck(cusparseStatus_t stat, const char* file, int line, const char* expr)
+{
+    if (stat != CUSPARSE_STATUS_SUCCESS)
+    {
+        std::ostringstream oss;
+        oss << "cuSPARSE stub error at " << file << ":" << line
+            << " (" << expr << "): backend unavailable, status "
+            << static_cast<int>(stat);
+        throw std::runtime_error(oss.str());
+    }
+}
+
+#define PLAMATRIX_CHECK_CUDA(call)    plamatrix::internal::cudaCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUBLAS(call)  plamatrix::internal::cublasCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSOLVER(call) plamatrix::internal::cusolverCheck((call), __FILE__, __LINE__, #call)
+#define PLAMATRIX_CHECK_CUSPARSE(call) plamatrix::internal::cusparseCheck((call), __FILE__, __LINE__, #call)
+
+#endif // PLAMATRIX_WITH_CUDA
+
+} // namespace plamatrix::internal

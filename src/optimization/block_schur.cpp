@@ -1,13 +1,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "plamatrix/optimization/block_schur.h"
+#include "plamatrix/internal/optimization/block_schur.h"
 
 #include "block_schur_accelerated.h"
 #include "block_schur_cpu_solver.h"
@@ -19,10 +21,10 @@
 #ifdef PLAMATRIX_WITH_CUDA
 #include <cuda_runtime_api.h>
 
-#include "plamatrix/core/error_check.h"
+#include "plamatrix/internal/core/error_check.h"
 #endif
 
-namespace plamatrix
+namespace plamatrix::internal
 {
     namespace
     {
@@ -31,8 +33,7 @@ namespace plamatrix
         class ScopedCudaDevice
         {
         public:
-            explicit ScopedCudaDevice(int requested)
-                : _previous(-1)
+            explicit ScopedCudaDevice(int requested) : _previous(-1)
             {
                 PLAMATRIX_CHECK_CUDA(cudaGetDevice(&_previous));
                 if (requested >= 0 && requested != _previous)
@@ -58,6 +59,17 @@ namespace plamatrix
         using block_schur_detail::addTransposeMatrixVector;
         using block_schur_detail::invertPositiveDefinite;
         using block_schur_detail::multiplyMatrixVector;
+
+        bool useVulkanDeviceBlockJacobi(SchurComplementLinearBackend backend, Index primary_size)
+        {
+            if (backend != SchurComplementLinearBackend::Vulkan || primary_size != 9)
+                return false;
+            const char* spmv_mode = std::getenv("PLAMATRIX_VULKAN_SPMV");
+            if (spmv_mode && std::strcmp(spmv_mode, "auto") != 0 && std::strcmp(spmv_mode, "block") != 0)
+                return false;
+            const char* jacobi_mode = std::getenv("PLAMATRIX_VULKAN_BLOCK_JACOBI");
+            return !jacobi_mode || std::strcmp(jacobi_mode, "auto") == 0 || std::strcmp(jacobi_mode, "gpu") == 0;
+        }
 
     } // namespace
     template <typename Scalar>
@@ -91,6 +103,13 @@ namespace plamatrix
             options.preconditionerClusterSize <= 0)
         {
             throw std::invalid_argument("solveDampedSchurComplement: invalid solver options");
+        }
+        if (options.linearBackend == SchurComplementLinearBackend::Vulkan)
+        {
+            if (!options.useMixedPrecision)
+            {
+                throw std::invalid_argument("Vulkan Schur requires useMixedPrecision=true");
+            }
         }
 
 #ifdef PLAMATRIX_WITH_CUDA
@@ -189,8 +208,10 @@ namespace plamatrix
         std::vector<std::vector<Scalar>> preconditioner_inverse;
         std::vector<std::vector<Scalar>> cluster_preconditioner_inverse;
         Index preconditioner_cluster_size = 1;
+        const bool device_block_jacobi =
+            std::is_same_v<Scalar, float> && useVulkanDeviceBlockJacobi(options.linearBackend, primary_size);
         if (options.linearBackend != SchurComplementLinearBackend::DenseCpu &&
-            options.linearBackend != SchurComplementLinearBackend::SparseCpu)
+            options.linearBackend != SchurComplementLinearBackend::SparseCpu && !device_block_jacobi)
         {
             preconditioner_inverse.resize(static_cast<std::size_t>(primary_count));
             std::vector<std::vector<std::size_t>> primary_adjacency(static_cast<std::size_t>(primary_count));
@@ -665,4 +686,4 @@ namespace plamatrix
                                                                             std::vector<double>*,
                                                                             std::vector<double>*);
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

@@ -7,13 +7,13 @@
 
 #include <omp.h>
 
-#include "plamatrix/core/parallel.h"
-#include "plamatrix/core/checked_math.h"
-#include "plamatrix/ops/gemm.h"
+#include "plamatrix/internal/core/parallel.h"
+#include "plamatrix/internal/core/checked_math.h"
+#include "plamatrix/internal/ops/gemm.h"
 
 #include "gemm_microkernel.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 namespace
@@ -158,9 +158,24 @@ void nativeGemm(const Scalar* A_data,
 
 } // anonymous namespace
 
+namespace detail
+{
+
+void cpuGemm(const float* left, const float* right, float* output, Index rows, Index columns, Index inner)
+{
+    nativeGemm(left, right, output, rows, columns, inner);
+}
+
+void cpuGemm(const double* left, const double* right, double* output, Index rows, Index columns, Index inner)
+{
+    nativeGemm(left, right, output, rows, columns, inner);
+}
+
+} // namespace detail
+
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
-                                       const DenseMatrix<Scalar, Device::CPU>& B)
+DenseStorage<Scalar, Device::CPU> gemm(const DenseStorage<Scalar, Device::CPU>& A,
+                                       const DenseStorage<Scalar, Device::CPU>& B)
 {
     Index m = A.rows();
     Index k = A.cols();
@@ -174,9 +189,15 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
         throw std::runtime_error(oss.str());
     }
 
-    auto C = DenseMatrix<Scalar, Device::CPU>::uninitialized(m, n);
-    if (m == 0 || n == 0 || k == 0)
+    auto C = DenseStorage<Scalar, Device::CPU>::uninitialized(m, n);
+    if (m == 0 || n == 0)
     {
+        return C;
+    }
+
+    if (k == 0)
+    {
+        C.fill(Scalar(0));
         return C;
     }
 
@@ -191,13 +212,13 @@ DenseMatrix<Scalar, Device::CPU> gemm(const DenseMatrix<Scalar, Device::CPU>& A,
 
 // Explicit template instantiations
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::CPU> gemm(const DenseMatrix<float, Device::CPU>&,
-                                                const DenseMatrix<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> gemm(const DenseStorage<float, Device::CPU>&,
+                                                const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::CPU> gemm(const DenseMatrix<double, Device::CPU>&,
-                                                 const DenseMatrix<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> gemm(const DenseStorage<double, Device::CPU>&,
+                                                 const DenseStorage<double, Device::CPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

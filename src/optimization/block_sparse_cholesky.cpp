@@ -10,9 +10,9 @@
 
 #include <omp.h>
 
-#include "plamatrix/core/checked_math.h"
+#include "plamatrix/internal/core/checked_math.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
     namespace
     {
@@ -549,4 +549,4 @@ namespace plamatrix::block_schur_detail
         _factorized = false;
     }
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

@@ -6,8 +6,9 @@ PlaMatrix 是一个面向点云处理的高性能矩阵运算库。它在 CPU �
 
 ### 核心优势
 
-- **双设备统一 API**：同一套模板代码编译出 CPU 和 GPU 两个版本，接口一致
-- **显式设备管理**：`toCpu()` / `toGpu()` 明确标记数据传输，不隐藏开销
+- **直观的矩阵 API**：`MatrixXd`、`Vector3d`、工厂函数和算术运算符表达常见线性代数计算
+- **自动选择设备**：日常密集运算在 CPU/CUDA 间选择，应用无需指定设备
+- **底层设备控制**：后端维护者通过 `plamatrix::internal` 管理设备、stream 和工作区
 - **点云场景定制**：内置旋转矩阵、刚体变换、协方差矩阵等点云常用运算
 - **性能可量化**：内置三层基准测试工具，自动生成性能报告
 
@@ -16,11 +17,14 @@ PlaMatrix 是一个面向点云处理的高性能矩阵运算库。它在 CPU �
 | 文档 | 内容 |
 |------|------|
 | [编译指南](build.md) | 依赖安装、CMake 选项、各平台编译步骤 |
-| [DenseMatrix API](api/dense-matrix.md) | 密集矩阵：构造、访问、填充、转置、设备传输 |
-| [稀疏矩阵 API](api/sparse-matrix.md) | COO / CSR 格式、构建与转换 |
+| [密集矩阵 API](api/dense-matrix.md) | `Matrix`、运算符、自动求值与表达式 |
+| [稀疏矩阵 API](api/sparse-matrix.md) | Triplet、SparseMatrix、迭代与直接求解器 |
 | [线性代数 API](api/linear-algebra.md) | 矩阵乘法 (gemm)、SVD、QR、特征值、线性求解 |
+| [Geometry API](api/geometry.md) | Quaternion、AngleAxis、Transform、欧拉角与 Umeyama |
 | [非线性优化 API](api/optimization.md) | 鲁棒损失、二分块法方程、Schur-PCG、LM 阻尼策略 |
-| [三维向量与点云运算 API](api/point-cloud.md) | Vec3 算术、旋转矩阵、刚体变换、点变换、协方差 |
+| [Vulkan cooperative matrix API](api/vulkan-cooperative-matrix.md) | Tensor Core 类硬件探测、16×16 批量乘法、设备常驻 Schur 与 FP32 回退 |
+| [三维向量与点云运算 API](api/point-cloud.md) | 内部 PackedVector3 算术、旋转矩阵、刚体变换、点变换、协方差 |
+| [后端实现接口](api/backend-internals.md) | 内部存储、执行上下文和原语；不属于公开契约 |
 | [代码架构](architecture.md) | 内部实现详解：算法、数据流、内存管理、CUDA kernel |
 | [贡献指南](contributing.md) | 编码规范、TDD 流程、PR 清单 |
 
@@ -28,28 +32,13 @@ PlaMatrix 是一个面向点云处理的高性能矩阵运算库。它在 CPU �
 
 ```cpp
 #include <plamatrix/plamatrix.h>
-using namespace plamatrix;
 
 int main()
 {
-    // 1. 创建 CPU 矩阵并填充
-    DenseMatrix<float, Device::CPU> A(1000, 1000);
-    DenseMatrix<float, Device::CPU> B(1000, 1000);
-    A.fill(1.0f);
-    B.fill(2.0f);
-
-    // 2. CPU 逐元素加法 (自动 OpenMP 并行)
-    auto C = add(A, B);
-
-    // 3. 转移到 GPU 做矩阵乘法
-    auto A_gpu = A.toGpu();
-    auto B_gpu = B.toGpu();
-    auto D_gpu = gemm(A_gpu, B_gpu);  // cuBLAS Sgemm
-
-    // 4. 取回结果
-    auto D = D_gpu.toCpu();
-
-    return 0;
+    plamatrix::MatrixXf a = plamatrix::MatrixXf::Ones(512, 512);
+    plamatrix::MatrixXf b = plamatrix::MatrixXf::Identity(512, 512);
+    auto result = a * b;
+    return result.rows() == 512 ? 0 : 1;
 }
 ```
 

@@ -6,14 +6,14 @@
 #include <utility>
 #include <vector>
 
-#include "plamatrix/ops/indexing.h"
+#include "plamatrix/internal/ops/indexing.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
 
-void validateIndexVector(const DenseMatrix<Index, Device::CPU>& indices, const char* operation)
+void validateIndexVector(const DenseStorage<Index, Device::CPU>& indices, const char* operation)
 {
     if (indices.cols() != 1)
     {
@@ -22,7 +22,7 @@ void validateIndexVector(const DenseMatrix<Index, Device::CPU>& indices, const c
 }
 
 void validateIndexRange(
-    const DenseMatrix<Index, Device::CPU>& indices,
+    const DenseStorage<Index, Device::CPU>& indices,
     Index row_count,
     const char* operation)
 {
@@ -38,10 +38,10 @@ void validateIndexRange(
 
 } // namespace
 
-DenseMatrix<Index, Device::CPU> exclusiveScan(
-    const DenseMatrix<Index, Device::CPU>& counts)
+DenseStorage<Index, Device::CPU> exclusiveScan(
+    const DenseStorage<Index, Device::CPU>& counts)
 {
-    DenseMatrix<Index, Device::CPU> result(counts.rows(), counts.cols());
+    DenseStorage<Index, Device::CPU> result(counts.rows(), counts.cols());
     Index prefix = 0;
     for (Index offset = 0; offset < counts.size(); ++offset)
     {
@@ -58,14 +58,14 @@ DenseMatrix<Index, Device::CPU> exclusiveScan(
 }
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> gatherRows(
-    const DenseMatrix<Scalar, Device::CPU>& input,
-    const DenseMatrix<Index, Device::CPU>& indices)
+DenseStorage<Scalar, Device::CPU> gatherRows(
+    const DenseStorage<Scalar, Device::CPU>& input,
+    const DenseStorage<Index, Device::CPU>& indices)
 {
     validateIndexVector(indices, "gatherRows");
     validateIndexRange(indices, input.rows(), "gatherRows");
 
-    DenseMatrix<Scalar, Device::CPU> result(indices.rows(), input.cols());
+    DenseStorage<Scalar, Device::CPU> result(indices.rows(), input.cols());
     for (Index col = 0; col < input.cols(); ++col)
     {
         for (Index output_row = 0; output_row < indices.rows(); ++output_row)
@@ -80,9 +80,9 @@ DenseMatrix<Scalar, Device::CPU> gatherRows(
 
 template <typename Scalar>
 void scatterRows(
-    const DenseMatrix<Scalar, Device::CPU>& values,
-    const DenseMatrix<Index, Device::CPU>& indices,
-    DenseMatrix<Scalar, Device::CPU>& output)
+    const DenseStorage<Scalar, Device::CPU>& values,
+    const DenseStorage<Index, Device::CPU>& indices,
+    DenseStorage<Scalar, Device::CPU>& output)
 {
     validateIndexVector(indices, "scatterRows");
     if (values.rows() != indices.rows() || values.cols() != output.cols())
@@ -130,8 +130,8 @@ void scatterRows(
 
 template <typename Scalar>
 CompactRowsResult<Scalar, Device::CPU> compactRows(
-    const DenseMatrix<Scalar, Device::CPU>& input,
-    const DenseMatrix<std::uint8_t, Device::CPU>& keep_mask)
+    const DenseStorage<Scalar, Device::CPU>& input,
+    const DenseStorage<std::uint8_t, Device::CPU>& keep_mask)
 {
     if (keep_mask.cols() != 1 || keep_mask.rows() != input.rows())
     {
@@ -148,8 +148,8 @@ CompactRowsResult<Scalar, Device::CPU> compactRows(
     }
 
     CompactRowsResult<Scalar, Device::CPU> result{
-        DenseMatrix<Scalar, Device::CPU>(selected_count, input.cols()),
-        DenseMatrix<Index, Device::CPU>(selected_count, 1)
+        DenseStorage<Scalar, Device::CPU>(selected_count, input.cols()),
+        DenseStorage<Index, Device::CPU>(selected_count, 1)
     };
     Index output_row = 0;
     for (Index source_row = 0; source_row < input.rows(); ++source_row)
@@ -171,29 +171,45 @@ CompactRowsResult<Scalar, Device::CPU> compactRows(
 }
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::CPU> gatherRows(
-    const DenseMatrix<float, Device::CPU>&,
-    const DenseMatrix<Index, Device::CPU>&);
+template DenseStorage<float, Device::CPU> gatherRows(
+    const DenseStorage<float, Device::CPU>&,
+    const DenseStorage<Index, Device::CPU>&);
 template void scatterRows(
-    const DenseMatrix<float, Device::CPU>&,
-    const DenseMatrix<Index, Device::CPU>&,
-    DenseMatrix<float, Device::CPU>&);
+    const DenseStorage<float, Device::CPU>&,
+    const DenseStorage<Index, Device::CPU>&,
+    DenseStorage<float, Device::CPU>&);
 template CompactRowsResult<float, Device::CPU> compactRows(
-    const DenseMatrix<float, Device::CPU>&,
-    const DenseMatrix<std::uint8_t, Device::CPU>&);
+    const DenseStorage<float, Device::CPU>&,
+    const DenseStorage<std::uint8_t, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::CPU> gatherRows(
-    const DenseMatrix<double, Device::CPU>&,
-    const DenseMatrix<Index, Device::CPU>&);
+template DenseStorage<double, Device::CPU> gatherRows(
+    const DenseStorage<double, Device::CPU>&,
+    const DenseStorage<Index, Device::CPU>&);
 template void scatterRows(
-    const DenseMatrix<double, Device::CPU>&,
-    const DenseMatrix<Index, Device::CPU>&,
-    DenseMatrix<double, Device::CPU>&);
+    const DenseStorage<double, Device::CPU>&,
+    const DenseStorage<Index, Device::CPU>&,
+    DenseStorage<double, Device::CPU>&);
 template CompactRowsResult<double, Device::CPU> compactRows(
-    const DenseMatrix<double, Device::CPU>&,
-    const DenseMatrix<std::uint8_t, Device::CPU>&);
+    const DenseStorage<double, Device::CPU>&,
+    const DenseStorage<std::uint8_t, Device::CPU>&);
 #endif
 
-} // namespace plamatrix
+#define PLAMATRIX_INSTANTIATE_CPU_INDEXING(Scalar)                                    \
+    template DenseStorage<Scalar, Device::CPU> gatherRows(                             \
+        const DenseStorage<Scalar, Device::CPU>&, const DenseStorage<Index, Device::CPU>&); \
+    template void scatterRows(                                                        \
+        const DenseStorage<Scalar, Device::CPU>&, const DenseStorage<Index, Device::CPU>&, \
+        DenseStorage<Scalar, Device::CPU>&);                                            \
+    template CompactRowsResult<Scalar, Device::CPU> compactRows(                      \
+        const DenseStorage<Scalar, Device::CPU>&,                                      \
+        const DenseStorage<std::uint8_t, Device::CPU>&)
+
+PLAMATRIX_INSTANTIATE_CPU_INDEXING(std::uint8_t);
+PLAMATRIX_INSTANTIATE_CPU_INDEXING(std::uint16_t);
+PLAMATRIX_INSTANTIATE_CPU_INDEXING(Index);
+
+#undef PLAMATRIX_INSTANTIATE_CPU_INDEXING
+
+} // namespace plamatrix::internal

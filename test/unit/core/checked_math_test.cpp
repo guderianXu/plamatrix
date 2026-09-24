@@ -2,9 +2,9 @@
 
 #include <gtest/gtest.h>
 
-#include "plamatrix/core/checked_math.h"
+#include "plamatrix/internal/core/checked_math.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 TEST(CheckedMath, RejectsIndexOverflow)
@@ -21,4 +21,4 @@ TEST(CheckedMath, RejectsSizeOverflow)
     EXPECT_EQ(detail::checkedSizeMul(3, 4, "test"), 12U);
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

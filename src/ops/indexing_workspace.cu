@@ -5,7 +5,7 @@
 
 #include "indexing_detail.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -305,4 +305,4 @@ bool indexing_detail::IndexingWorkspaceAccess::beginStatusBatch(
     return true;
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

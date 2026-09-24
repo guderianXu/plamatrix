@@ -1,4 +1,6 @@
-# 非线性优化 API
+# 非线性优化 API（内部实现）
+
+本页描述 `plamatrix::internal` 实现接口，需显式包含 `plamatrix/internal/...` 头文件；不属于 Eigen 风格公开契约。BA 业务由 PlaBundle 负责，点云体素归组由 PlaPoint 负责。
 
 PlaMatrix 的 optimization 模块提供与具体业务无关的非线性最小二乘基础设施。它不知道相机、点云
 或摄影测量模型；调用方负责计算残差和雅可比，并把线性化结果写入块法方程。
@@ -35,11 +37,17 @@ PlaMatrix 的 optimization 模块提供与具体业务无关的非线性最小�
 - `Cuda`：CPU 校验/缓存 CSR 拓扑，CUDA kernel 先按 cross row 复用 3×3 消元变换并装配 Schur 数值，
   再使用 cuSPARSE 支撑的块 Jacobi-PCG；PCG 合并向量更新，并按批读取设备端首个收敛状态。
 - `OpenCl`：CPU 校验/缓存相同拓扑，OpenCL kernel 装配 Schur 数值，再在所选 GPU 上完成块 Jacobi-PCG。
+- `Vulkan`：上传紧凑块后在 GPU 内补零并转换为 FP16，使用 KHR cooperative matrix 和 FP32 累加装配
+  Schur values；PCG 直接绑定装配输出，装配、初始化和首批 8 次迭代共用一次提交。固定拓扑会跳过索引
+  转换与上传；9×9 Schur 矩阵自动使用 BSR-style block SpMV，numerical-only 首批路径和后续完整迭代
+  批次均复用 command buffer。GPU 会从 Schur 对角块直接执行 9×9 Cholesky 求逆，供 block-Jacobi 使用，
+  因而不再计算或上传 CPU primary 逆块。
 
-`SparseCpu` 是不依赖第三方稀疏库的内置能力；CUDA/OpenCL 不可用或设备索引不匹配时会抛出明确异常，
+`SparseCpu` 是不依赖第三方稀疏库的内置能力；CUDA/OpenCL/Vulkan 不可用或设备选择不匹配时会抛出明确异常，
 不会隐式执行 CPU。调用方可用 `hasSparseDirectSchurSolver()` 查询能力。报告包含实际后端、设备名、
-收敛状态、迭代数、初末残差范数、Schur CSR pattern 是否复用、数值是否在设备装配、组装耗时和线性求解耗时。报告还分别记录 eliminated 小块求逆、Schur 数值累加、CSR 转换、Cholesky 分解、三角回代、残差复核和 eliminated 变量回代；`DenseCpu` 的 CSR 转换时间为零。各路径都支持显式实例化的
-`float` 和 `double`；OpenCL `double` 需要设备支持 FP64。
+收敛状态、迭代数、初末残差范数、Schur CSR pattern 是否复用、数值是否在设备装配、组装耗时和线性求解耗时。`blockSpmvUsed` 和 `deviceBlockJacobiUsed` 分别标识 Vulkan 块 SpMV 与 GPU 逆块构造。报告还分别记录 eliminated 小块求逆、Schur 数值累加、CSR 转换、Cholesky 分解、三角回代、残差复核和 eliminated 变量回代；`DenseCpu` 的 CSR 转换时间为零。各路径都支持显式实例化的
+`float` 和 `double`；OpenCL `double` 需要设备支持 FP64。Vulkan Schur 当前只接受 `float`、块边长
+1 到 16，并要求调用方设置 `useMixedPrecision=true`，不满足条件时抛出明确异常。
 
 调用方需要重复求解相同变量邻接、不同数值或阻尼的系统时，可复用
 `SchurComplementSolverWorkspace`。workspace 缓存经过完整拓扑签名校验的 CSR row/column pattern、
@@ -50,7 +58,7 @@ CPU 稀疏装配以哈希去重、排序恢复确定性 block slot，并用 pref
 RHS 非零则求解明确失败。直接解未通过严格残差复核时，最多复用同一因子执行 3 次迭代精化。
 稠密装配把每个
 下三角 block slot 分配给唯一线程，slot 内按固定 term 顺序累加，所以 OpenMP 线程数变化不会改变求和顺序。
-通用 CUDA/OpenCL
+通用 CUDA/OpenCL/Vulkan
 `blockPcg()` 也可接收调用方提供的连续 row-major 逆对角块。
 
 ## LM 阻尼策略

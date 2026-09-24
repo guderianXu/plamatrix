@@ -7,10 +7,10 @@
 #include <type_traits>
 #include <utility>
 
-#include "plamatrix/core/error_check.h"
-#include "plamatrix/sparse/iterative_solver.h"
+#include "plamatrix/internal/core/error_check.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
     namespace iterative_solver_detail
     {
@@ -50,9 +50,9 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        void validateSystem(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                            const DenseMatrix<Scalar, Device::GPU>& rhs,
-                            const DenseMatrix<Scalar, Device::GPU>& solution,
+        void validateSystem(const CsrStorage<Scalar, Device::GPU>& matrix,
+                            const DenseStorage<Scalar, Device::GPU>& rhs,
+                            const DenseStorage<Scalar, Device::GPU>& solution,
                             cudaStream_t stream,
                             bool require_prevalidated_structure)
         {
@@ -93,11 +93,11 @@ namespace plamatrix
     struct IterativeSolverWorkspaceAccess
     {
 #ifdef PLAMATRIX_ITERATIVE_SOLVER_TEST_HOOKS
-        static DenseMatrix<float, Device::GPU> allocateFloatForTest(Index rows, cudaStream_t stream);
-        static DenseMatrix<double, Device::GPU> allocateDoubleForTest(Index rows, cudaStream_t stream);
+        static DenseStorage<float, Device::GPU> allocateFloatForTest(Index rows, cudaStream_t stream);
+        static DenseStorage<double, Device::GPU> allocateDoubleForTest(Index rows, cudaStream_t stream);
 #endif
 
-        template <typename Scalar> static DenseMatrix<Scalar, Device::GPU> allocate(Index rows, cudaStream_t stream)
+        template <typename Scalar> static DenseStorage<Scalar, Device::GPU> allocate(Index rows, cudaStream_t stream)
         {
 #ifdef PLAMATRIX_ITERATIVE_SOLVER_TEST_HOOKS
             if constexpr (std::is_same_v<Scalar, float>)
@@ -109,37 +109,37 @@ namespace plamatrix
                 return allocateDoubleForTest(rows, stream);
             }
 #else
-            return DenseMatrix<Scalar, Device::GPU>::uninitializedAsync(rows, 1, stream);
+            return DenseStorage<Scalar, Device::GPU>::uninitializedAsync(rows, 1, stream);
 #endif
         }
 
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& residual(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& residual(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._residual;
         }
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& direction(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& direction(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._direction;
         }
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& transformed(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& transformed(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._transformed;
         }
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& matrixDirection(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& matrixDirection(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._matrixDirection;
         }
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& inverseDiagonal(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& inverseDiagonal(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._inverseDiagonal;
         }
         template <typename Scalar>
-        static DenseMatrix<Scalar, Device::GPU>& scalars(IterativeSolverWorkspace<Scalar>& workspace)
+        static DenseStorage<Scalar, Device::GPU>& scalars(IterativeSolverWorkspace<Scalar>& workspace)
         {
             return workspace._scalars;
         }
@@ -207,8 +207,8 @@ namespace plamatrix
         {
             AsyncIterativeSolverState state;
             state.submittedIterations = iterations;
-            state.initialResidualSquared = DenseMatrix<double, Device::GPU>::uninitializedAsync(1, 1, stream);
-            state.finalResidualSquared = DenseMatrix<double, Device::GPU>::uninitializedAsync(1, 1, stream);
+            state.initialResidualSquared = DenseStorage<double, Device::GPU>::uninitializedAsync(1, 1, stream);
+            state.finalResidualSquared = DenseStorage<double, Device::GPU>::uninitializedAsync(1, 1, stream);
             cudaEvent_t event = nullptr;
             PLAMATRIX_CHECK_CUDA(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
             state._completionEvent = event;
@@ -222,4 +222,4 @@ namespace plamatrix
         }
     };
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

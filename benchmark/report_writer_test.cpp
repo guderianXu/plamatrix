@@ -7,7 +7,7 @@
 
 #include "benchmark/report_writer.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -44,4 +44,4 @@ TEST(BenchmarkReportTest, WritesRelease1CudaTimingBreakdown)
 }
 
 } // namespace
-} // namespace plamatrix
+} // namespace plamatrix::internal

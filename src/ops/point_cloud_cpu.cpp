@@ -3,15 +3,15 @@
 #include <stdexcept>
 #include <type_traits>
 
-#include "plamatrix/ops/point_cloud.h"
+#include "plamatrix/internal/ops/point_cloud.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 // ---- Helper: rotation matrix (Rodrigues formula) ----
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> rotationMatrixCpu(const Vec3<Scalar>& axis, Scalar angle)
+DenseStorage<Scalar, Device::CPU> rotationMatrixCpu(const PackedVector3<Scalar>& axis, Scalar angle)
 {
     // Normalize axis
     Scalar norm = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
@@ -28,7 +28,7 @@ DenseMatrix<Scalar, Device::CPU> rotationMatrixCpu(const Vec3<Scalar>& axis, Sca
     Scalar s = std::sin(angle);
     Scalar one_minus_c = static_cast<Scalar>(1) - c;
 
-    DenseMatrix<Scalar, Device::CPU> R(3, 3);
+    DenseStorage<Scalar, Device::CPU> R(3, 3);
 
     // Rodrigues formula: R = I + sin(theta)*K + (1-cos(theta))*K^2
     // where K is the cross-product matrix of the normalized axis
@@ -50,8 +50,8 @@ DenseMatrix<Scalar, Device::CPU> rotationMatrixCpu(const Vec3<Scalar>& axis, Sca
 // ---- Helper: rigid transform ----
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> rigidTransformCpu(const DenseMatrix<Scalar, Device::CPU>& R,
-                                                     const Vec3<Scalar>& t)
+DenseStorage<Scalar, Device::CPU> rigidTransformCpu(const DenseStorage<Scalar, Device::CPU>& R,
+                                                     const PackedVector3<Scalar>& t)
 {
     if (R.rows() != 3 || R.cols() != 3)
     {
@@ -62,7 +62,7 @@ DenseMatrix<Scalar, Device::CPU> rigidTransformCpu(const DenseMatrix<Scalar, Dev
 
     const Scalar* r = R.data();
 
-    DenseMatrix<Scalar, Device::CPU> T(4, 4);
+    DenseStorage<Scalar, Device::CPU> T(4, 4);
     Scalar* td = T.data();
 
     // Column-major layout: T(row, col) = td[row + col * 4]
@@ -91,8 +91,8 @@ DenseMatrix<Scalar, Device::CPU> rigidTransformCpu(const DenseMatrix<Scalar, Dev
 // ---- Helper: transform points ----
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> transformPointsCpu(const DenseMatrix<Scalar, Device::CPU>& T,
-                                                      const DenseMatrix<Scalar, Device::CPU>& points)
+DenseStorage<Scalar, Device::CPU> transformPointsCpu(const DenseStorage<Scalar, Device::CPU>& T,
+                                                      const DenseStorage<Scalar, Device::CPU>& points)
 {
     if (T.rows() != 4 || T.cols() != 4)
     {
@@ -111,7 +111,7 @@ DenseMatrix<Scalar, Device::CPU> transformPointsCpu(const DenseMatrix<Scalar, De
     const Scalar* t_data = T.data();
     const Scalar* p_data = points.data();
 
-    DenseMatrix<Scalar, Device::CPU> result(N, 3);
+    DenseStorage<Scalar, Device::CPU> result(N, 3);
     Scalar* r_data = result.data();
 
     for (Index i = 0; i < N; ++i)
@@ -132,7 +132,7 @@ DenseMatrix<Scalar, Device::CPU> transformPointsCpu(const DenseMatrix<Scalar, De
 // ---- Helper: covariance matrix ----
 
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> covarianceMatrixCpu(const DenseMatrix<Scalar, Device::CPU>& points)
+DenseStorage<Scalar, Device::CPU> covarianceMatrixCpu(const DenseStorage<Scalar, Device::CPU>& points)
 {
     Index N = points.rows();
     if (N < 2)
@@ -165,7 +165,7 @@ DenseMatrix<Scalar, Device::CPU> covarianceMatrixCpu(const DenseMatrix<Scalar, D
     cz *= invN;
 
     // Compute covariance: C = (1/N) * centered^T * centered
-    DenseMatrix<Scalar, Device::CPU> C(3, 3);
+    DenseStorage<Scalar, Device::CPU> C(3, 3);
     Scalar* c = C.data();
 
     Accum accum[9] = {};
@@ -197,7 +197,7 @@ DenseMatrix<Scalar, Device::CPU> covarianceMatrixCpu(const DenseMatrix<Scalar, D
 // ---- Generic template definitions with device dispatch ----
 
 template <typename Scalar, Device Dev>
-DenseMatrix<Scalar, Dev> rotationMatrix(const Vec3<Scalar>& axis, Scalar angle)
+DenseStorage<Scalar, Dev> rotationMatrix(const PackedVector3<Scalar>& axis, Scalar angle)
 {
     if constexpr (Dev == Device::CPU)
     {
@@ -206,12 +206,12 @@ DenseMatrix<Scalar, Dev> rotationMatrix(const Vec3<Scalar>& axis, Scalar angle)
     else
     {
         static_assert(Dev == Device::CPU, "GPU rotationMatrix requires CUDA backend (point_cloud.cu)");
-        return DenseMatrix<Scalar, Dev>(0, 0);
+        return DenseStorage<Scalar, Dev>(0, 0);
     }
 }
 
 template <typename Scalar, Device Dev>
-DenseMatrix<Scalar, Dev> rigidTransform(const DenseMatrix<Scalar, Dev>& R, const Vec3<Scalar>& t)
+DenseStorage<Scalar, Dev> rigidTransform(const DenseStorage<Scalar, Dev>& R, const PackedVector3<Scalar>& t)
 {
     if constexpr (Dev == Device::CPU)
     {
@@ -220,12 +220,12 @@ DenseMatrix<Scalar, Dev> rigidTransform(const DenseMatrix<Scalar, Dev>& R, const
     else
     {
         static_assert(Dev == Device::CPU, "GPU rigidTransform requires CUDA backend (point_cloud.cu)");
-        return DenseMatrix<Scalar, Dev>(0, 0);
+        return DenseStorage<Scalar, Dev>(0, 0);
     }
 }
 
 template <typename Scalar, Device Dev>
-DenseMatrix<Scalar, Dev> transformPoints(const DenseMatrix<Scalar, Dev>& T, const DenseMatrix<Scalar, Dev>& points)
+DenseStorage<Scalar, Dev> transformPoints(const DenseStorage<Scalar, Dev>& T, const DenseStorage<Scalar, Dev>& points)
 {
     if constexpr (Dev == Device::CPU)
     {
@@ -234,12 +234,12 @@ DenseMatrix<Scalar, Dev> transformPoints(const DenseMatrix<Scalar, Dev>& T, cons
     else
     {
         static_assert(Dev == Device::CPU, "GPU transformPoints requires CUDA backend (point_cloud.cu)");
-        return DenseMatrix<Scalar, Dev>(0, 0);
+        return DenseStorage<Scalar, Dev>(0, 0);
     }
 }
 
 template <typename Scalar, Device Dev>
-DenseMatrix<Scalar, Dev> covarianceMatrix(const DenseMatrix<Scalar, Dev>& points)
+DenseStorage<Scalar, Dev> covarianceMatrix(const DenseStorage<Scalar, Dev>& points)
 {
     if constexpr (Dev == Device::CPU)
     {
@@ -248,26 +248,26 @@ DenseMatrix<Scalar, Dev> covarianceMatrix(const DenseMatrix<Scalar, Dev>& points
     else
     {
         static_assert(Dev == Device::CPU, "GPU covarianceMatrix requires CUDA backend (point_cloud.cu)");
-        return DenseMatrix<Scalar, Dev>(0, 0);
+        return DenseStorage<Scalar, Dev>(0, 0);
     }
 }
 
 // ---- Explicit template instantiations for CPU ----
 
 #ifdef PLAMATRIX_USE_FLOAT
-template DenseMatrix<float, Device::CPU> rotationMatrix(const Vec3<float>&, float);
-template DenseMatrix<float, Device::CPU> rigidTransform(const DenseMatrix<float, Device::CPU>&, const Vec3<float>&);
-template DenseMatrix<float, Device::CPU> transformPoints(const DenseMatrix<float, Device::CPU>&,
-                                                           const DenseMatrix<float, Device::CPU>&);
-template DenseMatrix<float, Device::CPU> covarianceMatrix(const DenseMatrix<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> rotationMatrix(const PackedVector3<float>&, float);
+template DenseStorage<float, Device::CPU> rigidTransform(const DenseStorage<float, Device::CPU>&, const PackedVector3<float>&);
+template DenseStorage<float, Device::CPU> transformPoints(const DenseStorage<float, Device::CPU>&,
+                                                           const DenseStorage<float, Device::CPU>&);
+template DenseStorage<float, Device::CPU> covarianceMatrix(const DenseStorage<float, Device::CPU>&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-template DenseMatrix<double, Device::CPU> rotationMatrix(const Vec3<double>&, double);
-template DenseMatrix<double, Device::CPU> rigidTransform(const DenseMatrix<double, Device::CPU>&, const Vec3<double>&);
-template DenseMatrix<double, Device::CPU> transformPoints(const DenseMatrix<double, Device::CPU>&,
-                                                            const DenseMatrix<double, Device::CPU>&);
-template DenseMatrix<double, Device::CPU> covarianceMatrix(const DenseMatrix<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> rotationMatrix(const PackedVector3<double>&, double);
+template DenseStorage<double, Device::CPU> rigidTransform(const DenseStorage<double, Device::CPU>&, const PackedVector3<double>&);
+template DenseStorage<double, Device::CPU> transformPoints(const DenseStorage<double, Device::CPU>&,
+                                                            const DenseStorage<double, Device::CPU>&);
+template DenseStorage<double, Device::CPU> covarianceMatrix(const DenseStorage<double, Device::CPU>&);
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

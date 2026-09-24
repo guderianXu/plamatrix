@@ -4,9 +4,9 @@
 #include <string>
 #include <vector>
 
-#include "plamatrix/core/types.h"
+#include "plamatrix/internal/core/device.h"
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
     class NativeBlockSparseCholesky
@@ -63,4 +63,4 @@ namespace plamatrix::block_schur_detail
         bool _factorized = false;
     };
 
-} // namespace plamatrix::block_schur_detail
+} // namespace plamatrix::internal::block_schur_detail

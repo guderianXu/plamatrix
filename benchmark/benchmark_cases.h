@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 
-#include "plamatrix/core/types.h"
+#include "plamatrix/internal/core/device.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 using BenchmarkFn = std::function<void()>;
@@ -105,4 +105,4 @@ void runPcgCuda(CaseResult& r, Index N);
 
 } // namespace detail
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

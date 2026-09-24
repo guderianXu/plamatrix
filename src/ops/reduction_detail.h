@@ -1,8 +1,8 @@
 #pragma once
 
-#include "plamatrix/ops/reduction.h"
+#include "plamatrix/internal/ops/reduction.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace reduction_detail
 {
@@ -41,20 +41,20 @@ ReductionPlan validatedIndexedPlan(const char* operation,
 template <typename Scalar>
 void launchValueReduction(ValueOperation operation,
                           const char* operation_name,
-                          const DenseMatrix<Scalar, Device::GPU>& input,
+                          const DenseStorage<Scalar, Device::GPU>& input,
                           ReductionAxis axis,
-                          DenseMatrix<Scalar, Device::GPU>& output,
+                          DenseStorage<Scalar, Device::GPU>& output,
                           ReductionWorkspace& workspace,
                           cudaStream_t stream);
 
 template <bool FindMinimum, typename Scalar>
 void launchIndexedReduction(const char* operation,
-                            const DenseMatrix<Scalar, Device::GPU>& input,
+                            const DenseStorage<Scalar, Device::GPU>& input,
                             ReductionAxis axis,
-                            DenseMatrix<Scalar, Device::GPU>& values,
-                            DenseMatrix<Index, Device::GPU>& indices,
+                            DenseStorage<Scalar, Device::GPU>& values,
+                            DenseStorage<Index, Device::GPU>& indices,
                             ReductionWorkspace& workspace,
                             cudaStream_t stream);
 
 } // namespace reduction_detail
-} // namespace plamatrix
+} // namespace plamatrix::internal

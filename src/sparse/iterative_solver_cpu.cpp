@@ -1,4 +1,4 @@
-#include "plamatrix/sparse/iterative_solver.h"
+#include "plamatrix/internal/sparse/iterative_solver.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,8 +7,44 @@
 #include <stdexcept>
 #include <vector>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
+
+#ifdef PLAMATRIX_WITH_CUDA
+namespace resident_solver_detail
+{
+template <typename Scalar>
+IterativeSolverReport pcgCudaResident(const ResidentCsrMatrix<Scalar>& matrix,
+                                      const ResidentVector<Scalar>& rhs,
+                                      ResidentVector<Scalar>& solution,
+                                      const SolveOptions& options,
+                                      ExecutionContext& context);
+}
+#endif
+
+#ifdef PLAMATRIX_WITH_OPENCL
+namespace resident_solver_detail
+{
+template <typename Scalar>
+IterativeSolverReport pcgOpenClResident(const ResidentCsrMatrix<Scalar>& matrix,
+                                        const ResidentVector<Scalar>& rhs,
+                                        ResidentVector<Scalar>& solution,
+                                        const SolveOptions& options,
+                                        ExecutionContext& context);
+}
+#endif
+
+#ifdef PLAMATRIX_WITH_VULKAN
+namespace resident_solver_detail
+{
+IterativeSolverReport pcgVulkanResident(const ResidentCsrMatrix<float>& matrix,
+                                        const ResidentVector<float>& rhs,
+                                        ResidentVector<float>& solution,
+                                        const SolveOptions& options,
+                                        ExecutionContext& context);
+}
+#endif
+
     namespace
     {
 
@@ -27,10 +63,8 @@ namespace plamatrix
             }
         }
 
-        template <typename Scalar>
-        void validateSystem(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                            const DenseMatrix<Scalar, Device::CPU>& rhs,
-                            const DenseMatrix<Scalar, Device::CPU>& solution)
+        template <typename Scalar, typename Right, typename Solution>
+        void validateSystem(const CsrStorage<Scalar, Device::CPU>& matrix, const Right& rhs, const Solution& solution)
         {
             if (matrix.rows() != matrix.cols())
             {
@@ -104,7 +138,7 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        void multiply(const CSRMatrix<Scalar, Device::CPU>& matrix,
+        void multiply(const CsrStorage<Scalar, Device::CPU>& matrix,
                       const std::vector<double>& input,
                       std::vector<double>& output)
         {
@@ -120,7 +154,7 @@ namespace plamatrix
             }
         }
 
-        template <typename Scalar> std::vector<double> jacobiInverse(const CSRMatrix<Scalar, Device::CPU>& matrix)
+        template <typename Scalar> std::vector<double> jacobiInverse(const CsrStorage<Scalar, Device::CPU>& matrix)
         {
             std::vector<double> inverse(static_cast<std::size_t>(matrix.rows()));
             for (Index row = 0; row < matrix.rows(); ++row)
@@ -150,10 +184,10 @@ namespace plamatrix
             return inverse;
         }
 
-        template <typename Scalar>
-        IterativeSolverReport solve(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                                    const DenseMatrix<Scalar, Device::CPU>& rhs,
-                                    DenseMatrix<Scalar, Device::CPU>& solution,
+        template <typename Scalar, typename Right, typename Solution>
+        IterativeSolverReport solve(const CsrStorage<Scalar, Device::CPU>& matrix,
+                                    const Right& rhs,
+                                    Solution& solution,
                                     const IterativeSolverOptions& options,
                                     bool preconditioned)
         {
@@ -273,43 +307,370 @@ namespace plamatrix
     } // anonymous namespace
 
     template <typename Scalar>
-    IterativeSolverReport cg(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                             const DenseMatrix<Scalar, Device::CPU>& rhs,
-                             DenseMatrix<Scalar, Device::CPU>& solution,
+    IterativeSolverReport cg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                             const DenseStorage<Scalar, Device::CPU>& rhs,
+                             DenseStorage<Scalar, Device::CPU>& solution,
                              const IterativeSolverOptions& options)
     {
         return solve(matrix, rhs, solution, options, false);
     }
 
     template <typename Scalar>
-    IterativeSolverReport pcg(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                              const DenseMatrix<Scalar, Device::CPU>& rhs,
-                              DenseMatrix<Scalar, Device::CPU>& solution,
+    IterativeSolverReport pcg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                              const DenseStorage<Scalar, Device::CPU>& rhs,
+                              DenseStorage<Scalar, Device::CPU>& solution,
                               const IterativeSolverOptions& options)
     {
         return solve(matrix, rhs, solution, options, true);
     }
 
+    template <typename Scalar>
+    IterativeSolverReport cg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                             const Matrix<Scalar, Dynamic, 1>& rhs,
+                             Matrix<Scalar, Dynamic, 1>& solution,
+                             const IterativeSolverOptions& options)
+    {
+        if (currentExecutionSettings().policy == ExecutionPolicy::GpuRequired)
+        {
+            throw Error(ErrorCode::UnsupportedOperation, "CSR CG with Matrix vectors has no GPU implementation");
+        }
+        return solve(matrix, rhs, solution, options, false);
+    }
+
+    template <typename Scalar>
+    IterativeSolverReport pcg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                              const Matrix<Scalar, Dynamic, 1>& rhs,
+                              Matrix<Scalar, Dynamic, 1>& solution,
+                              const IterativeSolverOptions& options)
+    {
+        if (currentExecutionSettings().policy == ExecutionPolicy::GpuRequired)
+        {
+            throw Error(ErrorCode::UnsupportedOperation, "CSR PCG with Matrix vectors has no GPU implementation");
+        }
+        return solve(matrix, rhs, solution, options, true);
+    }
+
 #ifdef PLAMATRIX_USE_FLOAT
-    template IterativeSolverReport cg<float>(const CSRMatrix<float, Device::CPU>&,
-                                             const DenseMatrix<float, Device::CPU>&,
-                                             DenseMatrix<float, Device::CPU>&,
+    template IterativeSolverReport cg<float>(const CsrStorage<float, Device::CPU>&,
+                                             const DenseStorage<float, Device::CPU>&,
+                                             DenseStorage<float, Device::CPU>&,
                                              const IterativeSolverOptions&);
-    template IterativeSolverReport pcg<float>(const CSRMatrix<float, Device::CPU>&,
-                                              const DenseMatrix<float, Device::CPU>&,
-                                              DenseMatrix<float, Device::CPU>&,
+    template IterativeSolverReport pcg<float>(const CsrStorage<float, Device::CPU>&,
+                                              const DenseStorage<float, Device::CPU>&,
+                                              DenseStorage<float, Device::CPU>&,
+                                              const IterativeSolverOptions&);
+    template IterativeSolverReport cg<float>(const CsrStorage<float, Device::CPU>&,
+                                             const Matrix<float, Dynamic, 1>&,
+                                             Matrix<float, Dynamic, 1>&,
+                                             const IterativeSolverOptions&);
+    template IterativeSolverReport pcg<float>(const CsrStorage<float, Device::CPU>&,
+                                              const Matrix<float, Dynamic, 1>&,
+                                              Matrix<float, Dynamic, 1>&,
                                               const IterativeSolverOptions&);
 #endif
 
 #ifdef PLAMATRIX_USE_DOUBLE
-    template IterativeSolverReport cg<double>(const CSRMatrix<double, Device::CPU>&,
-                                              const DenseMatrix<double, Device::CPU>&,
-                                              DenseMatrix<double, Device::CPU>&,
+    template IterativeSolverReport cg<double>(const CsrStorage<double, Device::CPU>&,
+                                              const DenseStorage<double, Device::CPU>&,
+                                              DenseStorage<double, Device::CPU>&,
                                               const IterativeSolverOptions&);
-    template IterativeSolverReport pcg<double>(const CSRMatrix<double, Device::CPU>&,
-                                               const DenseMatrix<double, Device::CPU>&,
-                                               DenseMatrix<double, Device::CPU>&,
+    template IterativeSolverReport pcg<double>(const CsrStorage<double, Device::CPU>&,
+                                               const DenseStorage<double, Device::CPU>&,
+                                               DenseStorage<double, Device::CPU>&,
                                                const IterativeSolverOptions&);
+    template IterativeSolverReport cg<double>(const CsrStorage<double, Device::CPU>&,
+                                              const Matrix<double, Dynamic, 1>&,
+                                              Matrix<double, Dynamic, 1>&,
+                                              const IterativeSolverOptions&);
+    template IterativeSolverReport pcg<double>(const CsrStorage<double, Device::CPU>&,
+                                               const Matrix<double, Dynamic, 1>&,
+                                               Matrix<double, Dynamic, 1>&,
+                                               const IterativeSolverOptions&);
+#endif
+
+    namespace
+    {
+
+        template <typename Scalar>
+        IterativeSolverReport solveResidentPcg(const ResidentCsrMatrix<Scalar>& matrix,
+                                               const ResidentVector<Scalar>& rhs,
+                                               ResidentVector<Scalar>& solution,
+                                               const SolveOptions& options,
+                                               ExecutionContext& context)
+        {
+            matrix.validateContext(context);
+            rhs.validateContext(context);
+            solution.validateContext(context);
+            if (context.backend() == Backend::Cuda)
+            {
+#ifdef PLAMATRIX_WITH_CUDA
+                return resident_solver_detail::pcgCudaResident(matrix, rhs, solution, options, context);
+#else
+                throw Error(ErrorCode::BackendUnavailable,
+                            "PlaMatrix was built without CUDA support",
+                            context.backend());
+#endif
+            }
+            if (context.backend() == Backend::OpenCl)
+            {
+#ifdef PLAMATRIX_WITH_OPENCL
+                return resident_solver_detail::pcgOpenClResident(matrix, rhs, solution, options, context);
+#else
+                throw Error(ErrorCode::BackendUnavailable,
+                            "PlaMatrix was built without OpenCL support",
+                            context.backend());
+#endif
+            }
+            if (context.backend() == Backend::Vulkan)
+            {
+#ifdef PLAMATRIX_WITH_VULKAN
+                if constexpr (std::is_same_v<Scalar, float>)
+                {
+                    return resident_solver_detail::pcgVulkanResident(matrix, rhs, solution, options, context);
+                }
+                else
+                {
+                    throw Error(ErrorCode::UnsupportedOperation,
+                                "Vulkan resident PCG currently supports only float32",
+                                context.backend());
+                }
+#else
+                throw Error(ErrorCode::BackendUnavailable,
+                            "PlaMatrix was built without Vulkan support",
+                            context.backend());
+#endif
+            }
+            if (context.backend() != Backend::Cpu)
+            {
+                throw Error(ErrorCode::UnsupportedOperation,
+                            "Resident PCG is not implemented for this backend yet",
+                            context.backend());
+            }
+            if (matrix.rows() != matrix.cols() || rhs.size() != matrix.rows() || solution.size() != matrix.cols())
+            {
+                throw Error(ErrorCode::InvalidArgument,
+                            "Resident PCG requires a square CSR matrix and matching vectors",
+                            context.backend());
+            }
+            if (options.maxIterations < 0 || !std::isfinite(options.relativeTolerance) ||
+                options.relativeTolerance < 0.0 || options.relativeTolerance > 1.0 ||
+                !std::isfinite(options.absoluteTolerance) || options.absoluteTolerance < 0.0)
+            {
+                throw Error(ErrorCode::InvalidArgument,
+                            "Resident PCG options are invalid",
+                            context.backend());
+            }
+
+            const std::size_t size = static_cast<std::size_t>(matrix.rows());
+            std::vector<double> x(size);
+            std::vector<double> residual(size);
+            std::vector<double> direction(size);
+            std::vector<double> transformed(size);
+            std::vector<double> matrix_direction(size);
+            const auto multiply = [&](const std::vector<double>& input, std::vector<double>& output)
+            {
+                for (Index row = 0; row < matrix.rows(); ++row)
+                {
+                    double sum = 0.0;
+                    for (Index position = matrix.rowOffsets()[row];
+                         position < matrix.rowOffsets()[row + 1];
+                         ++position)
+                    {
+                        const Index column = matrix.colIndices()[position];
+                        if (column < 0 || column >= matrix.cols())
+                        {
+                            throw Error(ErrorCode::InvalidArgument,
+                                        "Resident PCG CSR column index is out of range",
+                                        context.backend());
+                        }
+                        sum += static_cast<double>(matrix.values()[position]) *
+                               input[static_cast<std::size_t>(column)];
+                    }
+                    output[static_cast<std::size_t>(row)] = sum;
+                }
+            };
+
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                x[index] = static_cast<double>(solution.data()[index]);
+            }
+            multiply(x, matrix_direction);
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                residual[index] = static_cast<double>(rhs.data()[index]) - matrix_direction[index];
+            }
+
+            IterativeSolverReport report;
+            const auto dot = [](const std::vector<double>& left, const std::vector<double>& right)
+            {
+                double result = 0.0;
+                for (std::size_t index = 0; index < left.size(); ++index)
+                {
+                    result += left[index] * right[index];
+                }
+                return result;
+            };
+            const double initial_squared = dot(residual, residual);
+            report.initialResidual = std::sqrt(initial_squared);
+            report.finalResidual = report.initialResidual;
+            if (options.recordResidualHistory)
+            {
+                report.residualHistory.push_back(report.initialResidual);
+            }
+            const double tolerance = std::max(options.absoluteTolerance,
+                                              options.relativeTolerance * report.initialResidual);
+            if (report.finalResidual <= tolerance)
+            {
+                report.converged = true;
+                return report;
+            }
+
+            std::vector<double> inverse_diagonal;
+            if (options.useJacobiPreconditioner)
+            {
+                inverse_diagonal.resize(size);
+                for (Index row = 0; row < matrix.rows(); ++row)
+                {
+                    double diagonal = 0.0;
+                    bool found = false;
+                    for (Index position = matrix.rowOffsets()[row];
+                         position < matrix.rowOffsets()[row + 1];
+                         ++position)
+                    {
+                        if (matrix.colIndices()[position] == row)
+                        {
+                            diagonal += static_cast<double>(matrix.values()[position]);
+                            found = true;
+                        }
+                    }
+                    if (!found || diagonal <= 0.0 || !std::isfinite(diagonal))
+                    {
+                        throw Error(ErrorCode::NumericalFailure,
+                                    "Resident PCG Jacobi diagonal is invalid",
+                                    context.backend());
+                    }
+                    inverse_diagonal[static_cast<std::size_t>(row)] = 1.0 / diagonal;
+                }
+            }
+
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                transformed[index] = inverse_diagonal.empty() ? residual[index]
+                                                               : inverse_diagonal[index] * residual[index];
+                direction[index] = transformed[index];
+            }
+            double rho = dot(residual, transformed);
+            for (int iteration = 0; iteration < options.maxIterations; ++iteration)
+            {
+                if (options.cancellation && options.cancellation->isCancellationRequested())
+                {
+                    throw Error(ErrorCode::InvalidState, "Resident PCG was cancelled", context.backend());
+                }
+                multiply(direction, matrix_direction);
+                const double denominator = dot(direction, matrix_direction);
+                if (!std::isfinite(denominator) || denominator <= 0.0)
+                {
+                    throw Error(ErrorCode::NumericalFailure,
+                                "Resident PCG matrix is not numerically SPD",
+                                context.backend());
+                }
+                const double alpha = rho / denominator;
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    x[index] += alpha * direction[index];
+                    residual[index] -= alpha * matrix_direction[index];
+                }
+                report.iterations = iteration + 1;
+                report.finalResidual = std::sqrt(dot(residual, residual));
+                if (options.recordResidualHistory)
+                {
+                    report.residualHistory.push_back(report.finalResidual);
+                }
+                if (report.finalResidual <= tolerance)
+                {
+                    report.converged = true;
+                    break;
+                }
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    transformed[index] = inverse_diagonal.empty() ? residual[index]
+                                                                   : inverse_diagonal[index] * residual[index];
+                }
+                const double next_rho = dot(residual, transformed);
+                const double beta = next_rho / rho;
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    direction[index] = transformed[index] + beta * direction[index];
+                }
+                rho = next_rho;
+            }
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                solution.data()[index] = static_cast<Scalar>(x[index]);
+            }
+            if (!report.converged && options.requireConvergence)
+            {
+                throw Error(ErrorCode::NumericalFailure,
+                            "Resident PCG did not converge",
+                            context.backend());
+            }
+            report.diagnostics.deterministic = options.deterministic;
+            return report;
+        }
+
+    } // namespace
+
+    template <typename Scalar>
+    IterativeSolverReport pcg(const ResidentCsrMatrix<Scalar>& matrix,
+                              const ResidentVector<Scalar>& rhs,
+                              ResidentVector<Scalar>& solution,
+                              const SolveOptions& options,
+                              ExecutionContext& context)
+    {
+        return solveResidentPcg(matrix, rhs, solution, options, context);
+    }
+
+    template <typename Scalar>
+    Event pcgAsync(const ResidentCsrMatrix<Scalar>& matrix,
+                   const ResidentVector<Scalar>& rhs,
+                   ResidentVector<Scalar>& solution,
+                   const SolveOptions& options,
+                   ExecutionContext& context,
+                   IterativeSolverReport* report)
+    {
+        const auto result = solveResidentPcg(matrix, rhs, solution, options, context);
+        if (report != nullptr)
+        {
+            *report = result;
+        }
+        return Event::completed();
+    }
+
+#ifdef PLAMATRIX_USE_FLOAT
+    template IterativeSolverReport pcg<float>(const ResidentCsrMatrix<float>&,
+                                              const ResidentVector<float>&,
+                                              ResidentVector<float>&,
+                                              const SolveOptions&,
+                                              ExecutionContext&);
+    template Event pcgAsync<float>(const ResidentCsrMatrix<float>&,
+                                   const ResidentVector<float>&,
+                                   ResidentVector<float>&,
+                                   const SolveOptions&,
+                                   ExecutionContext&,
+                                   IterativeSolverReport*);
+#endif
+#ifdef PLAMATRIX_USE_DOUBLE
+    template IterativeSolverReport pcg<double>(const ResidentCsrMatrix<double>&,
+                                               const ResidentVector<double>&,
+                                               ResidentVector<double>&,
+                                               const SolveOptions&,
+                                               ExecutionContext&);
+    template Event pcgAsync<double>(const ResidentCsrMatrix<double>&,
+                                    const ResidentVector<double>&,
+                                    ResidentVector<double>&,
+                                    const SolveOptions&,
+                                    ExecutionContext&,
+                                    IterativeSolverReport*);
 #endif
 
 #ifdef PLAMATRIX_NO_CUDA
@@ -337,9 +698,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    IterativeSolverReport cg(const CSRMatrix<Scalar, Device::GPU>&,
-                             const DenseMatrix<Scalar, Device::GPU>&,
-                             DenseMatrix<Scalar, Device::GPU>&,
+    IterativeSolverReport cg(const CsrStorage<Scalar, Device::GPU>&,
+                             const DenseStorage<Scalar, Device::GPU>&,
+                             DenseStorage<Scalar, Device::GPU>&,
                              IterativeSolverWorkspace<Scalar>&,
                              const IterativeSolverOptions&,
                              cudaStream_t)
@@ -348,9 +709,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    IterativeSolverReport pcg(const CSRMatrix<Scalar, Device::GPU>&,
-                              const DenseMatrix<Scalar, Device::GPU>&,
-                              DenseMatrix<Scalar, Device::GPU>&,
+    IterativeSolverReport pcg(const CsrStorage<Scalar, Device::GPU>&,
+                              const DenseStorage<Scalar, Device::GPU>&,
+                              DenseStorage<Scalar, Device::GPU>&,
                               IterativeSolverWorkspace<Scalar>&,
                               const IterativeSolverOptions&,
                               cudaStream_t)
@@ -359,10 +720,10 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    IterativeSolverReport blockPcg(const CSRMatrix<Scalar, Device::GPU>&,
-                                   const DenseMatrix<Scalar, Device::GPU>&,
-                                   DenseMatrix<Scalar, Device::GPU>&,
-                                   const DenseMatrix<Scalar, Device::GPU>&,
+    IterativeSolverReport blockPcg(const CsrStorage<Scalar, Device::GPU>&,
+                                   const DenseStorage<Scalar, Device::GPU>&,
+                                   DenseStorage<Scalar, Device::GPU>&,
+                                   const DenseStorage<Scalar, Device::GPU>&,
                                    Index,
                                    IterativeSolverWorkspace<Scalar>&,
                                    const IterativeSolverOptions&,
@@ -372,9 +733,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    AsyncIterativeSolverState cgFixedIterationsAsync(const CSRMatrix<Scalar, Device::GPU>&,
-                                                     const DenseMatrix<Scalar, Device::GPU>&,
-                                                     DenseMatrix<Scalar, Device::GPU>&,
+    AsyncIterativeSolverState cgFixedIterationsAsync(const CsrStorage<Scalar, Device::GPU>&,
+                                                     const DenseStorage<Scalar, Device::GPU>&,
+                                                     DenseStorage<Scalar, Device::GPU>&,
                                                      int,
                                                      IterativeSolverWorkspace<Scalar>&,
                                                      cudaStream_t)
@@ -383,9 +744,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    AsyncIterativeSolverState pcgFixedIterationsAsync(const CSRMatrix<Scalar, Device::GPU>&,
-                                                      const DenseMatrix<Scalar, Device::GPU>&,
-                                                      DenseMatrix<Scalar, Device::GPU>&,
+    AsyncIterativeSolverState pcgFixedIterationsAsync(const CsrStorage<Scalar, Device::GPU>&,
+                                                      const DenseStorage<Scalar, Device::GPU>&,
+                                                      DenseStorage<Scalar, Device::GPU>&,
                                                       int,
                                                       IterativeSolverWorkspace<Scalar>&,
                                                       cudaStream_t)
@@ -400,35 +761,35 @@ namespace plamatrix
 
 #define PLAMATRIX_INSTANTIATE_NO_CUDA_SOLVER(Scalar)                                                                   \
     template class IterativeSolverWorkspace<Scalar>;                                                                   \
-    template IterativeSolverReport cg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                                   \
-                                              const DenseMatrix<Scalar, Device::GPU>&,                                 \
-                                              DenseMatrix<Scalar, Device::GPU>&,                                       \
+    template IterativeSolverReport cg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                                   \
+                                              const DenseStorage<Scalar, Device::GPU>&,                                 \
+                                              DenseStorage<Scalar, Device::GPU>&,                                       \
                                               IterativeSolverWorkspace<Scalar>&,                                       \
                                               const IterativeSolverOptions&,                                           \
                                               cudaStream_t);                                                           \
-    template IterativeSolverReport pcg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                                  \
-                                               const DenseMatrix<Scalar, Device::GPU>&,                                \
-                                               DenseMatrix<Scalar, Device::GPU>&,                                      \
+    template IterativeSolverReport pcg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                                  \
+                                               const DenseStorage<Scalar, Device::GPU>&,                                \
+                                               DenseStorage<Scalar, Device::GPU>&,                                      \
                                                IterativeSolverWorkspace<Scalar>&,                                      \
                                                const IterativeSolverOptions&,                                          \
                                                cudaStream_t);                                                          \
-    template IterativeSolverReport blockPcg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                             \
-                                                    const DenseMatrix<Scalar, Device::GPU>&,                           \
-                                                    DenseMatrix<Scalar, Device::GPU>&,                                 \
-                                                    const DenseMatrix<Scalar, Device::GPU>&,                           \
+    template IterativeSolverReport blockPcg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                             \
+                                                    const DenseStorage<Scalar, Device::GPU>&,                           \
+                                                    DenseStorage<Scalar, Device::GPU>&,                                 \
+                                                    const DenseStorage<Scalar, Device::GPU>&,                           \
                                                     Index,                                                             \
                                                     IterativeSolverWorkspace<Scalar>&,                                 \
                                                     const IterativeSolverOptions&,                                     \
                                                     cudaStream_t);                                                     \
-    template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,           \
-                                                                      const DenseMatrix<Scalar, Device::GPU>&,         \
-                                                                      DenseMatrix<Scalar, Device::GPU>&,               \
+    template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,           \
+                                                                      const DenseStorage<Scalar, Device::GPU>&,         \
+                                                                      DenseStorage<Scalar, Device::GPU>&,               \
                                                                       int,                                             \
                                                                       IterativeSolverWorkspace<Scalar>&,               \
                                                                       cudaStream_t);                                   \
-    template AsyncIterativeSolverState pcgFixedIterationsAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,          \
-                                                                       const DenseMatrix<Scalar, Device::GPU>&,        \
-                                                                       DenseMatrix<Scalar, Device::GPU>&,              \
+    template AsyncIterativeSolverState pcgFixedIterationsAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,          \
+                                                                       const DenseStorage<Scalar, Device::GPU>&,        \
+                                                                       DenseStorage<Scalar, Device::GPU>&,              \
                                                                        int,                                            \
                                                                        IterativeSolverWorkspace<Scalar>&,              \
                                                                        cudaStream_t)
@@ -443,4 +804,4 @@ namespace plamatrix
 #undef PLAMATRIX_INSTANTIATE_NO_CUDA_SOLVER
 #endif
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

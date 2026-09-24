@@ -6,10 +6,10 @@
 
 PlaMatrix 是面向点云处理的高性能矩阵运算库，使用 C++17，支持 CPU OpenMP 和可选 CUDA GPU 加速。它是 PlaPoint 的底层数学后端。主线包含：
 
-- `include/plamatrix/core/`：`Device`、`Index`、RAII 内存管理、CUDA/cuBLAS/cuSOLVER 错误检查、no-CUDA stubs。
-- `include/plamatrix/dense/`：列优先 `DenseMatrix` 和逐元素运算。
-- `include/plamatrix/sparse/`：COO、CSR 稀疏矩阵。
-- `include/plamatrix/ops/`：GEMM、SVD/QR/Eigh、线性求解、点云刚体变换和协方差。
+- `include/plamatrix/core/types.h`：公开 `Index`。
+- `include/plamatrix/dense/`：Eigen 风格 `Matrix`、`Map`、表达式与分解。
+- `include/plamatrix/sparse/`：`Triplet`、`SparseMatrix`、`ConjugateGradient`。
+- `include/plamatrix/internal/`：执行上下文、DenseStorage/DeviceStorage/CSR/COO 存储、GPU 原语和通用数值实现；不属于公开契约，不恢复旧路径/旧类型兼容层。
 - `src/`：CPU OpenMP 实现、CUDA kernel、cuBLAS/cuSOLVER 调用和模板实例化。
 - `test/`：Google Test 单元测试、CPU/GPU 一致性测试、NumPy/SciPy 参考数据测试。
 - `benchmark/`：串行 CPU、OpenMP、CUDA benchmark 和 Markdown 报告生成。
@@ -47,7 +47,7 @@ PlaMatrix 是面向点云处理的高性能矩阵运算库，使用 C++17，支�
       reportError();
   }
   ```
-- 类和结构体使用 PascalCase，例如 `DenseMatrix`、`CudaAllocator`。
+- 类和结构体使用 PascalCase，例如 `DenseStorage`、`CudaAllocator`。
 - 函数和方法使用 camelCase，例如 `toGpu()`、`solveLinear()`。
 - 局部变量和普通成员变量使用 snake_case，例如 `row_count`、`data_ptr`。
 - 私有成员变量前加下划线，例如 `_data`、`_rows`。
@@ -62,9 +62,11 @@ PlaMatrix 是面向点云处理的高性能矩阵运算库，使用 C++17，支�
 - 一个函数只承担清晰职责。文件超过 400 行或嵌套超过 4 层时优先拆小，但不要为了机械满足限制做无意义拆分。
 ### 数值和设备约定
 
-- `DenseMatrix` 使用列优先存储，索引公式是 `row + col * rows`。这与 cuBLAS/cuSOLVER 调用参数强相关，不能随意改为行优先。
+以下 Device、存储及显式传输约定仅适用于 `plamatrix::internal`；应用 Matrix 负责自动调度和按需传输。
+
+- `DenseStorage` 使用列优先存储，索引公式是 `row + col * rows`。这与 cuBLAS/cuSOLVER 调用参数强相关，不能随意改为行优先。
 - `Device` 是编译期模板参数。CPU/GPU 路径优先通过 `if constexpr` 分发，避免不必要的运行时分支。
-- `DeviceMatrix` 负责 RAII 内存管理，矩阵对象禁止隐式昂贵拷贝，优先 move 和显式 `toCpu()` / `toGpu()`。
+- `DeviceStorage` 负责 RAII 内存管理，矩阵对象禁止隐式昂贵拷贝，优先 move 和显式 `toCpu()` / `toGpu()`。
 - `operator()(row, col)` 只用于 CPU 矩阵；跨设备路径使用 `getValue()` / `setValue()`，并注意 GPU 单元素拷贝成本。
 - `Index` 使用 64 位有符号整数。新增循环和 CUDA kernel 入参时要显式处理 `Index` 到 `int` 的边界，不要静默窄化大矩阵尺寸。
 - `PLAMATRIX_WITH_CUDA=OFF` 时 no-CUDA stubs 需要保持可编译、可运行。新增 CUDA include、类型或 API 时必须有无 CUDA 分支。

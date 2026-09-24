@@ -5,10 +5,10 @@
 #include <type_traits>
 #include <utility>
 
-#include "plamatrix/optimization/block_schur.h"
-#include "plamatrix/core/checked_math.h"
+#include "plamatrix/internal/optimization/block_schur.h"
+#include "plamatrix/internal/core/checked_math.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
     template <typename Scalar>
@@ -569,4 +569,4 @@ namespace plamatrix
     template class BlockNormalEquations<float>;
     template class BlockNormalEquations<double>;
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

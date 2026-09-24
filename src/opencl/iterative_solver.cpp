@@ -1,6 +1,6 @@
-#include "plamatrix/opencl/iterative_solver.h"
+#include "plamatrix/internal/opencl/iterative_solver.h"
 
-#include "plamatrix/opencl/execution.h"
+#include "plamatrix/internal/opencl/execution.h"
 
 #include "iterative_solver_kernels.h"
 
@@ -12,7 +12,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
-namespace plamatrix
+namespace plamatrix::internal
 {
     namespace opencl
     {
@@ -31,7 +31,7 @@ namespace plamatrix
                 }
             }
             template <typename Scalar>
-            std::vector<Scalar> inverseDiagonal(const CSRMatrix<Scalar, Device::CPU>& matrix, bool enabled)
+            std::vector<Scalar> inverseDiagonal(const CsrStorage<Scalar, Device::CPU>& matrix, bool enabled)
             {
                 std::vector<Scalar> result(static_cast<std::size_t>(matrix.rows()), Scalar{1});
                 if (!enabled)
@@ -138,10 +138,10 @@ namespace plamatrix
             }
 
             template <typename Scalar>
-            void validateBlockPreconditioner(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                                             const DenseMatrix<Scalar, Device::CPU>& rhs,
-                                             const DenseMatrix<Scalar, Device::CPU>& solution,
-                                             const DenseMatrix<Scalar, Device::CPU>& inverse_blocks,
+            void validateBlockPreconditioner(const CsrStorage<Scalar, Device::CPU>& matrix,
+                                             const DenseStorage<Scalar, Device::CPU>& rhs,
+                                             const DenseStorage<Scalar, Device::CPU>& solution,
+                                             const DenseStorage<Scalar, Device::CPU>& inverse_blocks,
                                              Index block_size)
             {
                 if (block_size <= 0 || matrix.rows() % block_size != 0 ||
@@ -164,11 +164,11 @@ namespace plamatrix
             }
 
             template <typename Scalar>
-            IterativeSolverReport solve(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                                        const DenseMatrix<Scalar, Device::CPU>& rhs,
-                                        DenseMatrix<Scalar, Device::CPU>& solution,
+            IterativeSolverReport solve(const CsrStorage<Scalar, Device::CPU>& matrix,
+                                        const DenseStorage<Scalar, Device::CPU>& rhs,
+                                        DenseStorage<Scalar, Device::CPU>& solution,
                                         const IterativeSolverOptions& options,
-                                        const DenseMatrix<Scalar, Device::CPU>* inverse_blocks,
+                                        const DenseStorage<Scalar, Device::CPU>* inverse_blocks,
                                         Index block_size)
             {
                 validateOptions(options);
@@ -442,19 +442,19 @@ namespace plamatrix
         } // namespace
 
         template <typename Scalar>
-        IterativeSolverReport pcg(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                                  const DenseMatrix<Scalar, Device::CPU>& rhs,
-                                  DenseMatrix<Scalar, Device::CPU>& solution,
+        IterativeSolverReport pcg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                                  const DenseStorage<Scalar, Device::CPU>& rhs,
+                                  DenseStorage<Scalar, Device::CPU>& solution,
                                   const IterativeSolverOptions& options)
         {
             return solve<Scalar>(matrix, rhs, solution, options, nullptr, 0);
         }
 
         template <typename Scalar>
-        IterativeSolverReport blockPcg(const CSRMatrix<Scalar, Device::CPU>& matrix,
-                                       const DenseMatrix<Scalar, Device::CPU>& rhs,
-                                       DenseMatrix<Scalar, Device::CPU>& solution,
-                                       const DenseMatrix<Scalar, Device::CPU>& inverse_blocks,
+        IterativeSolverReport blockPcg(const CsrStorage<Scalar, Device::CPU>& matrix,
+                                       const DenseStorage<Scalar, Device::CPU>& rhs,
+                                       DenseStorage<Scalar, Device::CPU>& solution,
+                                       const DenseStorage<Scalar, Device::CPU>& inverse_blocks,
                                        Index block_size,
                                        const IterativeSolverOptions& options)
         {
@@ -462,29 +462,29 @@ namespace plamatrix
         }
 
 #ifdef PLAMATRIX_USE_FLOAT
-        template IterativeSolverReport pcg<float>(const CSRMatrix<float, Device::CPU>&,
-                                                  const DenseMatrix<float, Device::CPU>&,
-                                                  DenseMatrix<float, Device::CPU>&,
+        template IterativeSolverReport pcg<float>(const CsrStorage<float, Device::CPU>&,
+                                                  const DenseStorage<float, Device::CPU>&,
+                                                  DenseStorage<float, Device::CPU>&,
                                                   const IterativeSolverOptions&);
-        template IterativeSolverReport blockPcg<float>(const CSRMatrix<float, Device::CPU>&,
-                                                       const DenseMatrix<float, Device::CPU>&,
-                                                       DenseMatrix<float, Device::CPU>&,
-                                                       const DenseMatrix<float, Device::CPU>&,
+        template IterativeSolverReport blockPcg<float>(const CsrStorage<float, Device::CPU>&,
+                                                       const DenseStorage<float, Device::CPU>&,
+                                                       DenseStorage<float, Device::CPU>&,
+                                                       const DenseStorage<float, Device::CPU>&,
                                                        Index,
                                                        const IterativeSolverOptions&);
 #endif
 #ifdef PLAMATRIX_USE_DOUBLE
-        template IterativeSolverReport pcg<double>(const CSRMatrix<double, Device::CPU>&,
-                                                   const DenseMatrix<double, Device::CPU>&,
-                                                   DenseMatrix<double, Device::CPU>&,
+        template IterativeSolverReport pcg<double>(const CsrStorage<double, Device::CPU>&,
+                                                   const DenseStorage<double, Device::CPU>&,
+                                                   DenseStorage<double, Device::CPU>&,
                                                    const IterativeSolverOptions&);
-        template IterativeSolverReport blockPcg<double>(const CSRMatrix<double, Device::CPU>&,
-                                                        const DenseMatrix<double, Device::CPU>&,
-                                                        DenseMatrix<double, Device::CPU>&,
-                                                        const DenseMatrix<double, Device::CPU>&,
+        template IterativeSolverReport blockPcg<double>(const CsrStorage<double, Device::CPU>&,
+                                                        const DenseStorage<double, Device::CPU>&,
+                                                        DenseStorage<double, Device::CPU>&,
+                                                        const DenseStorage<double, Device::CPU>&,
                                                         Index,
                                                         const IterativeSolverOptions&);
 #endif
 
     } // namespace opencl
-} // namespace plamatrix
+} // namespace plamatrix::internal

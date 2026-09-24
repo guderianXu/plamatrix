@@ -5,281 +5,357 @@
 
 #ifdef PLAMATRIX_WITH_CUDA
 
-namespace plamatrix
+namespace plamatrix::internal
 {
-namespace
-{
-
-using indexing_test_detail::expectMatrix;
-using indexing_test_detail::IndexingTest;
-using indexing_test_detail::makeMatrix;
-using indexing_test_detail::ScalarTypes;
-
-TYPED_TEST_SUITE(IndexingTest, ScalarTypes);
-using indexing_test_detail::expectGpuMatrix;
-
-TEST(IndexingDenseUint8CudaTest, FillAndTransferSupportAllZeroAndAllOneMasks)
-{
-    DenseMatrix<std::uint8_t, Device::CPU> zero_cpu(5, 1);
-    zero_cpu.fill(std::uint8_t(0));
-    auto zero_gpu = zero_cpu.toGpu();
-    expectGpuMatrix<std::uint8_t>(zero_gpu, 5, 1, {0, 0, 0, 0, 0});
-
-    DenseMatrix<std::uint8_t, Device::GPU> one_gpu(5, 1);
-    one_gpu.fill(std::uint8_t(1));
-    expectGpuMatrix<std::uint8_t>(one_gpu, 5, 1, {1, 1, 1, 1, 1});
-}
-
-TEST(IndexingScanCudaTest, MatchesCpuColumnMajorAndSupportsOutputReuse)
-{
-    const auto counts_cpu = makeMatrix<Index>(2, 3, {2, -1, 3, 4, -2, 1});
-    auto counts = counts_cpu.toGpu();
-    expectGpuMatrix<Index>(exclusiveScan(counts), 2, 3, {0, 2, 1, 4, 8, 6});
-
-    test::CudaStreamGuard stream;
-    IndexingWorkspace workspace;
-    DenseMatrix<Index, Device::GPU> output(2, 3);
-    exclusiveScan(counts, output, workspace, stream.get());
-    expectGpuMatrix<Index>(output, 2, 3, {0, 2, 1, 4, 8, 6});
-    EXPECT_GT(workspace.capacityBytes(), 0U);
-    workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
-
-TEST(IndexingScanCudaTest, ReportsLowestPositiveAndNegativeOverflowOffsets)
-{
-    const auto positive = makeMatrix<Index>(3, 1, {
-        Index(4), std::numeric_limits<Index>::max(), Index(1)
-    }).toGpu();
-    const auto negative = makeMatrix<Index>(3, 1, {
-        Index(-4), std::numeric_limits<Index>::min(), Index(-1)
-    }).toGpu();
-
-    try
+    namespace
     {
-        static_cast<void>(exclusiveScan(positive));
-        FAIL() << "Expected positive overflow";
-    }
-    catch (const std::overflow_error& error)
-    {
-        EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
-    }
-    try
-    {
-        static_cast<void>(exclusiveScan(negative));
-        FAIL() << "Expected negative overflow";
-    }
-    catch (const std::overflow_error& error)
-    {
-        EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
-    }
-}
 
-TEST(IndexingScanCudaTest, AcceptsExactLimitsAndChecksFinalAddition)
-{
-    const auto positive = makeMatrix<Index>(2, 1, {
-        std::numeric_limits<Index>::max(), Index(0)
-    }).toGpu();
-    const auto negative = makeMatrix<Index>(2, 1, {
-        std::numeric_limits<Index>::min(), Index(0)
-    }).toGpu();
-    const auto final_overflow = makeMatrix<Index>(2, 1, {
-        std::numeric_limits<Index>::max(), Index(1)
-    }).toGpu();
+        using indexing_test_detail::expectMatrix;
+        using indexing_test_detail::IndexingTest;
+        using indexing_test_detail::makeMatrix;
+        using indexing_test_detail::ScalarTypes;
 
-    expectGpuMatrix(exclusiveScan(positive), 2, 1, {
-        Index(0), std::numeric_limits<Index>::max()
-    });
-    expectGpuMatrix(exclusiveScan(negative), 2, 1, {
-        Index(0), std::numeric_limits<Index>::min()
-    });
-    EXPECT_THROW(static_cast<void>(exclusiveScan(final_overflow)), std::overflow_error);
-}
+        TYPED_TEST_SUITE(IndexingTest, ScalarTypes);
+        using indexing_test_detail::expectGpuMatrix;
 
-TEST(IndexingScanCudaTest, PreservesEmptyGpuShape)
-{
-    DenseMatrix<Index, Device::CPU> empty_cpu(0, 3);
+        TEST(IndexingDenseUint8CudaTest, FillAndTransferSupportAllZeroAndAllOneMasks)
+        {
+            DenseStorage<std::uint8_t, Device::CPU> zero_cpu(5, 1);
+            zero_cpu.fill(std::uint8_t(0));
+            auto zero_gpu = zero_cpu.toGpu();
+            expectGpuMatrix<std::uint8_t>(zero_gpu, 5, 1, {0, 0, 0, 0, 0});
 
-    const auto empty = exclusiveScan(empty_cpu.toGpu());
+            DenseStorage<std::uint8_t, Device::GPU> one_gpu(5, 1);
+            one_gpu.fill(std::uint8_t(1));
+            expectGpuMatrix<std::uint8_t>(one_gpu, 5, 1, {1, 1, 1, 1, 1});
+        }
 
-    expectGpuMatrix<Index>(empty, 0, 3, {});
-}
+        TEST(IndexingScanCudaTest, MatchesCpuColumnMajorAndSupportsOutputReuse)
+        {
+            const auto counts_cpu = makeMatrix<Index>(2, 3, {2, -1, 3, 4, -2, 1});
+            auto counts = counts_cpu.toGpu();
+            expectGpuMatrix<Index>(exclusiveScan(counts), 2, 3, {0, 2, 1, 4, 8, 6});
 
-TYPED_TEST(IndexingTest, GpuGatherMatchesCpuWithDuplicatesAndAsyncReuse)
-{
-    using Scalar = TypeParam;
-    const auto input_cpu = makeMatrix<Scalar>(4, 3, {
-        Scalar(10), Scalar(11), Scalar(12), Scalar(13),
-        Scalar(20), Scalar(21), Scalar(22), Scalar(23),
-        Scalar(30), Scalar(31), Scalar(32), Scalar(33)
-    });
-    const auto indices_cpu = makeMatrix<Index>(3, 1, {2, 0, 2});
-    auto input = input_cpu.toGpu();
-    auto indices = indices_cpu.toGpu();
+            test::CudaStreamGuard stream;
+            IndexingWorkspace workspace;
+            DenseStorage<Index, Device::GPU> output(2, 3);
+            exclusiveScan(counts, output, workspace, stream.get());
+            expectGpuMatrix<Index>(output, 2, 3, {0, 2, 1, 4, 8, 6});
+            EXPECT_GT(workspace.capacityBytes(), 0U);
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
 
-    expectGpuMatrix(gatherRows(input, indices), 3, 3, {
-        Scalar(12), Scalar(10), Scalar(12),
-        Scalar(22), Scalar(20), Scalar(22),
-        Scalar(32), Scalar(30), Scalar(32)
-    });
+        TEST(IndexingScanCudaTest, ReportsLowestPositiveAndNegativeOverflowOffsets)
+        {
+            const auto positive =
+                makeMatrix<Index>(3, 1, {Index(4), std::numeric_limits<Index>::max(), Index(1)}).toGpu();
+            const auto negative =
+                makeMatrix<Index>(3, 1, {Index(-4), std::numeric_limits<Index>::min(), Index(-1)}).toGpu();
 
-    test::CudaStreamGuard stream;
-    IndexingWorkspace workspace;
-    DenseMatrix<Scalar, Device::GPU> first(3, 3);
-    DenseMatrix<Scalar, Device::GPU> second(3, 3);
-    gatherRowsAsync(input, indices, first, workspace, stream.get());
-    const std::size_t capacity = workspace.capacityBytes();
-    void* const data = workspace.data();
-    gatherRowsAsync(input, indices, second, workspace, stream.get());
-    EXPECT_EQ(workspace.capacityBytes(), capacity);
-    EXPECT_EQ(workspace.data(), data);
-    stream.synchronize();
-    workspace.checkStatus("gatherRowsAsync");
-    expectGpuMatrix(second, 3, 3, {
-        Scalar(12), Scalar(10), Scalar(12),
-        Scalar(22), Scalar(20), Scalar(22),
-        Scalar(32), Scalar(30), Scalar(32)
-    });
-    workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
+            try
+            {
+                static_cast<void>(exclusiveScan(positive));
+                FAIL() << "Expected positive overflow";
+            }
+            catch (const std::overflow_error& error)
+            {
+                EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
+            }
+            try
+            {
+                static_cast<void>(exclusiveScan(negative));
+                FAIL() << "Expected negative overflow";
+            }
+            catch (const std::overflow_error& error)
+            {
+                EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
+            }
+        }
 
-TYPED_TEST(IndexingTest, GpuGatherInvalidIndexReportsLowestOffsetAndLeavesOutputUnchanged)
-{
-    using Scalar = TypeParam;
-    auto input = makeMatrix<Scalar>(3, 2, {
-        Scalar(1), Scalar(2), Scalar(3), Scalar(4), Scalar(5), Scalar(6)
-    }).toGpu();
-    auto indices = makeMatrix<Index>(4, 1, {1, 3, -1, 0}).toGpu();
-    const auto initial = makeMatrix<Scalar>(4, 2, {
-        Scalar(9), Scalar(8), Scalar(7), Scalar(6),
-        Scalar(5), Scalar(4), Scalar(3), Scalar(2)
-    });
-    auto output = initial.toGpu();
-    IndexingWorkspace workspace;
+        TEST(IndexingScanCudaTest, AcceptsExactLimitsAndChecksFinalAddition)
+        {
+            const auto positive = makeMatrix<Index>(2, 1, {std::numeric_limits<Index>::max(), Index(0)}).toGpu();
+            const auto negative = makeMatrix<Index>(2, 1, {std::numeric_limits<Index>::min(), Index(0)}).toGpu();
+            const auto final_overflow = makeMatrix<Index>(2, 1, {std::numeric_limits<Index>::max(), Index(1)}).toGpu();
 
-    try
-    {
-        gatherRows(input, indices, output, workspace);
-        FAIL() << "Expected invalid gather index";
-    }
-    catch (const std::out_of_range& error)
-    {
-        EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
-    }
-    expectGpuMatrix(output, 4, 2, {
-        Scalar(9), Scalar(8), Scalar(7), Scalar(6),
-        Scalar(5), Scalar(4), Scalar(3), Scalar(2)
-    });
+            expectGpuMatrix(exclusiveScan(positive), 2, 1, {Index(0), std::numeric_limits<Index>::max()});
+            expectGpuMatrix(exclusiveScan(negative), 2, 1, {Index(0), std::numeric_limits<Index>::min()});
+            EXPECT_THROW(static_cast<void>(exclusiveScan(final_overflow)), std::overflow_error);
+        }
 
-    test::CudaStreamGuard stream;
-    IndexingWorkspace async_workspace;
-    auto async_output = initial.toGpu();
-    gatherRowsAsync(input, indices, async_output, async_workspace, stream.get());
-    stream.synchronize();
-    try
-    {
-        async_workspace.checkStatus("gatherRowsAsync");
-        FAIL() << "Expected async invalid gather index";
-    }
-    catch (const std::out_of_range& error)
-    {
-        EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
-    }
-    expectGpuMatrix(async_output, 4, 2, {
-        Scalar(9), Scalar(8), Scalar(7), Scalar(6),
-        Scalar(5), Scalar(4), Scalar(3), Scalar(2)
-    });
-    async_workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
+        TEST(IndexingScanCudaTest, PreservesEmptyGpuShape)
+        {
+            DenseStorage<Index, Device::CPU> empty_cpu(0, 3);
 
-TYPED_TEST(IndexingTest, GpuAsyncStatusBatchPreservesGatherFailureUntilConsumed)
-{
-    using Scalar = TypeParam;
-    auto input = makeMatrix<Scalar>(3, 1, {
-        Scalar(10), Scalar(20), Scalar(30)
-    }).toGpu();
-    auto bad_indices = makeMatrix<Index>(1, 1, {Index(3)}).toGpu();
-    auto valid_indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
-    auto bad_output = makeMatrix<Scalar>(1, 1, {Scalar(-1)}).toGpu();
-    auto protected_output = makeMatrix<Scalar>(1, 1, {Scalar(-2)}).toGpu();
-    test::CudaStreamGuard stream;
-    IndexingWorkspace workspace;
+            const auto empty = exclusiveScan(empty_cpu.toGpu());
 
-    gatherRowsAsync(
-        input, bad_indices, bad_output, workspace, stream.get());
-    gatherRowsAsync(
-        input, valid_indices, protected_output, workspace, stream.get());
-    stream.synchronize();
-    EXPECT_THROW(workspace.checkStatus("gatherRowsAsync batch"), std::out_of_range);
-    expectGpuMatrix(bad_output, 1, 1, {Scalar(-1)});
-    expectGpuMatrix(protected_output, 1, 1, {Scalar(-2)});
+            expectGpuMatrix<Index>(empty, 0, 3, {});
+        }
 
-    gatherRowsAsync(
-        input, valid_indices, protected_output, workspace, stream.get());
-    stream.synchronize();
-    EXPECT_NO_THROW(workspace.checkStatus("gatherRowsAsync reused batch"));
-    expectGpuMatrix(protected_output, 1, 1, {Scalar(20)});
-    workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
+        TEST(IndexingScanCudaTest, ViewsUseExternalStorageNonDefaultStreamAndPreserveOverflowStatus)
+        {
+            constexpr Index count = 4;
+            auto storage =
+                DenseStorage<std::uint8_t, Device::GPU>::uninitialized(2 * count * static_cast<Index>(sizeof(Index)), 1);
+            auto* counts_data = reinterpret_cast<Index*>(storage.data());
+            auto* output_data = counts_data + count;
+            const Index host_counts[count] = {2, 3, -1, 4};
+            Index host_output[count] = {};
+            test::CudaStreamGuard stream(cudaStreamNonBlocking);
+            IndexingWorkspace workspace;
 
-TYPED_TEST(IndexingTest, GpuAsyncStatusBatchPreservesOverflowAcrossSuccessfulGather)
-{
-    using Scalar = TypeParam;
-    auto counts = makeMatrix<Index>(2, 1, {
-        std::numeric_limits<Index>::max(), Index(1)
-    }).toGpu();
-    DenseMatrix<Index, Device::GPU> scan_output(2, 1);
-    auto input = makeMatrix<Scalar>(2, 1, {Scalar(10), Scalar(20)}).toGpu();
-    auto indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
-    DenseMatrix<Scalar, Device::GPU> gather_output(1, 1);
-    test::CudaStreamGuard stream;
-    IndexingWorkspace workspace;
+            ASSERT_EQ(
+                cudaMemcpyAsync(counts_data, host_counts, sizeof(host_counts), cudaMemcpyHostToDevice, stream.get()),
+                cudaSuccess);
+            const auto counts =
+                makeColumnMajorView<Index, Device::GPU>(static_cast<const Index*>(counts_data), count, 1);
+            auto output = makeColumnMajorView<Index, Device::GPU>(output_data, count, 1);
+            exclusiveScan(counts, output, workspace, stream.get());
+            ASSERT_EQ(cudaMemcpy(host_output, output_data, sizeof(host_output), cudaMemcpyDeviceToHost), cudaSuccess);
+            EXPECT_EQ(host_output[0], 0);
+            EXPECT_EQ(host_output[1], 2);
+            EXPECT_EQ(host_output[2], 5);
+            EXPECT_EQ(host_output[3], 4);
 
-    exclusiveScanAsync(counts, scan_output, workspace, stream.get());
-    gatherRowsAsync(input, indices, gather_output, workspace, stream.get());
-    stream.synchronize();
-    EXPECT_THROW(workspace.checkStatus("mixed indexing batch"), std::overflow_error);
-    expectGpuMatrix(gather_output, 1, 1, {Scalar(20)});
-    workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
+            const std::size_t capacity = workspace.capacityBytes();
+            void* const workspace_data = workspace.data();
+            exclusiveScanAsync(counts, output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_NO_THROW(workspace.checkStatus("exclusiveScanAsync view reuse"));
+            EXPECT_EQ(workspace.capacityBytes(), capacity);
+            EXPECT_EQ(workspace.data(), workspace_data);
 
-TYPED_TEST(IndexingTest, GpuAsyncStatusBatchReportsOverflowBeforeOutOfRange)
-{
-    using Scalar = TypeParam;
-    auto input = makeMatrix<Scalar>(1, 1, {Scalar(10)}).toGpu();
-    auto bad_indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
-    DenseMatrix<Scalar, Device::GPU> gather_output(1, 1);
-    auto counts = makeMatrix<Index>(2, 1, {
-        std::numeric_limits<Index>::max(), Index(1)
-    }).toGpu();
-    DenseMatrix<Index, Device::GPU> scan_output(2, 1);
-    test::CudaStreamGuard stream;
-    IndexingWorkspace workspace;
+            const Index overflowing[2] = {std::numeric_limits<Index>::max(), Index(1)};
+            ASSERT_EQ(
+                cudaMemcpyAsync(counts_data, overflowing, sizeof(overflowing), cudaMemcpyHostToDevice, stream.get()),
+                cudaSuccess);
+            const auto overflow_counts =
+                makeColumnMajorView<Index, Device::GPU>(static_cast<const Index*>(counts_data), 2, 1);
+            auto overflow_output = makeColumnMajorView<Index, Device::GPU>(output_data, 2, 1);
+            exclusiveScanAsync(overflow_counts, overflow_output, workspace, stream.get());
+            stream.synchronize();
+            try
+            {
+                workspace.checkStatus("exclusiveScanAsync view overflow");
+                FAIL() << "Expected view scan overflow";
+            }
+            catch (const std::overflow_error& error)
+            {
+                EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
+            }
 
-    gatherRowsAsync(input, bad_indices, gather_output, workspace, stream.get());
-    exclusiveScanAsync(counts, scan_output, workspace, stream.get());
-    stream.synchronize();
-    EXPECT_THROW(workspace.checkStatus("mixed error batch"), std::overflow_error);
-    workspace.closeAsyncAllocation();
-    stream.synchronize();
-}
+            const auto empty_counts = makeColumnMajorView<Index, Device::GPU>(static_cast<const Index*>(nullptr), 0, 1);
+            auto empty_output = makeColumnMajorView<Index, Device::GPU>(static_cast<Index*>(nullptr), 0, 1);
+            exclusiveScanAsync(empty_counts, empty_output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_NO_THROW(workspace.checkStatus("exclusiveScanAsync empty view"));
 
-TYPED_TEST(IndexingTest, GpuGatherSupportsEmptySelection)
-{
-    using Scalar = TypeParam;
-    DenseMatrix<Scalar, Device::CPU> input_cpu(4, 2);
-    DenseMatrix<Index, Device::CPU> indices_cpu(0, 1);
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
 
-    const auto gathered = gatherRows(input_cpu.toGpu(), indices_cpu.toGpu());
+        TEST(IndexingScanCudaTest, RejectsOverlappingViewsBeforeChangingStorage)
+        {
+            const auto original = makeMatrix<Index>(5, 1, {2, 3, 4, 5, 6});
+            auto storage = original.toGpu();
+            const auto input = makeColumnMajorView<Index, Device::GPU>(static_cast<const Index*>(storage.data()), 4, 1);
+            auto partial = makeColumnMajorView<Index, Device::GPU>(storage.data() + 1, 4, 1);
+            auto exact = makeColumnMajorView<Index, Device::GPU>(storage.data(), 4, 1);
+            test::CudaStreamGuard stream(cudaStreamNonBlocking);
+            IndexingWorkspace workspace;
 
-    expectGpuMatrix<Scalar>(gathered, 0, 2, {});
-}
+            EXPECT_THROW(exclusiveScanAsync(input, partial, workspace, stream.get()), std::invalid_argument);
+            EXPECT_THROW(exclusiveScan(input, exact, workspace, stream.get()), std::invalid_argument);
+            EXPECT_THROW(exclusiveScan(storage, storage, workspace, stream.get()), std::invalid_argument);
+            EXPECT_EQ(workspace.capacityBytes(), 0U);
+            expectGpuMatrix<Index>(storage, 5, 1, {2, 3, 4, 5, 6});
+        }
 
-} // namespace
-} // namespace plamatrix
+        TYPED_TEST(IndexingTest, GpuGatherMatchesCpuWithDuplicatesAndAsyncReuse)
+        {
+            using Scalar = TypeParam;
+            const auto input_cpu = makeMatrix<Scalar>(4,
+                                                      3,
+                                                      {Scalar(10),
+                                                       Scalar(11),
+                                                       Scalar(12),
+                                                       Scalar(13),
+                                                       Scalar(20),
+                                                       Scalar(21),
+                                                       Scalar(22),
+                                                       Scalar(23),
+                                                       Scalar(30),
+                                                       Scalar(31),
+                                                       Scalar(32),
+                                                       Scalar(33)});
+            const auto indices_cpu = makeMatrix<Index>(3, 1, {2, 0, 2});
+            auto input = input_cpu.toGpu();
+            auto indices = indices_cpu.toGpu();
+
+            expectGpuMatrix(gatherRows(input, indices),
+                            3,
+                            3,
+                            {Scalar(12),
+                             Scalar(10),
+                             Scalar(12),
+                             Scalar(22),
+                             Scalar(20),
+                             Scalar(22),
+                             Scalar(32),
+                             Scalar(30),
+                             Scalar(32)});
+
+            test::CudaStreamGuard stream;
+            IndexingWorkspace workspace;
+            DenseStorage<Scalar, Device::GPU> first(3, 3);
+            DenseStorage<Scalar, Device::GPU> second(3, 3);
+            gatherRowsAsync(input, indices, first, workspace, stream.get());
+            const std::size_t capacity = workspace.capacityBytes();
+            void* const data = workspace.data();
+            gatherRowsAsync(input, indices, second, workspace, stream.get());
+            EXPECT_EQ(workspace.capacityBytes(), capacity);
+            EXPECT_EQ(workspace.data(), data);
+            stream.synchronize();
+            workspace.checkStatus("gatherRowsAsync");
+            expectGpuMatrix(second,
+                            3,
+                            3,
+                            {Scalar(12),
+                             Scalar(10),
+                             Scalar(12),
+                             Scalar(22),
+                             Scalar(20),
+                             Scalar(22),
+                             Scalar(32),
+                             Scalar(30),
+                             Scalar(32)});
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
+
+        TYPED_TEST(IndexingTest, GpuGatherInvalidIndexReportsLowestOffsetAndLeavesOutputUnchanged)
+        {
+            using Scalar = TypeParam;
+            auto input =
+                makeMatrix<Scalar>(3, 2, {Scalar(1), Scalar(2), Scalar(3), Scalar(4), Scalar(5), Scalar(6)}).toGpu();
+            auto indices = makeMatrix<Index>(4, 1, {1, 3, -1, 0}).toGpu();
+            const auto initial = makeMatrix<Scalar>(
+                4, 2, {Scalar(9), Scalar(8), Scalar(7), Scalar(6), Scalar(5), Scalar(4), Scalar(3), Scalar(2)});
+            auto output = initial.toGpu();
+            IndexingWorkspace workspace;
+
+            try
+            {
+                gatherRows(input, indices, output, workspace);
+                FAIL() << "Expected invalid gather index";
+            }
+            catch (const std::out_of_range& error)
+            {
+                EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
+            }
+            expectGpuMatrix(
+                output, 4, 2, {Scalar(9), Scalar(8), Scalar(7), Scalar(6), Scalar(5), Scalar(4), Scalar(3), Scalar(2)});
+
+            test::CudaStreamGuard stream;
+            IndexingWorkspace async_workspace;
+            auto async_output = initial.toGpu();
+            gatherRowsAsync(input, indices, async_output, async_workspace, stream.get());
+            stream.synchronize();
+            try
+            {
+                async_workspace.checkStatus("gatherRowsAsync");
+                FAIL() << "Expected async invalid gather index";
+            }
+            catch (const std::out_of_range& error)
+            {
+                EXPECT_NE(std::string(error.what()).find("source offset 1"), std::string::npos);
+            }
+            expectGpuMatrix(async_output,
+                            4,
+                            2,
+                            {Scalar(9), Scalar(8), Scalar(7), Scalar(6), Scalar(5), Scalar(4), Scalar(3), Scalar(2)});
+            async_workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
+
+        TYPED_TEST(IndexingTest, GpuAsyncStatusBatchPreservesGatherFailureUntilConsumed)
+        {
+            using Scalar = TypeParam;
+            auto input = makeMatrix<Scalar>(3, 1, {Scalar(10), Scalar(20), Scalar(30)}).toGpu();
+            auto bad_indices = makeMatrix<Index>(1, 1, {Index(3)}).toGpu();
+            auto valid_indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
+            auto bad_output = makeMatrix<Scalar>(1, 1, {Scalar(-1)}).toGpu();
+            auto protected_output = makeMatrix<Scalar>(1, 1, {Scalar(-2)}).toGpu();
+            test::CudaStreamGuard stream;
+            IndexingWorkspace workspace;
+
+            gatherRowsAsync(input, bad_indices, bad_output, workspace, stream.get());
+            gatherRowsAsync(input, valid_indices, protected_output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_THROW(workspace.checkStatus("gatherRowsAsync batch"), std::out_of_range);
+            expectGpuMatrix(bad_output, 1, 1, {Scalar(-1)});
+            expectGpuMatrix(protected_output, 1, 1, {Scalar(-2)});
+
+            gatherRowsAsync(input, valid_indices, protected_output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_NO_THROW(workspace.checkStatus("gatherRowsAsync reused batch"));
+            expectGpuMatrix(protected_output, 1, 1, {Scalar(20)});
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
+
+        TYPED_TEST(IndexingTest, GpuAsyncStatusBatchPreservesOverflowAcrossSuccessfulGather)
+        {
+            using Scalar = TypeParam;
+            auto counts = makeMatrix<Index>(2, 1, {std::numeric_limits<Index>::max(), Index(1)}).toGpu();
+            DenseStorage<Index, Device::GPU> scan_output(2, 1);
+            auto input = makeMatrix<Scalar>(2, 1, {Scalar(10), Scalar(20)}).toGpu();
+            auto indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
+            DenseStorage<Scalar, Device::GPU> gather_output(1, 1);
+            test::CudaStreamGuard stream;
+            IndexingWorkspace workspace;
+
+            exclusiveScanAsync(counts, scan_output, workspace, stream.get());
+            gatherRowsAsync(input, indices, gather_output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_THROW(workspace.checkStatus("mixed indexing batch"), std::overflow_error);
+            expectGpuMatrix(gather_output, 1, 1, {Scalar(20)});
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
+
+        TYPED_TEST(IndexingTest, GpuAsyncStatusBatchReportsOverflowBeforeOutOfRange)
+        {
+            using Scalar = TypeParam;
+            auto input = makeMatrix<Scalar>(1, 1, {Scalar(10)}).toGpu();
+            auto bad_indices = makeMatrix<Index>(1, 1, {Index(1)}).toGpu();
+            DenseStorage<Scalar, Device::GPU> gather_output(1, 1);
+            auto counts = makeMatrix<Index>(2, 1, {std::numeric_limits<Index>::max(), Index(1)}).toGpu();
+            DenseStorage<Index, Device::GPU> scan_output(2, 1);
+            test::CudaStreamGuard stream;
+            IndexingWorkspace workspace;
+
+            gatherRowsAsync(input, bad_indices, gather_output, workspace, stream.get());
+            exclusiveScanAsync(counts, scan_output, workspace, stream.get());
+            stream.synchronize();
+            EXPECT_THROW(workspace.checkStatus("mixed error batch"), std::overflow_error);
+            workspace.closeAsyncAllocation();
+            stream.synchronize();
+        }
+
+        TYPED_TEST(IndexingTest, GpuGatherSupportsEmptySelection)
+        {
+            using Scalar = TypeParam;
+            DenseStorage<Scalar, Device::CPU> input_cpu(4, 2);
+            DenseStorage<Index, Device::CPU> indices_cpu(0, 1);
+
+            const auto gathered = gatherRows(input_cpu.toGpu(), indices_cpu.toGpu());
+
+            expectGpuMatrix<Scalar>(gathered, 0, 2, {});
+        }
+
+    } // namespace
+} // namespace plamatrix::internal
 
 #endif

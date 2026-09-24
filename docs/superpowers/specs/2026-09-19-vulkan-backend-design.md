@@ -26,7 +26,8 @@ AXPY/残差更新和 PCG；后续再扩展 float64、Schur assembly 和更多算
 
 公开接口与 `plamatrix::opencl::pcg` 对齐，新增 `plamatrix::vulkan::pcg` 及设备枚举/可用性查询。
 Schur 线性后端在第一阶段不自动切换到 Vulkan，避免把后端验证和 Schur assembly 绑定；完成
-PCG 对比后再增加 `SchurComplementLinearBackend::Vulkan`。
+后续 cooperative-matrix 工作已增加 `SchurComplementLinearBackend::Vulkan`，并让 Schur values 在设备端
+装配后直接进入 block-PCG；本节保留的是第一阶段 CPU-owned CSR PCG 的设计边界。
 
 ## 基准与正确性
 

@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Left { float left_values[]; };
+layout(std430, binding = 1) readonly buffer Right { float right_values[]; };
+layout(std430, binding = 2) writeonly buffer Output { float output_values[]; };
+layout(push_constant) uniform Parameters { uint rows; uint columns; uint inner; } parameters;
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= parameters.rows * parameters.columns)
+        return;
+    const uint row = index % parameters.rows;
+    const uint column = index / parameters.rows;
+    float sum = 0.0;
+    for (uint k = 0u; k < parameters.inner; ++k)
+        sum += left_values[row + k * parameters.rows] * right_values[k + column * parameters.inner];
+    output_values[index] = sum;
+}

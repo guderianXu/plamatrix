@@ -2,9 +2,9 @@
 
 #include <cstddef>
 
-#include "plamatrix/core/allocator.h"
+#include "plamatrix/internal/core/allocator.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace test
 {
@@ -14,9 +14,9 @@ namespace test
 class CudaStreamGuard
 {
 public:
-    CudaStreamGuard()
+    explicit CudaStreamGuard(unsigned int flags = cudaStreamDefault)
     {
-        PLAMATRIX_CHECK_CUDA(cudaStreamCreate(&_stream));
+        PLAMATRIX_CHECK_CUDA(cudaStreamCreateWithFlags(&_stream, flags));
     }
 
     ~CudaStreamGuard() noexcept
@@ -118,4 +118,4 @@ private:
 };
 
 } // namespace test
-} // namespace plamatrix
+} // namespace plamatrix::internal

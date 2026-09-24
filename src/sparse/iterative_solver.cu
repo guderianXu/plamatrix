@@ -9,7 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace plamatrix
+namespace plamatrix::internal
 {
     using namespace iterative_solver_detail;
 
@@ -29,12 +29,12 @@ namespace plamatrix
 #endif
 
         template <typename Scalar>
-        void initialize(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                        const DenseMatrix<Scalar, Device::GPU>& rhs,
-                        DenseMatrix<Scalar, Device::GPU>& solution,
+        void initialize(const CsrStorage<Scalar, Device::GPU>& matrix,
+                        const DenseStorage<Scalar, Device::GPU>& rhs,
+                        DenseStorage<Scalar, Device::GPU>& solution,
                         IterativeSolverWorkspace<Scalar>& workspace,
                         bool preconditioned,
-                        const DenseMatrix<Scalar, Device::GPU>* inverse_blocks,
+                        const DenseStorage<Scalar, Device::GPU>* inverse_blocks,
                         Index block_size,
                         cudaStream_t stream)
         {
@@ -89,8 +89,8 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        void submitStep(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                        DenseMatrix<Scalar, Device::GPU>& solution,
+        void submitStep(const CsrStorage<Scalar, Device::GPU>& matrix,
+                        DenseStorage<Scalar, Device::GPU>& solution,
                         IterativeSolverWorkspace<Scalar>& workspace,
                         cudaStream_t stream)
         {
@@ -113,7 +113,7 @@ namespace plamatrix
         template <typename Scalar>
         void updateDirection(IterativeSolverWorkspace<Scalar>& workspace,
                              bool preconditioned,
-                             const DenseMatrix<Scalar, Device::GPU>* inverse_blocks,
+                             const DenseStorage<Scalar, Device::GPU>* inverse_blocks,
                              Index block_size,
                              cudaStream_t stream)
         {
@@ -163,9 +163,9 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        AsyncIterativeSolverState fixedSolve(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                             const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                             DenseMatrix<Scalar, Device::GPU>& solution,
+        AsyncIterativeSolverState fixedSolve(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                             const DenseStorage<Scalar, Device::GPU>& rhs,
+                                             DenseStorage<Scalar, Device::GPU>& solution,
                                              int iterations,
                                              IterativeSolverWorkspace<Scalar>& workspace,
                                              cudaStream_t stream,
@@ -182,7 +182,7 @@ namespace plamatrix
                        solution,
                        workspace,
                        preconditioned,
-                       static_cast<const DenseMatrix<Scalar, Device::GPU>*>(nullptr),
+                       static_cast<const DenseStorage<Scalar, Device::GPU>*>(nullptr),
                        0,
                        stream);
             if (matrix.rows() == 0)
@@ -203,7 +203,7 @@ namespace plamatrix
                     {
                         updateDirection(workspace,
                                         preconditioned,
-                                        static_cast<const DenseMatrix<Scalar, Device::GPU>*>(nullptr),
+                                        static_cast<const DenseStorage<Scalar, Device::GPU>*>(nullptr),
                                         0,
                                         stream);
                     }
@@ -227,10 +227,10 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        void validateBlockPreconditioner(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                         const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                         const DenseMatrix<Scalar, Device::GPU>& solution,
-                                         const DenseMatrix<Scalar, Device::GPU>& inverse_blocks,
+        void validateBlockPreconditioner(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                         const DenseStorage<Scalar, Device::GPU>& rhs,
+                                         const DenseStorage<Scalar, Device::GPU>& solution,
+                                         const DenseStorage<Scalar, Device::GPU>& inverse_blocks,
                                          Index block_size,
                                          cudaStream_t stream)
         {
@@ -249,14 +249,14 @@ namespace plamatrix
         }
 
         template <typename Scalar>
-        IterativeSolverReport adaptiveSolve(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                            const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                            DenseMatrix<Scalar, Device::GPU>& solution,
+        IterativeSolverReport adaptiveSolve(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                            const DenseStorage<Scalar, Device::GPU>& rhs,
+                                            DenseStorage<Scalar, Device::GPU>& solution,
                                             IterativeSolverWorkspace<Scalar>& workspace,
                                             const IterativeSolverOptions& options,
                                             cudaStream_t stream,
                                             bool preconditioned,
-                                            const DenseMatrix<Scalar, Device::GPU>* inverse_blocks = nullptr,
+                                            const DenseStorage<Scalar, Device::GPU>* inverse_blocks = nullptr,
                                             Index block_size = 0)
         {
             validateOptions(options);
@@ -364,9 +364,9 @@ namespace plamatrix
 #endif
 
     template <typename Scalar>
-    IterativeSolverReport cg(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                             const DenseMatrix<Scalar, Device::GPU>& rhs,
-                             DenseMatrix<Scalar, Device::GPU>& solution,
+    IterativeSolverReport cg(const CsrStorage<Scalar, Device::GPU>& matrix,
+                             const DenseStorage<Scalar, Device::GPU>& rhs,
+                             DenseStorage<Scalar, Device::GPU>& solution,
                              IterativeSolverWorkspace<Scalar>& workspace,
                              const IterativeSolverOptions& options,
                              cudaStream_t stream)
@@ -375,9 +375,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    IterativeSolverReport pcg(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                              const DenseMatrix<Scalar, Device::GPU>& rhs,
-                              DenseMatrix<Scalar, Device::GPU>& solution,
+    IterativeSolverReport pcg(const CsrStorage<Scalar, Device::GPU>& matrix,
+                              const DenseStorage<Scalar, Device::GPU>& rhs,
+                              DenseStorage<Scalar, Device::GPU>& solution,
                               IterativeSolverWorkspace<Scalar>& workspace,
                               const IterativeSolverOptions& options,
                               cudaStream_t stream)
@@ -386,10 +386,10 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    IterativeSolverReport blockPcg(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                   const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                   DenseMatrix<Scalar, Device::GPU>& solution,
-                                   const DenseMatrix<Scalar, Device::GPU>& inverse_blocks,
+    IterativeSolverReport blockPcg(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                   const DenseStorage<Scalar, Device::GPU>& rhs,
+                                   DenseStorage<Scalar, Device::GPU>& solution,
+                                   const DenseStorage<Scalar, Device::GPU>& inverse_blocks,
                                    Index block_size,
                                    IterativeSolverWorkspace<Scalar>& workspace,
                                    const IterativeSolverOptions& options,
@@ -400,9 +400,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    AsyncIterativeSolverState cgFixedIterationsAsync(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                                     const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                                     DenseMatrix<Scalar, Device::GPU>& solution,
+    AsyncIterativeSolverState cgFixedIterationsAsync(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                                     const DenseStorage<Scalar, Device::GPU>& rhs,
+                                                     DenseStorage<Scalar, Device::GPU>& solution,
                                                      int iterations,
                                                      IterativeSolverWorkspace<Scalar>& workspace,
                                                      cudaStream_t stream)
@@ -411,9 +411,9 @@ namespace plamatrix
     }
 
     template <typename Scalar>
-    AsyncIterativeSolverState pcgFixedIterationsAsync(const CSRMatrix<Scalar, Device::GPU>& matrix,
-                                                      const DenseMatrix<Scalar, Device::GPU>& rhs,
-                                                      DenseMatrix<Scalar, Device::GPU>& solution,
+    AsyncIterativeSolverState pcgFixedIterationsAsync(const CsrStorage<Scalar, Device::GPU>& matrix,
+                                                      const DenseStorage<Scalar, Device::GPU>& rhs,
+                                                      DenseStorage<Scalar, Device::GPU>& solution,
                                                       int iterations,
                                                       IterativeSolverWorkspace<Scalar>& workspace,
                                                       cudaStream_t stream)
@@ -468,35 +468,35 @@ namespace plamatrix
     }
 
 #define PLAMATRIX_INSTANTIATE_GPU_SOLVER(Scalar)                                                                       \
-    template IterativeSolverReport cg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                                   \
-                                              const DenseMatrix<Scalar, Device::GPU>&,                                 \
-                                              DenseMatrix<Scalar, Device::GPU>&,                                       \
+    template IterativeSolverReport cg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                                   \
+                                              const DenseStorage<Scalar, Device::GPU>&,                                 \
+                                              DenseStorage<Scalar, Device::GPU>&,                                       \
                                               IterativeSolverWorkspace<Scalar>&,                                       \
                                               const IterativeSolverOptions&,                                           \
                                               cudaStream_t);                                                           \
-    template IterativeSolverReport pcg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                                  \
-                                               const DenseMatrix<Scalar, Device::GPU>&,                                \
-                                               DenseMatrix<Scalar, Device::GPU>&,                                      \
+    template IterativeSolverReport pcg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                                  \
+                                               const DenseStorage<Scalar, Device::GPU>&,                                \
+                                               DenseStorage<Scalar, Device::GPU>&,                                      \
                                                IterativeSolverWorkspace<Scalar>&,                                      \
                                                const IterativeSolverOptions&,                                          \
                                                cudaStream_t);                                                          \
-    template IterativeSolverReport blockPcg<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,                             \
-                                                    const DenseMatrix<Scalar, Device::GPU>&,                           \
-                                                    DenseMatrix<Scalar, Device::GPU>&,                                 \
-                                                    const DenseMatrix<Scalar, Device::GPU>&,                           \
+    template IterativeSolverReport blockPcg<Scalar>(const CsrStorage<Scalar, Device::GPU>&,                             \
+                                                    const DenseStorage<Scalar, Device::GPU>&,                           \
+                                                    DenseStorage<Scalar, Device::GPU>&,                                 \
+                                                    const DenseStorage<Scalar, Device::GPU>&,                           \
                                                     Index,                                                             \
                                                     IterativeSolverWorkspace<Scalar>&,                                 \
                                                     const IterativeSolverOptions&,                                     \
                                                     cudaStream_t);                                                     \
-    template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,           \
-                                                                      const DenseMatrix<Scalar, Device::GPU>&,         \
-                                                                      DenseMatrix<Scalar, Device::GPU>&,               \
+    template AsyncIterativeSolverState cgFixedIterationsAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,           \
+                                                                      const DenseStorage<Scalar, Device::GPU>&,         \
+                                                                      DenseStorage<Scalar, Device::GPU>&,               \
                                                                       int,                                             \
                                                                       IterativeSolverWorkspace<Scalar>&,               \
                                                                       cudaStream_t);                                   \
-    template AsyncIterativeSolverState pcgFixedIterationsAsync<Scalar>(const CSRMatrix<Scalar, Device::GPU>&,          \
-                                                                       const DenseMatrix<Scalar, Device::GPU>&,        \
-                                                                       DenseMatrix<Scalar, Device::GPU>&,              \
+    template AsyncIterativeSolverState pcgFixedIterationsAsync<Scalar>(const CsrStorage<Scalar, Device::GPU>&,          \
+                                                                       const DenseStorage<Scalar, Device::GPU>&,        \
+                                                                       DenseStorage<Scalar, Device::GPU>&,              \
                                                                        int,                                            \
                                                                        IterativeSolverWorkspace<Scalar>&,              \
                                                                        cudaStream_t)
@@ -510,4 +510,4 @@ namespace plamatrix
 
 #undef PLAMATRIX_INSTANTIATE_GPU_SOLVER
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

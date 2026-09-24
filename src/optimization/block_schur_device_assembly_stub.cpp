@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace plamatrix::block_schur_detail
+namespace plamatrix::internal::block_schur_detail
 {
 
 #ifndef PLAMATRIX_WITH_CUDA
@@ -133,4 +133,39 @@ namespace plamatrix::block_schur_detail
                                                              bool);
 #endif
 
-} // namespace plamatrix::block_schur_detail
+#ifndef PLAMATRIX_WITH_VULKAN
+    std::vector<float> assembleSchurValuesOnVulkan(Index,
+                                                   Index,
+                                                   const std::vector<float>&,
+                                                   const std::vector<float>&,
+                                                   const std::vector<float>&,
+                                                   const std::vector<float>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   const std::vector<Index>&,
+                                                   SchurComplementSolverWorkspace<float>&,
+                                                   bool)
+    {
+        throw std::runtime_error("Vulkan Schur assembly requires PLAMATRIX_WITH_VULKAN=ON");
+    }
+
+    IterativeSolverReport solveLastVulkanSchurValues(const CsrStorage<float, Device::CPU>&,
+                                                     const DenseStorage<float, Device::CPU>&,
+                                                     DenseStorage<float, Device::CPU>&,
+                                                     const DenseStorage<float, Device::CPU>*,
+                                                     Index,
+                                                     bool,
+                                                     SchurComplementSolverWorkspace<float>&,
+                                                     const IterativeSolverOptions&)
+    {
+        throw std::runtime_error("Vulkan Schur PCG requires PLAMATRIX_WITH_VULKAN=ON");
+    }
+#endif
+
+} // namespace plamatrix::internal::block_schur_detail

@@ -5,7 +5,7 @@
 
 #include "small_matrix_detail.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 namespace
 {
@@ -304,4 +304,4 @@ bool small_matrix_detail::SymmetricEigh3x3WorkspaceAccess::beginStatusBatch(
     return true;
 }
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

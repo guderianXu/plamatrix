@@ -1,0 +1,43 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer Left { float left_values[]; };
+layout(std430, binding = 1) readonly buffer Right { float right_values[]; };
+layout(std430, binding = 2) writeonly buffer Output { float output_values[]; };
+layout(push_constant) uniform Parameters { uint rows; uint columns; uint inner; } parameters;
+
+const uint tile_size = 16u;
+shared float left_tile[16][16];
+shared float right_tile[16][16];
+
+void main()
+{
+    const uint local_index = gl_LocalInvocationID.x;
+    const uint local_row = local_index & 15u;
+    const uint local_column = local_index >> 4u;
+    const uint tile_rows = (parameters.rows + tile_size - 1u) / tile_size;
+    const uint tile_row = gl_WorkGroupID.x % tile_rows;
+    const uint tile_column = gl_WorkGroupID.x / tile_rows;
+    const uint row = tile_row * tile_size + local_row;
+    const uint column = tile_column * tile_size + local_column;
+    float sum = 0.0;
+    const uint tile_count = (parameters.inner + tile_size - 1u) / tile_size;
+    for (uint tile = 0u; tile < tile_count; ++tile)
+    {
+        const uint left_k = tile * tile_size + local_column;
+        const uint right_k = tile * tile_size + local_row;
+        left_tile[local_column][local_row] =
+            row < parameters.rows && left_k < parameters.inner
+                ? left_values[row + left_k * parameters.rows]
+                : 0.0;
+        right_tile[local_column][local_row] =
+            right_k < parameters.inner && column < parameters.columns
+                ? right_values[right_k + column * parameters.inner]
+                : 0.0;
+        barrier();
+        for (uint k = 0u; k < tile_size; ++k)
+            sum += left_tile[k][local_row] * right_tile[local_column][k];
+        barrier();
+    }
+    if (row < parameters.rows && column < parameters.columns)
+        output_values[row + column * parameters.rows] = sum;
+}

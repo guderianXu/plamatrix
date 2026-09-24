@@ -5,7 +5,7 @@
 
 #include "benchmark/benchmark_cases.h"
 
-namespace plamatrix
+namespace plamatrix::internal
 {
 
 /// Holds environment information and benchmark results.
@@ -28,4 +28,4 @@ struct BenchmarkReport
     void writeMarkdown(const std::string& path) const;
 };
 
-} // namespace plamatrix
+} // namespace plamatrix::internal

@@ -13,8 +13,10 @@
 #include <omp.h>
 
 #include <plamatrix/plamatrix.h>
+#include <plamatrix/internal/backend.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 class PointCloudWorkflowTest : public ::testing::Test
 {
@@ -26,9 +28,9 @@ protected:
     }
 
     // 生成球形点云 — 各向同性，协方差矩阵接近单位矩阵的倍数
-    DenseMatrix<float, Device::CPU> generateSphere(Index N, float radius)
+    DenseStorage<float, Device::CPU> generateSphere(Index N, float radius)
     {
-        DenseMatrix<float, Device::CPU> pts(N, 3);
+        DenseStorage<float, Device::CPU> pts(N, 3);
         for (Index i = 0; i < N; ++i)
         {
             float u = static_cast<float>(std::rand()) / RAND_MAX * 2.0f - 1.0f;
@@ -43,9 +45,9 @@ protected:
     }
 
     // 生成长方体点云 (非各向同性) — 用于验证 PCA 方向
-    DenseMatrix<float, Device::CPU> generateBox(Index N, float lx, float ly, float lz)
+    DenseStorage<float, Device::CPU> generateBox(Index N, float lx, float ly, float lz)
     {
-        DenseMatrix<float, Device::CPU> pts(N, 3);
+        DenseStorage<float, Device::CPU> pts(N, 3);
         for (Index i = 0; i < N; ++i)
         {
             pts(i, 0) = (static_cast<float>(std::rand())/RAND_MAX - 0.5f) * lx;
@@ -56,9 +58,9 @@ protected:
     }
 
     // 计算几何中心 (质心)
-    Vec3<float> computeCenter(const DenseMatrix<float, Device::CPU>& pts)
+    PackedVector3<float> computeCenter(const DenseStorage<float, Device::CPU>& pts)
     {
-        Vec3<float> c{0, 0, 0};
+        PackedVector3<float> c{0, 0, 0};
         Index N = pts.rows();
         for (Index i = 0; i < N; ++i)
         {
@@ -134,7 +136,7 @@ TEST_F(PointCloudWorkflowTest, box_Anisotropic)
 TEST_F(PointCloudWorkflowTest, rigidTransform_Orthogonality)
 {
     // 绕 X 轴 30°
-    Vec3<float> axis{1.0f, 0.0f, 0.0f};
+    PackedVector3<float> axis{1.0f, 0.0f, 0.0f};
     float angle = 0.523599f;  // 30 degrees
     auto R = rotationMatrix<float, Device::CPU>(axis, angle);
 
@@ -172,9 +174,9 @@ TEST_F(PointCloudWorkflowTest, transformPoints_CpuVsGpu)
     auto pts = generateBox(N, 10.0f, 5.0f, 2.0f);
 
     // 变换: 绕 Z 轴 45° + 平移
-    Vec3<float> axis{0.0f, 0.0f, 1.0f};
+    PackedVector3<float> axis{0.0f, 0.0f, 1.0f};
     auto R = rotationMatrix<float, Device::CPU>(axis, 0.785398f);
-    Vec3<float> t{3.0f, -2.0f, 7.0f};
+    PackedVector3<float> t{3.0f, -2.0f, 7.0f};
     auto T = rigidTransform<float, Device::CPU>(R, t);
 
     auto cpu_result = transformPoints<float, Device::CPU>(T, pts);
@@ -198,7 +200,7 @@ TEST_F(PointCloudWorkflowTest, transformPoints_CpuVsGpu)
 TEST_F(PointCloudWorkflowTest, svd_Reconstruction)
 {
     Index N = 32;
-    auto A_cpu = DenseMatrix<float, Device::CPU>(N, N);
+    auto A_cpu = DenseStorage<float, Device::CPU>(N, N);
     for (Index j = 0; j < N; ++j)
     {
         for (Index i = 0; i < N; ++i)
@@ -212,7 +214,7 @@ TEST_F(PointCloudWorkflowTest, svd_Reconstruction)
     // 重建: A ≈ U * diag(S) * Vt
     // diag(S) 是 N×N 对角矩阵: D(i,j) = (i==j ? S(i) : 0)
     // D * Vt → 每列乘对应奇异值
-    auto D_Vt = DenseMatrix<float, Device::CPU>(N, N);
+    auto D_Vt = DenseStorage<float, Device::CPU>(N, N);
     for (Index j = 0; j < N; ++j)
     {
         for (Index i = 0; i < N; ++i)
@@ -242,7 +244,7 @@ TEST_F(PointCloudWorkflowTest, solve_ResidualCheck)
     Index N = 100;
 
     // 构造对称正定矩阵 (对角占优)
-    auto A = DenseMatrix<float, Device::CPU>(N, N);
+    auto A = DenseStorage<float, Device::CPU>(N, N);
     for (Index j = 0; j < N; ++j)
     {
         for (Index i = 0; i < N; ++i)
@@ -253,7 +255,7 @@ TEST_F(PointCloudWorkflowTest, solve_ResidualCheck)
     for (Index i = 0; i < N; ++i) A(i,i) += static_cast<float>(N);
 
     // 真实解
-    auto x_true = DenseMatrix<float, Device::CPU>(N, 1);
+    auto x_true = DenseStorage<float, Device::CPU>(N, 1);
     for (Index i = 0; i < N; ++i) x_true(i,0) = static_cast<float>(i % 7);
 
     // b = A * x_true
@@ -275,7 +277,7 @@ TEST_F(PointCloudWorkflowTest, solve_ResidualCheck)
 TEST_F(PointCloudWorkflowTest, sparse_CooToCsr_RoundTrip)
 {
     Index N = 50;
-    COOMatrix<float, Device::CPU> coo(N, N);
+    CooStorage<float, Device::CPU> coo(N, N);
 
     // 五对角矩阵 (BA 中常见)
     for (Index i = 0; i < N; ++i)
@@ -301,3 +303,5 @@ TEST_F(PointCloudWorkflowTest, sparse_CooToCsr_RoundTrip)
     }
     EXPECT_EQ(csr.rowOffsets()[N], 5*N - 6);
 }
+
+} // namespace plamatrix::internal

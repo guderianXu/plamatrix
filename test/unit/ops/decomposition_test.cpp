@@ -4,11 +4,12 @@
 
 #include <gtest/gtest.h>
 
-#include <plamatrix/ops/decomposition.h>
-#include <plamatrix/ops/gemm.h>
-#include <plamatrix/dense/dense_ops.h>
+#include <plamatrix/internal/ops/decomposition.h>
+#include <plamatrix/internal/ops/gemm.h>
+#include <plamatrix/internal/dense/dense_ops.h>
 
-using namespace plamatrix;
+namespace plamatrix::internal
+{
 
 namespace
 {
@@ -19,14 +20,14 @@ namespace
 /// @param Vt  n×n orthogonal matrix
 /// @return  m×n matrix (reconstruction of original)
 template <typename Scalar>
-DenseMatrix<Scalar, Device::CPU> reconstructFromSvd(const DenseMatrix<Scalar, Device::CPU>& U,
-                                                     const DenseMatrix<Scalar, Device::CPU>& S,
-                                                     const DenseMatrix<Scalar, Device::CPU>& Vt)
+DenseStorage<Scalar, Device::CPU> reconstructFromSvd(const DenseStorage<Scalar, Device::CPU>& U,
+                                                     const DenseStorage<Scalar, Device::CPU>& S,
+                                                     const DenseStorage<Scalar, Device::CPU>& Vt)
 {
     // Compute U * diag(S): each column of U is scaled by S[row, 0]
     Index m = U.rows();
     Index n = S.rows();   // min(m, n)
-    DenseMatrix<Scalar, Device::CPU> US(m, n);
+    DenseStorage<Scalar, Device::CPU> US(m, n);
     for (Index j = 0; j < n; ++j)
     {
         Scalar sj = S(j, 0);
@@ -38,7 +39,7 @@ DenseMatrix<Scalar, Device::CPU> reconstructFromSvd(const DenseMatrix<Scalar, De
 
     // Multiply US * Vt: result is m × (Vt.cols()) = m × n_orig
     Index n_orig = Vt.cols();
-    DenseMatrix<Scalar, Device::CPU> result(m, n_orig);
+    DenseStorage<Scalar, Device::CPU> result(m, n_orig);
     for (Index j = 0; j < n_orig; ++j)
     {
         for (Index i = 0; i < m; ++i)
@@ -56,7 +57,7 @@ DenseMatrix<Scalar, Device::CPU> reconstructFromSvd(const DenseMatrix<Scalar, De
 
 /// Check orthogonality: U^T * U ≈ I
 template <typename Scalar>
-bool isOrthogonal(const DenseMatrix<Scalar, Device::CPU>& U, Scalar tolerance)
+bool isOrthogonal(const DenseStorage<Scalar, Device::CPU>& U, Scalar tolerance)
 {
     Index n = U.cols();
     for (Index j = 0; j < n; ++j)
@@ -87,7 +88,7 @@ TEST(SVD, decompose_3x3_Cpu)
     // A = [ 4  1  2 ]
     //     [ 2  3  1 ]
     //     [ 1  2  4 ]
-    DenseMatrix<double, Device::CPU> A(3, 3);
+    DenseStorage<double, Device::CPU> A(3, 3);
     A.setValue(0, 0, 4.0);
     A.setValue(1, 0, 2.0);
     A.setValue(2, 0, 1.0);
@@ -139,7 +140,7 @@ TEST(SVD, decompose_3x3_Cpu)
 
 TEST(SVD, decompose_1x1_Cpu_Reconstructs)
 {
-    DenseMatrix<double, Device::CPU> A(1, 1);
+    DenseStorage<double, Device::CPU> A(1, 1);
     A.setValue(0, 0, -2.5);
 
     auto [U, S, Vt] = svd(A);
@@ -160,7 +161,7 @@ TEST(SVD, decompose_1x1_Cpu_Reconstructs)
 
 TEST(SVD, decompose_TallRectangularCpu_ReturnsFullShapesAndReconstructs)
 {
-    DenseMatrix<double, Device::CPU> A(4, 2);
+    DenseStorage<double, Device::CPU> A(4, 2);
     A.setValue(0, 0, 1.0);
     A.setValue(1, 0, 2.0);
     A.setValue(2, 0, 3.0);
@@ -194,8 +195,8 @@ TEST(SVD, decompose_TallRectangularCpu_ReturnsFullShapesAndReconstructs)
 
 TEST(SVD, decompose_ZeroSizedCpu_Throws)
 {
-    DenseMatrix<double, Device::CPU> no_rows(0, 3);
-    DenseMatrix<double, Device::CPU> no_cols(3, 0);
+    DenseStorage<double, Device::CPU> no_rows(0, 3);
+    DenseStorage<double, Device::CPU> no_cols(3, 0);
 
     EXPECT_THROW(svd(no_rows), std::runtime_error);
     EXPECT_THROW(svd(no_cols), std::runtime_error);
@@ -205,7 +206,7 @@ TEST(SVD, decompose_LargeRoundRobinCpu_ReconstructsDeterministically)
 {
     constexpr Index rows = 80;
     constexpr Index columns = 64;
-    DenseMatrix<double, Device::CPU> matrix(rows, columns);
+    DenseStorage<double, Device::CPU> matrix(rows, columns);
     for (Index column = 0; column < columns; ++column)
     {
         for (Index row = 0; row < rows; ++row)
@@ -231,7 +232,7 @@ TEST(SVD, decompose_LargeRoundRobinCpu_ReconstructsDeterministically)
 
 TEST(SVD, decompose_ZeroMatrixCpu_ReturnsFiniteOrthonormalFactors)
 {
-    DenseMatrix<double, Device::CPU> A(3, 3);
+    DenseStorage<double, Device::CPU> A(3, 3);
 
     auto [U, S, Vt] = svd(A);
 
@@ -277,7 +278,7 @@ TEST(SVD, decompose_ZeroMatrixCpu_ReturnsFiniteOrthonormalFactors)
 
 TEST(SVD, decompose_WideRectangularCpu_ReturnsFullShapesAndReconstructs)
 {
-    DenseMatrix<double, Device::CPU> A(2, 4);
+    DenseStorage<double, Device::CPU> A(2, 4);
     A.setValue(0, 0, 1.0);
     A.setValue(1, 0, -2.0);
     A.setValue(0, 1, 0.5);
@@ -313,7 +314,7 @@ TEST(SVD, decompose_WideRectangularCpu_ReturnsFullShapesAndReconstructs)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(SVD, decompose_3x3_Gpu)
 {
-    DenseMatrix<double, Device::CPU> A_cpu(3, 3);
+    DenseStorage<double, Device::CPU> A_cpu(3, 3);
     A_cpu.setValue(0, 0, 4.0);
     A_cpu.setValue(1, 0, 2.0);
     A_cpu.setValue(2, 0, 1.0);
@@ -370,7 +371,7 @@ TEST(SVD, decompose_3x3_Gpu)
 
 TEST(SVD, decompose_WideRectangularGpu_ReturnsFullShapesAndReconstructs)
 {
-    DenseMatrix<double, Device::CPU> A_cpu(2, 4);
+    DenseStorage<double, Device::CPU> A_cpu(2, 4);
     const double values[] = {1.0, 2.0, -1.0, 0.5, 3.0, -2.0, 4.0, 1.5};
     for (Index column = 0; column < 4; ++column)
     {
@@ -405,7 +406,7 @@ TEST(SVD, decompose_WideRectangularGpu_ReturnsFullShapesAndReconstructs)
 TEST(QR, decompose_3x2_Cpu)
 {
     // 3x2 matrix: A = [1 4; 2 5; 3 6] (column-major)
-    DenseMatrix<double, Device::CPU> A(3, 2);
+    DenseStorage<double, Device::CPU> A(3, 2);
     A.setValue(0, 0, 1.0);
     A.setValue(1, 0, 2.0);
     A.setValue(2, 0, 3.0);
@@ -454,8 +455,8 @@ TEST(QR, decompose_3x2_Cpu)
 
 TEST(QR, decompose_ZeroSizedCpu_Throws)
 {
-    DenseMatrix<double, Device::CPU> no_rows(0, 3);
-    DenseMatrix<double, Device::CPU> no_cols(3, 0);
+    DenseStorage<double, Device::CPU> no_rows(0, 3);
+    DenseStorage<double, Device::CPU> no_cols(3, 0);
 
     EXPECT_THROW(qr(no_rows), std::runtime_error);
     EXPECT_THROW(qr(no_cols), std::runtime_error);
@@ -465,7 +466,7 @@ TEST(QR, decompose_LargeHouseholderCpu_Reconstructs)
 {
     constexpr Index rows = 96;
     constexpr Index columns = 40;
-    DenseMatrix<double, Device::CPU> matrix(rows, columns);
+    DenseStorage<double, Device::CPU> matrix(rows, columns);
     for (Index column = 0; column < columns; ++column)
     {
         for (Index row = 0; row < rows; ++row)
@@ -490,7 +491,7 @@ TEST(QR, decompose_LargeHouseholderCpu_Reconstructs)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(QR, decompose_3x2_Gpu)
 {
-    DenseMatrix<double, Device::CPU> A_cpu(3, 2);
+    DenseStorage<double, Device::CPU> A_cpu(3, 2);
     A_cpu.setValue(0, 0, 1.0);
     A_cpu.setValue(1, 0, 2.0);
     A_cpu.setValue(2, 0, 3.0);
@@ -545,7 +546,7 @@ TEST(QR, decompose_3x2_Gpu)
 TEST(Eigh, symmetric_2x2_Cpu)
 {
     // Symmetric 2x2 matrix: A = [2 1; 1 2], eigenvalues = 3, 1
-    DenseMatrix<double, Device::CPU> A(2, 2);
+    DenseStorage<double, Device::CPU> A(2, 2);
     A.setValue(0, 0, 2.0);
     A.setValue(1, 0, 1.0);
     A.setValue(0, 1, 1.0);
@@ -567,14 +568,14 @@ TEST(Eigh, symmetric_2x2_Cpu)
 
 TEST(Eigh, zeroSizedCpu_Throws)
 {
-    DenseMatrix<double, Device::CPU> A(0, 0);
+    DenseStorage<double, Device::CPU> A(0, 0);
 
     EXPECT_THROW(eigh(A), std::runtime_error);
 }
 
 TEST(Eigh, nonSquareCpu_Throws)
 {
-    DenseMatrix<double, Device::CPU> A(2, 3);
+    DenseStorage<double, Device::CPU> A(2, 3);
 
     EXPECT_THROW(eigh(A), std::runtime_error);
 }
@@ -582,7 +583,7 @@ TEST(Eigh, nonSquareCpu_Throws)
 TEST(Eigh, symmetricTridiagonalLargeMatchesClosedFormSpectrum)
 {
     constexpr Index dimension = 64;
-    DenseMatrix<double, Device::CPU> matrix(dimension, dimension);
+    DenseStorage<double, Device::CPU> matrix(dimension, dimension);
     for (Index index = 0; index < dimension; ++index)
     {
         matrix(index, index) = 2.0;
@@ -606,7 +607,7 @@ TEST(Eigh, symmetricTridiagonalLargeMatchesClosedFormSpectrum)
 #ifdef PLAMATRIX_WITH_CUDA
 TEST(Eigh, symmetric_2x2_Gpu)
 {
-    DenseMatrix<double, Device::CPU> A_cpu(2, 2);
+    DenseStorage<double, Device::CPU> A_cpu(2, 2);
     A_cpu.setValue(0, 0, 2.0);
     A_cpu.setValue(1, 0, 1.0);
     A_cpu.setValue(0, 1, 1.0);
@@ -628,3 +629,5 @@ TEST(Eigh, symmetric_2x2_Gpu)
     EXPECT_NEAR(eigvals(1, 0), 1.0, 1e-6);
 }
 #endif
+
+} // namespace plamatrix::internal
