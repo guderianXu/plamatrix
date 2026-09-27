@@ -385,8 +385,10 @@ namespace plamatrix::v1
         template <int Order = ColMajor> Reshaped<Derived, Dynamic, Dynamic, Order> reshaped(Index rows, Index cols);
         template <int Order = ColMajor>
         const Reshaped<const Derived, Dynamic, Dynamic, Order> reshaped(Index rows, Index cols) const;
-        template <int Order = ColMajor> Reshaped<Derived, SizeAtCompileTime, 1, Order> reshaped();
-        template <int Order = ColMajor> const Reshaped<const Derived, SizeAtCompileTime, 1, Order> reshaped() const;
+        template <int Order = ColMajor>
+        auto reshaped() -> Reshaped<Derived, SizeAtCompileTime, 1, Order>;
+        template <int Order = ColMajor>
+        auto reshaped() const -> const Reshaped<const Derived, SizeAtCompileTime, 1, Order>;
 
         void transposeInPlace();
     };

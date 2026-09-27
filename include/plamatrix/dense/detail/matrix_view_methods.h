@@ -130,14 +130,14 @@ namespace plamatrix::v1
 
     template <typename Derived>
     template <int Order>
-    Reshaped<Derived, DenseBase<Derived>::SizeAtCompileTime, 1, Order> DenseBase<Derived>::reshaped()
+    auto DenseBase<Derived>::reshaped() -> Reshaped<Derived, SizeAtCompileTime, 1, Order>
     {
         return Reshaped<Derived, SizeAtCompileTime, 1, Order>(this->derived(), this->size(), 1);
     }
 
     template <typename Derived>
     template <int Order>
-    const Reshaped<const Derived, DenseBase<Derived>::SizeAtCompileTime, 1, Order> DenseBase<Derived>::reshaped() const
+    auto DenseBase<Derived>::reshaped() const -> const Reshaped<const Derived, SizeAtCompileTime, 1, Order>
     {
         return Reshaped<const Derived, SizeAtCompileTime, 1, Order>(this->derived(), this->size(), 1);
     }

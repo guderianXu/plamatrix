@@ -226,7 +226,7 @@ void axpby(
     {
         if (detail::shouldUseOpenMp(count))
         {
-            #pragma omp parallel for simd
+            #pragma omp parallel for
             for (Index index = 0; index < count; ++index)
             {
                 output.data()[index] = alpha * lhs.data()[index] + beta * rhs.data()[index];
@@ -324,7 +324,7 @@ void linearCombination(
     {
         if (detail::shouldUseOpenMp(count))
         {
-            #pragma omp parallel for simd
+            #pragma omp parallel for
             for (Index index = 0; index < count; ++index)
             {
                 output.data()[index] = alpha * first.data()[index] + beta * second.data()[index] +

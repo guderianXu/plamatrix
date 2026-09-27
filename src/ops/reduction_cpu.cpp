@@ -303,7 +303,7 @@ namespace plamatrix::internal
             }
             if (shouldParallelizeDot(count))
             {
-#pragma omp parallel for simd reduction(+ : accumulated)
+#pragma omp parallel for reduction(+ : accumulated)
                 for (Index index = 0; index < count; ++index)
                 {
                     accumulated += static_cast<Accum>(lhs.data()[index]) * static_cast<Accum>(rhs.data()[index]);
