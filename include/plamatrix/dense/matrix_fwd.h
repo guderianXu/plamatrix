@@ -63,12 +63,18 @@ namespace plamatrix::v1
     template <typename Derived> class MatrixBase;
     template <typename Derived> class ArrayBase;
 
-    template <typename Scalar_,
-              int Rows_,
-              int Cols_,
-              int Options_ = AutoAlign | ((Rows_ == 1 && Cols_ != 1) ? RowMajor : ColMajor),
-              int MaxRows_ = Rows_,
-              int MaxCols_ = Cols_>
+    namespace matrix_forward_detail
+    {
+        template <int Rows, int Cols>
+        inline constexpr int defaultMatrixOptions = AutoAlign | ((Rows == 1 && Cols != 1) ? RowMajor : ColMajor);
+    } // namespace matrix_forward_detail
+
+    template <typename Scalar,
+              int Rows,
+              int Cols,
+              int Options = matrix_forward_detail::defaultMatrixOptions<Rows, Cols>,
+              int MaxRows = Rows,
+              int MaxCols = Cols>
     class Matrix;
 
     template <int OuterStrideAtCompileTime, int InnerStrideAtCompileTime> class Stride;
