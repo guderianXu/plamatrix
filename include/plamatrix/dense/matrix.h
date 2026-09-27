@@ -322,7 +322,8 @@ namespace plamatrix
             template <
                 typename... Values,
                 std::enable_if_t<fixed_size && (fixed_count > 0) && (Rows == 1 || Cols == 1) &&
-                                     sizeof...(Values) == fixed_count && (std::is_convertible_v<Values, Scalar> && ...),
+                                     sizeof...(Values) == fixed_count &&
+                                     std::conjunction_v<std::is_convertible<Values, Scalar>...>,
                                  int> = 0>
             explicit Matrix(Values... values) : Matrix()
             {
