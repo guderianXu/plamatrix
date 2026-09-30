@@ -592,6 +592,80 @@ namespace plamatrix::internal
             }
         }
 
+        TEST(BlockSchurTest, NativeSparseCpuDenseGraphIsBitwiseStableAcrossThreadsAndReuse)
+        {
+            constexpr Index block_count = 24;
+            constexpr Index block_size = 3;
+            BlockNormalEquations<double> equations(block_count, 0, block_size, 1);
+            std::array<double, block_size * block_size> identity{};
+            for (Index diagonal = 0; diagonal < block_size; ++diagonal)
+            {
+                identity[static_cast<std::size_t>(diagonal * block_size + diagonal)] = 1.0;
+            }
+            for (Index block = 0; block < block_count; ++block)
+            {
+                const std::array<double, block_size> residual{{
+                    0.002 * static_cast<double>(block + 1),
+                    -0.003 * static_cast<double>(block + 2),
+                    0.001 * static_cast<double>(block + 3),
+                }};
+                equations.addPrimaryResidualBlock(block, identity.data(), residual.data(), block_size);
+            }
+            for (Index left = 0; left < block_count; ++left)
+            {
+                for (Index right = left + 1; right < block_count; ++right)
+                {
+                    const std::array<double, block_size> left_jacobian{{
+                        0.05 + 0.001 * static_cast<double>(left),
+                        -0.02,
+                        0.01,
+                    }};
+                    const std::array<double, block_size> right_jacobian{{
+                        -0.04,
+                        0.03 + 0.001 * static_cast<double>(right),
+                        -0.015,
+                    }};
+                    const double residual = 0.0001 * static_cast<double>(1 + left + right);
+                    equations.addPrimaryResidualBlocks(
+                        {left, right}, {left_jacobian.data(), right_jacobian.data()}, &residual, 1);
+                }
+            }
+
+            SchurComplementSolverOptions<double> options;
+            options.linearBackend = SchurComplementLinearBackend::SparseCpu;
+            options.relativeTolerance = 1e-12;
+            options.absoluteTolerance = 1e-14;
+            SchurComplementSolverWorkspace<double> serial_workspace;
+            SchurComplementSolverWorkspace<double> parallel_workspace;
+            std::vector<double> serial_primary;
+            std::vector<double> serial_eliminated;
+            std::vector<double> parallel_primary;
+            std::vector<double> parallel_eliminated;
+            const int original_threads = omp_get_max_threads();
+            omp_set_num_threads(1);
+            const auto serial = solveDampedSchurComplement(
+                equations, 0.01, options, serial_workspace, &serial_primary, &serial_eliminated);
+            omp_set_num_threads(std::min(8, original_threads));
+            const auto parallel = solveDampedSchurComplement(
+                equations, 0.01, options, parallel_workspace, &parallel_primary, &parallel_eliminated);
+            std::vector<double> reused_primary;
+            std::vector<double> reused_eliminated;
+            const auto reused = solveDampedSchurComplement(
+                equations, 0.01, options, parallel_workspace, &reused_primary, &reused_eliminated);
+            omp_set_num_threads(original_threads);
+
+            ASSERT_TRUE(serial.converged) << serial.message;
+            ASSERT_TRUE(parallel.converged) << parallel.message;
+            ASSERT_TRUE(reused.converged) << reused.message;
+            EXPECT_EQ(serial_primary, parallel_primary);
+            EXPECT_EQ(serial_primary, reused_primary);
+            EXPECT_EQ(serial_eliminated, parallel_eliminated);
+            EXPECT_EQ(serial_eliminated, reused_eliminated);
+            EXPECT_FALSE(parallel.schurPatternReused);
+            EXPECT_TRUE(reused.schurPatternReused);
+            EXPECT_TRUE(reused.symbolicAnalysisReused);
+        }
+
         TEST(BlockSchurTest, DenseCpuEliminatedAssemblyIsBitwiseStableAcrossThreadCounts)
         {
             constexpr Index primary_count = 36;

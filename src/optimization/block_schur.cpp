@@ -542,21 +542,21 @@ namespace plamatrix::internal
             const auto assembly_start = std::chrono::steady_clock::now();
             double accumulation_seconds = 0.0;
             double csr_conversion_seconds = 0.0;
-            auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(primary_count,
-                                                                            eliminated_count,
-                                                                            primary_size,
-                                                                            eliminated_size,
-                                                                            primary_diagonal,
-                                                                            eliminated_inverse,
-                                                                            equations._primaryCrossBlocks,
-                                                                            equations._crossBlocks,
-                                                                            equations._eliminatedAdjacency,
-                                                                            workspace,
-                                                                            &report.schurPatternReused,
-                                                                            options.linearBackend,
-                                                                            &report.schurAssemblyOnDevice,
-                                                                            &accumulation_seconds,
-                                                                            &csr_conversion_seconds);
+            auto& schur_matrix = block_schur_detail::assembleReducedSchurCsr(primary_count,
+                                                                             eliminated_count,
+                                                                             primary_size,
+                                                                             eliminated_size,
+                                                                             primary_diagonal,
+                                                                             eliminated_inverse,
+                                                                             equations._primaryCrossBlocks,
+                                                                             equations._crossBlocks,
+                                                                             equations._eliminatedAdjacency,
+                                                                             workspace,
+                                                                             &report.schurPatternReused,
+                                                                             options.linearBackend,
+                                                                             &report.schurAssemblyOnDevice,
+                                                                             &accumulation_seconds,
+                                                                             &csr_conversion_seconds);
             const double assembly_seconds =
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - assembly_start).count();
             auto sparse_report = block_schur_detail::solveReducedSchurSparseDirect(
@@ -581,21 +581,21 @@ namespace plamatrix::internal
             const auto assembly_start = std::chrono::steady_clock::now();
             double accumulation_seconds = 0.0;
             double csr_conversion_seconds = 0.0;
-            auto schur_matrix = block_schur_detail::assembleReducedSchurCsr(primary_count,
-                                                                            eliminated_count,
-                                                                            primary_size,
-                                                                            eliminated_size,
-                                                                            primary_diagonal,
-                                                                            eliminated_inverse,
-                                                                            equations._primaryCrossBlocks,
-                                                                            equations._crossBlocks,
-                                                                            equations._eliminatedAdjacency,
-                                                                            workspace,
-                                                                            &report.schurPatternReused,
-                                                                            options.linearBackend,
-                                                                            &report.schurAssemblyOnDevice,
-                                                                            &accumulation_seconds,
-                                                                            &csr_conversion_seconds);
+            auto& schur_matrix = block_schur_detail::assembleReducedSchurCsr(primary_count,
+                                                                             eliminated_count,
+                                                                             primary_size,
+                                                                             eliminated_size,
+                                                                             primary_diagonal,
+                                                                             eliminated_inverse,
+                                                                             equations._primaryCrossBlocks,
+                                                                             equations._crossBlocks,
+                                                                             equations._eliminatedAdjacency,
+                                                                             workspace,
+                                                                             &report.schurPatternReused,
+                                                                             options.linearBackend,
+                                                                             &report.schurAssemblyOnDevice,
+                                                                             &accumulation_seconds,
+                                                                             &csr_conversion_seconds);
             const double assembly_seconds =
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - assembly_start).count();
             auto accelerated_report = block_schur_detail::solveAcceleratedReducedSchur(

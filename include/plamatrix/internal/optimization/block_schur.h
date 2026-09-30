@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "plamatrix/internal/core/device.h"
+#include "plamatrix/internal/sparse/csr_storage.h"
 
 namespace plamatrix::internal
 {
@@ -132,6 +133,7 @@ namespace plamatrix::internal
             _hostEliminatedInverse.clear();
             _hostReducedRhs.clear();
             _hostScratch.clear();
+            _hostCsr.reset();
             _acceleratedState.reset();
             _mixedPrecisionState.reset();
             _deviceAssemblyState.reset();
@@ -181,6 +183,7 @@ namespace plamatrix::internal
         std::vector<Scalar> _hostEliminatedInverse;
         std::vector<Scalar> _hostReducedRhs;
         std::vector<Scalar> _hostScratch;
+        std::unique_ptr<CsrStorage<Scalar, Device::CPU>> _hostCsr;
         std::shared_ptr<void> _acceleratedState;
         std::shared_ptr<void> _mixedPrecisionState;
         std::shared_ptr<void> _deviceAssemblyState;

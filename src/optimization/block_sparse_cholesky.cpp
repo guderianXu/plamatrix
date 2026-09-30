@@ -290,8 +290,8 @@ namespace plamatrix::internal::block_schur_detail
             _updateOffsets.push_back(_updateTargets.size());
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(
-            detail::checkedIndexMul(block_size, block_size, "sparse Cholesky block values"));
+        const std::size_t block_values =
+            static_cast<std::size_t>(detail::checkedIndexMul(block_size, block_size, "sparse Cholesky block values"));
         _factorValues.resize(_factorRowBlocks.size() * block_values);
         _sourceEntries.reserve(static_cast<std::size_t>(nonzeros / 2 + dimension));
         for (Index old_row = 0; old_row < dimension; ++old_row)
@@ -342,8 +342,8 @@ namespace plamatrix::internal::block_schur_detail
             _factorValues[entry.targetOffset] = static_cast<double>(values[entry.sourceOffset]);
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(
-            detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky factor values"));
+        const std::size_t block_values =
+            static_cast<std::size_t>(detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky factor values"));
         _activeCoordinates.assign(static_cast<std::size_t>(_dimension), 0);
         for (Index column = 0; column < _blockCount; ++column)
         {
@@ -379,44 +379,102 @@ namespace plamatrix::internal::block_schur_detail
                 }
             }
         }
-        for (Index column = 0; column < _blockCount; ++column)
+        const bool parallel_factorization = _blockCount >= 16 && _updateTargets.size() >= 64 && omp_in_parallel() == 0;
+        bool factorization_ok = true;
+        if (parallel_factorization)
         {
-            const std::size_t begin = _factorColumnOffsets[static_cast<std::size_t>(column)];
-            const std::size_t end = _factorColumnOffsets[static_cast<std::size_t>(column + 1)];
-            double* diagonal = _factorValues.data() + begin * block_values;
-            if (!factorDiagonalBlock(_blockSize, diagonal))
+#pragma omp parallel shared(factorization_ok)
             {
-                *message = "native sparse Cholesky encountered a non-positive pivot";
-                _factorized = false;
-                return false;
-            }
-
-            const bool parallel = end - begin >= 8 && omp_in_parallel() == 0;
-#pragma omp parallel for schedule(static) if (parallel)
-            for (Index slot = static_cast<Index>(begin + 1); slot < static_cast<Index>(end); ++slot)
-            {
-                rightSolveLowerTranspose(
-                    _blockSize, diagonal, _factorValues.data() + static_cast<std::size_t>(slot) * block_values);
-            }
-
-#pragma omp parallel for schedule(static) if (parallel)
-            for (Index left = 1; left < static_cast<Index>(end - begin); ++left)
-            {
-                const std::size_t left_slot = begin + static_cast<std::size_t>(left);
-                const double* left_block = _factorValues.data() + left_slot * block_values;
-                for (Index right = 1; right <= left; ++right)
+                for (Index column = 0; column < _blockCount; ++column)
                 {
-                    const std::size_t pair_offset = static_cast<std::size_t>((left - 1) * left / 2 + right - 1);
-                    const std::size_t target_slot =
-                        _updateTargets[_updateOffsets[static_cast<std::size_t>(column)] + pair_offset];
-                    const std::size_t right_slot = begin + static_cast<std::size_t>(right);
-                    subtractProduct(_blockSize,
-                                    left_block,
-                                    _factorValues.data() + right_slot * block_values,
-                                    left == right,
-                                    _factorValues.data() + target_slot * block_values);
+                    const std::size_t begin = _factorColumnOffsets[static_cast<std::size_t>(column)];
+                    const std::size_t end = _factorColumnOffsets[static_cast<std::size_t>(column + 1)];
+                    double* diagonal = _factorValues.data() + begin * block_values;
+#pragma omp single
+                    {
+                        if (factorization_ok && !factorDiagonalBlock(_blockSize, diagonal))
+                        {
+                            factorization_ok = false;
+                        }
+                    }
+
+#pragma omp for schedule(static)
+                    for (Index slot = static_cast<Index>(begin + 1); slot < static_cast<Index>(end); ++slot)
+                    {
+                        if (factorization_ok)
+                        {
+                            rightSolveLowerTranspose(_blockSize,
+                                                     diagonal,
+                                                     _factorValues.data() +
+                                                         static_cast<std::size_t>(slot) * block_values);
+                        }
+                    }
+
+#pragma omp for schedule(static)
+                    for (Index left = 1; left < static_cast<Index>(end - begin); ++left)
+                    {
+                        if (factorization_ok)
+                        {
+                            const std::size_t left_slot = begin + static_cast<std::size_t>(left);
+                            const double* left_block = _factorValues.data() + left_slot * block_values;
+                            for (Index right = 1; right <= left; ++right)
+                            {
+                                const std::size_t pair_offset =
+                                    static_cast<std::size_t>((left - 1) * left / 2 + right - 1);
+                                const std::size_t target_slot =
+                                    _updateTargets[_updateOffsets[static_cast<std::size_t>(column)] + pair_offset];
+                                const std::size_t right_slot = begin + static_cast<std::size_t>(right);
+                                subtractProduct(_blockSize,
+                                                left_block,
+                                                _factorValues.data() + right_slot * block_values,
+                                                left == right,
+                                                _factorValues.data() + target_slot * block_values);
+                            }
+                        }
+                    }
                 }
             }
+        }
+        else
+        {
+            for (Index column = 0; column < _blockCount; ++column)
+            {
+                const std::size_t begin = _factorColumnOffsets[static_cast<std::size_t>(column)];
+                const std::size_t end = _factorColumnOffsets[static_cast<std::size_t>(column + 1)];
+                double* diagonal = _factorValues.data() + begin * block_values;
+                if (!factorDiagonalBlock(_blockSize, diagonal))
+                {
+                    factorization_ok = false;
+                    break;
+                }
+                for (std::size_t slot = begin + 1; slot < end; ++slot)
+                {
+                    rightSolveLowerTranspose(_blockSize, diagonal, _factorValues.data() + slot * block_values);
+                }
+                for (Index left = 1; left < static_cast<Index>(end - begin); ++left)
+                {
+                    const std::size_t left_slot = begin + static_cast<std::size_t>(left);
+                    const double* left_block = _factorValues.data() + left_slot * block_values;
+                    for (Index right = 1; right <= left; ++right)
+                    {
+                        const std::size_t pair_offset = static_cast<std::size_t>((left - 1) * left / 2 + right - 1);
+                        const std::size_t target_slot =
+                            _updateTargets[_updateOffsets[static_cast<std::size_t>(column)] + pair_offset];
+                        const std::size_t right_slot = begin + static_cast<std::size_t>(right);
+                        subtractProduct(_blockSize,
+                                        left_block,
+                                        _factorValues.data() + right_slot * block_values,
+                                        left == right,
+                                        _factorValues.data() + target_slot * block_values);
+                    }
+                }
+            }
+        }
+        if (!factorization_ok)
+        {
+            *message = "native sparse Cholesky encountered a non-positive pivot";
+            _factorized = false;
+            return false;
         }
         _factorized = true;
         return true;
@@ -455,8 +513,8 @@ namespace plamatrix::internal::block_schur_detail
             }
         }
 
-        const std::size_t block_values = static_cast<std::size_t>(
-            detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky solve values"));
+        const std::size_t block_values =
+            static_cast<std::size_t>(detail::checkedIndexMul(_blockSize, _blockSize, "sparse Cholesky solve values"));
         for (Index column = 0; column < _blockCount; ++column)
         {
             const std::size_t begin = _factorColumnOffsets[static_cast<std::size_t>(column)];

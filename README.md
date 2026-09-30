@@ -32,6 +32,8 @@ PlaMatrix 是一个面向摄影测量、点云和稀疏优化工作负载的 C++
 
 执行上下文、驻留存储、GPU 原语及块 Schur 数值实现均位于 `plamatrix::internal`，仅供模块后端集成。BA 业务由 PlaBundle 负责，点云体素归组由 PlaPoint 负责。旧 `DenseMatrix`/`CSRMatrix`/`Vec3` 等公开类型和旧头文件路径已删除，不提供兼容层。
 
+CPU 块 Schur 求解器会在显式 workspace 中复用固定拓扑的 CSR 结构与存储；大块图的原生稀疏 Cholesky 分解使用一个持久 OpenMP 团队处理有序列。这两个优化不改变 CSR 拓扑、消元顺序或线性解，workspace `clear()` 会一并释放缓存。
+
 ## 后端能力
 
 | 后端 | 当前范围 | 主要依赖 |

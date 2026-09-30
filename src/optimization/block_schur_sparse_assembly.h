@@ -430,6 +430,13 @@ namespace plamatrix::internal::block_schur_detail
         }
 
         template <typename Scalar>
+        static std::unique_ptr<CsrStorage<Scalar, Device::CPU>>&
+        hostCsr(SchurComplementSolverWorkspace<Scalar>& workspace)
+        {
+            return workspace._hostCsr;
+        }
+
+        template <typename Scalar>
         static std::shared_ptr<void>& acceleratedState(SchurComplementSolverWorkspace<Scalar>& workspace)
         {
             return workspace._acceleratedState;
@@ -644,21 +651,21 @@ namespace plamatrix::internal::block_schur_detail
     }
 
     template <typename Scalar, typename PrimaryCrossBlocks, typename CrossBlocks, typename Adjacency>
-    CsrStorage<Scalar, Device::CPU> assembleReducedSchurCsr(Index primary_count,
-                                                            Index eliminated_count,
-                                                            Index primary_size,
-                                                            Index eliminated_size,
-                                                            const std::vector<Scalar>& primary_diagonal,
-                                                            const std::vector<Scalar>& eliminated_inverse,
-                                                            const PrimaryCrossBlocks& primary_cross_blocks,
-                                                            const CrossBlocks& cross_blocks,
-                                                            const Adjacency& adjacency,
-                                                            SchurComplementSolverWorkspace<Scalar>& workspace,
-                                                            bool* pattern_reused,
-                                                            SchurComplementLinearBackend backend,
-                                                            bool* assembly_on_device,
-                                                            double* accumulation_seconds = nullptr,
-                                                            double* csr_conversion_seconds = nullptr)
+    CsrStorage<Scalar, Device::CPU>& assembleReducedSchurCsr(Index primary_count,
+                                                             Index eliminated_count,
+                                                             Index primary_size,
+                                                             Index eliminated_size,
+                                                             const std::vector<Scalar>& primary_diagonal,
+                                                             const std::vector<Scalar>& eliminated_inverse,
+                                                             const PrimaryCrossBlocks& primary_cross_blocks,
+                                                             const CrossBlocks& cross_blocks,
+                                                             const Adjacency& adjacency,
+                                                             SchurComplementSolverWorkspace<Scalar>& workspace,
+                                                             bool* pattern_reused,
+                                                             SchurComplementLinearBackend backend,
+                                                             bool* assembly_on_device,
+                                                             double* accumulation_seconds = nullptr,
+                                                             double* csr_conversion_seconds = nullptr)
     {
         const auto conversion_start = std::chrono::steady_clock::now();
         const bool reused = prepareSchurTopology(primary_count,
@@ -681,13 +688,22 @@ namespace plamatrix::internal::block_schur_detail
         {
             throw std::overflow_error("Schur CSR nonzero count exceeds Index range");
         }
-        CsrStorage<Scalar, Device::CPU> matrix(dimension, dimension, static_cast<Index>(column_indices.size()));
-        Index* matrix_row_offsets = matrix.rowOffsets();
-        Index* matrix_column_indices = matrix.colIndices();
+        auto& cached_matrix = SchurComplementSolverWorkspaceAccess::hostCsr(workspace);
+        const Index nonzeros = static_cast<Index>(column_indices.size());
+        const bool rebuild_matrix = !cached_matrix || cached_matrix->rows() != dimension ||
+                                    cached_matrix->cols() != dimension || cached_matrix->nnz() != nonzeros;
+        if (rebuild_matrix)
+        {
+            cached_matrix = std::make_unique<CsrStorage<Scalar, Device::CPU>>(dimension, dimension, nonzeros);
+        }
+        auto& matrix = *cached_matrix;
+        if (rebuild_matrix || !reused)
+        {
+            std::copy(row_offsets.begin(), row_offsets.end(), matrix.rowOffsets());
+            std::copy(column_indices.begin(), column_indices.end(), matrix.colIndices());
+        }
         Scalar* matrix_values = matrix.values();
-        std::copy(row_offsets.begin(), row_offsets.end(), matrix_row_offsets);
-        std::copy(column_indices.begin(), column_indices.end(), matrix_column_indices);
-        std::fill(matrix_values, matrix_values + matrix.nnz(), Scalar(0));
+        std::fill(matrix_values, matrix_values + nonzeros, Scalar(0));
         if (csr_conversion_seconds)
         {
             *csr_conversion_seconds =
