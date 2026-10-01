@@ -141,17 +141,17 @@ namespace plamatrix::v1
     template <typename StorageIndex> class AMDOrdering;
     template <typename StorageIndex> class COLAMDOrdering;
     template <typename StorageIndex> class NaturalOrdering;
-    template <typename MatrixType, typename OrderingType = COLAMDOrdering<typename MatrixType::StorageIndex>>
+    template <typename MatrixType_, typename OrderingType_ = COLAMDOrdering<typename MatrixType_::StorageIndex>>
     class SparseLU;
-    template <typename MatrixType, typename OrderingType = COLAMDOrdering<typename MatrixType::StorageIndex>>
+    template <typename MatrixType_, typename OrderingType_ = COLAMDOrdering<typename MatrixType_::StorageIndex>>
     class SparseQR;
-    template <typename MatrixType,
+    template <typename MatrixType_,
               int UpLo = Lower,
-              typename OrderingType = AMDOrdering<typename MatrixType::StorageIndex>>
+              typename OrderingType_ = AMDOrdering<typename MatrixType_::StorageIndex>>
     class SimplicialLLT;
-    template <typename MatrixType,
+    template <typename MatrixType_,
               int UpLo = Lower,
-              typename OrderingType = AMDOrdering<typename MatrixType::StorageIndex>>
+              typename OrderingType_ = AMDOrdering<typename MatrixType_::StorageIndex>>
     class SimplicialLDLT;
     template <typename Scalar> class DiagonalPreconditioner;
     class IdentityPreconditioner;

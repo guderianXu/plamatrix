@@ -26,6 +26,10 @@ PlaMatrix 是一个面向摄影测量、点云和稀疏优化工作负载的 C++
 
 应用入口提供 `MatrixXd`、`Vector3d`、固定尺寸块、`Map`、延迟算术/数组/轴向表达式，以及 LU、LDLT、QR、SVD 和特征分解。Geometry 入口提供 Eigen 5.0.1 同名的 `Quaternion`、`AngleAxis`、`Transform`、`Translation`、欧拉角和 `umeyama()`。稀疏入口提供 `Triplet`、`SparseMatrix`、`SparseView`、稀疏直接/迭代求解器、预条件器和 AMD/COLAMD/Natural ordering。
 
+固定 3×3 矩阵提供受检的快速求逆：`Matrix3d::computeInverseAndDetWithCheck()` 面向普通矩阵，
+`tryInverse3x3RowMajor()` 面向行优先连续块。两者在 CPU 上复用内联公式，调用方须指定绝对行列式阈值；
+用法与失败语义见 [线性代数 API](docs/api/linear-algebra.md)。
+
 日常密集运算自动选择 CPU/CUDA/Vulkan/OpenCL，无需用户管理设备、流或传输。公开核心类型使用 Eigen 5
 同形的六参数 `Matrix`、`EigenBase`/`DenseBase`/`MatrixBase`/`ArrayBase`、三参数 `Map`
 和 `Ref`。当前数值能力与分解限制见 API 文档；尚未实现的 Eigen 模块仍不属于兼容范围。

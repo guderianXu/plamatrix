@@ -151,14 +151,13 @@ bool factorPositiveDefiniteParallel(Index dimension, std::vector<Scalar>* matrix
                             Scalar* current_row =
                                 matrix->data() + static_cast<std::size_t>(row * dimension);
                             const Scalar factor = current_row[column];
-                            #pragma omp simd
-                            for (Index trailing_column = column + 1;
-                                 trailing_column <= row; ++trailing_column)
+#pragma omp simd
+                            for (Index trailing_column = column + 1; trailing_column < row; ++trailing_column)
                             {
                                 current_row[trailing_column] -=
-                                    factor * (*matrix)[static_cast<std::size_t>(
-                                        trailing_column * dimension + column)];
+                                    factor * (*matrix)[static_cast<std::size_t>(trailing_column * dimension + column)];
                             }
+                            current_row[row] -= factor * factor;
                         }
                     }
                 }
@@ -364,7 +363,6 @@ SchurComplementSolverReport<Scalar> solveReducedSchurDenseLower(
         for (Index row = 0; row < dimension; ++row)
         {
             Scalar product = Scalar(0);
-            #pragma omp simd reduction(+:product)
             for (Index column = 0; column <= row; ++column)
             {
                 product += reference[static_cast<std::size_t>(row * dimension + column)] *

@@ -168,8 +168,9 @@ namespace plamatrix::v1
         }
 
         /// Solve A * X = right for a vector or multiple columns without refactorizing A.
-        template <int RightRows, int RightCols>
-        Matrix<Scalar, Rows, RightCols> solve(const Matrix<Scalar, RightRows, RightCols>& right) const
+        template <int RightRows, int RightCols, int RightOptions, int RightMaxRows, int RightMaxCols>
+        Matrix<Scalar, Rows, RightCols>
+        solve(const Matrix<Scalar, RightRows, RightCols, RightOptions, RightMaxRows, RightMaxCols>& right) const
         {
             if (internal::currentExecutionSettings().policy == internal::ExecutionPolicy::GpuRequired)
             {

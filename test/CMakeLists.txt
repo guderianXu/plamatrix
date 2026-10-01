@@ -16,6 +16,7 @@ add_executable(plamatrix_tests
     unit/dense/matrix_structured_views_test.cpp
     unit/dense/matrix_reductions_cwise_test.cpp
     unit/dense/dense_decompositions_test.cpp
+    unit/dense/small_inverse_test.cpp
     unit/dense/matrix_expression_test.cpp
     unit/dense/matrix_map_test.cpp
     unit/dense/self_adjoint_eigen_solver_test.cpp

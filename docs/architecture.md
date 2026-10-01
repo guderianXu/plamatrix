@@ -203,6 +203,12 @@ stream 上入队释放。`closeAsyncAllocation()` 是可报告错误的显式路
 
 ## 3. 密集矩阵模块
 
+固定 3×3 求逆在 `dense/small_inverse.h` 中共享一个行优先、无分解的内联内核；公开 `Matrix3d`
+成员先按逻辑行列读取输入，再调用同一内核，因此列优先和 RowMajor 矩阵得到相同结果。
+逐点 Schur 消元可直接传入行优先 `std::array`，避免每个点构造通用 LU 分解对象。
+与 `src/optimization/block_schur_linear_algebra.h` 的正定 Cholesky 求逆不同，该入口接受行列式
+满足调用方绝对阈值的任意有限 3×3 实矩阵，并在失败时不改写逆矩阵输出。
+
 ### 3.1 DenseStorage (`internal/dense/dense_storage.h`)
 
 继承 `DeviceStorage`，增加：

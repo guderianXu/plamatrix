@@ -14,6 +14,8 @@
 | `jacobiSvd().solve(b)` | 秩亏或欠定最小二乘 | 最小范数解；支持 thin/full U、V |
 | `bdcSvd().solve(b)` | 大矩阵 SVD 入口 | CPU 使用并行 Jacobi；CUDA 使用 cuSOLVER；OpenCL/Vulkan 使用并行 one-sided Jacobi |
 | `completeOrthogonalDecomposition().solve(b)` | 秩亏最小二乘和伪逆 | CPU；当前以 SVD 实现等价求解语义 |
+| `Matrix3d::computeInverseAndDetWithCheck(...)` | 单个固定 3×3 逆 | CPU 内联公式；调用方指定绝对行列式阈值 |
+| `tryInverse3x3RowMajor(...)` | 行优先连续 3×3 块的热路径 | CPU 内联公式；输入输出为 `std::array<Scalar, 9>` |
 
 ```cpp
 plamatrix::Matrix3d coefficients = plamatrix::Matrix3d::Identity();
@@ -21,6 +23,18 @@ plamatrix::Vector3d right(1.0, 2.0, 3.0);
 plamatrix::Vector3d solution = coefficients.fullPivLu().solve(right);
 plamatrix::Vector3d spd_solution = coefficients.llt().solve(right);
 auto svd = coefficients.jacobiSvd<plamatrix::ComputeFullU | plamatrix::ComputeFullV>();
+```
+
+固定 3×3 逆提供不经过 LU 的受检入口，支持 `float` 和 `double`。输入或计算结果非有限、行列式为零，或
+`|determinant|` 小于调用方指定的非负绝对阈值时返回失败，逆矩阵输出保持原值；等于阈值时仍接受。
+该阈值随矩阵单位和缩放变化，不能当作通用条件数判据。`GpuRequired` 下矩阵成员入口报告不支持；
+行优先块入口是显式 CPU 运算。完整示例见 [受检 3×3 求逆](../examples/checked-small-inverse.cpp)。
+
+```cpp
+plamatrix::Matrix3d inverse;
+double determinant = 0.0;
+bool invertible = false;
+coefficients.computeInverseAndDetWithCheck(inverse, determinant, invertible, 1.0e-15);
 ```
 
 公开类名和矩阵成员入口与 Eigen 5.0.1 对齐，包括 `LLT`、`FullPivLU`、`HouseholderQR`、`ColPivHouseholderQR`、`JacobiSVD`、`BDCSVD` 和 `CompleteOrthogonalDecomposition`。`lu()` 是 `partialPivLu()` 的项目便利入口；需要与 Eigen 源码逐字迁移时应使用 `partialPivLu()`。SVD 提供 `rank()`、`threshold()`、`setThreshold()`、`singularValues()`、`matrixU()` 和 `matrixV()`；COD 提供 `rank()`、`matrixQTZ()`、`colsPermutation()`、`householderQ()`、`matrixZ()`、`solve()` 和 `pseudoInverse()`。当前 COD 使用 SVD 形成等价的正交分解和最小范数解，因此紧凑内部因子不保证与 Eigen 的 QR 实现逐元素相同。

@@ -17,6 +17,7 @@
 #include "plamatrix/internal/core/execution_policy.h"
 #include "plamatrix/dense/matrix_base.h"
 #include "plamatrix/dense/detail/aligned_allocator.h"
+#include "plamatrix/dense/small_inverse.h"
 #include "plamatrix/internal/dense/auto_backend.h"
 #include "plamatrix/internal/dense/matrix_view.h"
 #include "plamatrix/internal/dense/packet_reduction.h"
@@ -1052,6 +1053,43 @@ namespace plamatrix
             PartialPivLU<Matrix, PermutationIndex> lu() const;
             template <typename PermutationIndex = DefaultPermutationIndex>
             FullPivLU<Matrix, PermutationIndex> fullPivLu() const;
+            /// Checked fixed-size 3x3 inverse with a nonnegative absolute determinant cutoff.
+            /// On failure, inverse is unchanged; GpuRequired throws UnsupportedOperation.
+            template <int R = Rows,
+                      int C = Cols,
+                      std::enable_if_t<R == 3 && C == 3 && std::is_floating_point_v<Scalar>, int> = 0>
+            void computeInverseAndDetWithCheck(Matrix& inverse,
+                                               Scalar& determinant,
+                                               bool& invertible,
+                                               Scalar abs_determinant_threshold) const
+            {
+                if (internal::currentExecutionSettings().policy == internal::ExecutionPolicy::GpuRequired)
+                {
+                    throw internal::Error(internal::ErrorCode::UnsupportedOperation,
+                                          "Checked 3x3 inversion is not available on the selected GPU");
+                }
+                std::array<Scalar, 9> input{};
+                for (int row = 0; row < 3; ++row)
+                {
+                    for (int column = 0; column < 3; ++column)
+                    {
+                        input[static_cast<std::size_t>(row * 3 + column)] = (*this)(row, column);
+                    }
+                }
+                std::array<Scalar, 9> output{};
+                invertible = tryInverse3x3RowMajor(input, &output, abs_determinant_threshold, &determinant);
+                if (!invertible)
+                {
+                    return;
+                }
+                for (int row = 0; row < 3; ++row)
+                {
+                    for (int column = 0; column < 3; ++column)
+                    {
+                        inverse(row, column) = output[static_cast<std::size_t>(row * 3 + column)];
+                    }
+                }
+            }
             template <int UpLo = Lower> LLT<Matrix, UpLo> llt() const;
             LDLT<Matrix> ldlt() const;
             HouseholderQR<Matrix> householderQr() const;
